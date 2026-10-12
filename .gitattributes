@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.bin binary
+*.img binary
+*.vdi binary
+*.vhd binary
+*.vhdx binary
+*.vmdk binary
+*.fd binary
+*.EFI binary
+*.rel binary
+src/font8x16.bin binary
