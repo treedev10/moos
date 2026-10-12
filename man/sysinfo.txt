@@ -1,0 +1,48 @@
+NAME
+    sysinfo - information about MOOS and the computer
+
+SYNOPSIS
+    sysinfo
+
+DESCRIPTION
+    sysinfo shows the MOOS version and details about the hardware it
+    is running on:
+
+    Built          the date this copy of MOOS was built
+    Started by     the PC's firmware: a classic BIOS, or UEFI (with
+                   the firmware maker's name and UEFI version)
+    Architecture   MOOS runs in 32-bit "protected mode" (BIOS) or in
+                   32-bit "compatibility mode" inside the 64-bit UEFI
+                   environment, using one flat block of memory
+    CPU vendor     the processor maker, as reported by the processor
+                   itself (for example GenuineIntel or AuthenticAMD)
+    CPU model      the full processor name, if the processor reports
+                   one
+    Memory         installed RAM in megabytes
+    Display        BIOS: the classic VGA text mode, 80x25.
+                   UEFI: a graphics mode; MOOS draws the same 80x25
+                   characters itself, doubled in size when they fit
+    Timer          100 ticks per second: the PIT chip (BIOS) or a
+                   firmware timer event (UEFI)
+    Keyboard       BIOS: PS/2 (USB keyboards too when the BIOS emulates
+                   PS/2, which most do). UEFI: any keyboard the
+                   firmware supports, USB or PS/2
+    System size    the size of the entire operating system: boot
+                   sector, kernel, every command and all manual pages
+    Storage        where your files are kept and how MOOS reaches
+                   that disk (see  man files )
+    Uptime         seconds since start-up (see  man uptime )
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    sysinfo
+    about        alias
+    ver          alias
+
+ALIASES
+    about, ver
+
+SEE ALSO
+    mem, uptime, time

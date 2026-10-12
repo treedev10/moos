@@ -1,0 +1,29 @@
+NAME
+    clear - clear the screen
+
+SYNOPSIS
+    clear
+
+DESCRIPTION
+    clear wipes everything off the screen and puts the prompt back in
+    the top-left corner. Nothing else changes: your files, your command
+    history and your colour settings stay exactly as they were.
+
+    The status bar at the bottom of the screen is never cleared.
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    clear
+    cls          the same, using the DOS-style alias
+
+SHORTCUT
+    Ctrl+L clears the screen at any time while you are typing at the
+    prompt, without losing what you have typed so far.
+
+ALIASES
+    cls
+
+SEE ALSO
+    color, keys

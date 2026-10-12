@@ -1,0 +1,76 @@
+NAME
+    color - change the colours of the screen
+
+SYNOPSIS
+    color
+    color <theme>
+    color <text-colour>
+    color <text-colour> <background-colour>
+    color reset
+
+DESCRIPTION
+    color changes the colour of the text and of the background. The
+    whole screen changes at once, including what is already on it.
+    Messages that use their own colours (errors in red, headings in
+    yellow) keep those colours on the new background.
+
+    Typing  color  on its own shows all 16 colours with their names and
+    numbers, plus the list of themes.
+
+    The setting lasts until you change it again or restart the
+    computer.
+
+COLOURS
+    You can use the name or the number:
+
+         0 black          8 darkgray
+         1 blue           9 lightblue
+         2 green         10 lightgreen
+         3 cyan          11 lightcyan
+         4 red           12 lightred
+         5 magenta       13 pink
+         6 brown         14 yellow
+         7 gray          15 white
+
+THEMES
+    Ready-made combinations:
+
+        default    light grey on black (the normal look)
+        matrix     bright green on black
+        ocean      white on blue
+        paper      black on white
+        amber      brown/orange on black, like an old terminal
+        bright     white on black
+
+ARGUMENTS
+    theme             one of the theme names above
+    text-colour       the colour of the letters
+    background-colour optional. If you leave it out, the current
+                      background is kept.
+    reset             the same as  color default
+
+EXAMPLES
+    color ocean
+        White text on a blue background.
+
+    color yellow
+        Yellow text, background unchanged.
+
+    color 15 1
+        White (15) on blue (1) - numbers work as well as names.
+
+    color default
+        Back to normal.
+
+MESSAGES
+    error: unknown colour 'x'
+        Check the spelling; type  color  to see the list.
+
+    error: text and background would be the same colour
+        You would not be able to read anything, so this is refused.
+
+ALIASES
+    colour
+
+SEE ALSO
+    clear

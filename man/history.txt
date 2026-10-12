@@ -1,0 +1,40 @@
+NAME
+    history - list the commands you typed recently
+
+SYNOPSIS
+    history
+    history clear
+
+DESCRIPTION
+    MOOS remembers the last 16 commands you typed at the moos>
+    prompt. history lists them, oldest first, with a number in front of
+    each one:
+
+          1  ls
+          2  cat welcome.txt
+          3  history
+
+    To run one again, press the Up arrow at the prompt until it
+    appears, then press Enter (you can change it first). Down goes back
+    toward newer commands.
+
+    history clear  forgets all remembered commands.
+
+WHAT IS REMEMBERED
+    - Only commands typed at the moos> prompt. Lines typed inside
+      write, append, calc mode or a confirmation are not stored.
+    - Empty lines are not stored.
+    - Typing the same command twice in a row stores it once.
+    - When 16 commands are stored, the oldest is forgotten to make room.
+    - The history is kept in memory only, so it starts empty after
+      every restart.
+
+ARGUMENTS
+    clear       optional: erase the history
+
+EXAMPLES
+    history
+    history clear
+
+SEE ALSO
+    keys

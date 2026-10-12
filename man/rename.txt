@@ -1,0 +1,44 @@
+NAME
+    rename - give a file a new name
+
+SYNOPSIS
+    rename <old-name> <new-name>
+
+DESCRIPTION
+    rename changes the name of a file. The contents and the
+    modification time stay the same - only the name changes. The change
+    is saved to disk immediately.
+
+ARGUMENTS
+    old-name    the file as it is called now
+    new-name    the name you want: 1 to 19 letters, digits, dots,
+                dashes or underscores. No other file may already have
+                this name.
+
+EXAMPLES
+    rename todo.txt done.txt
+        Renamed todo.txt to done.txt.
+
+    mv draft.txt letter.txt
+        The same, using the Unix-style alias.
+
+MESSAGES
+    usage: rename <old-name> <new-name>
+        Both names are needed.
+
+    There is no file named 'x'.
+        The old name does not exist. Check with  ls .
+
+    error: a file with that name already exists
+        Pick another new name, or delete the other file first with rm.
+        Names are not case sensitive, so changing only capital letters
+        (Notes -> notes) also gives this message.
+
+    error: invalid file name
+        The new name contains a space or a symbol that is not allowed.
+
+ALIASES
+    mv
+
+SEE ALSO
+    copy, ls, files

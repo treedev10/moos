@@ -1,0 +1,111 @@
+NAME
+    files - how MOOS stores your files
+
+OVERVIEW
+    MOOS has its own file system called MOOSFS. It is deliberately
+    simple: one flat list of files, no folders. Think of it as a box
+    with 32 numbered drawers, each able to hold one file of up to 4096
+    bytes (about two pages of text).
+
+LIMITS
+    Number of files     32
+    Size of one file    4096 bytes (4 KB)
+    Total space         131072 bytes (128 KB)
+    File name length    1 to 19 characters
+
+FILE NAMES
+    A name may contain:
+
+        letters    a-z and A-Z
+        digits     0-9
+        symbols    .  -  _
+
+    Spaces and other symbols are not allowed. Good names:
+
+        notes.txt    todo    shopping-list    2026_plans.txt
+
+    Names are not case sensitive: Notes.TXT and notes.txt are the same
+    file. The name keeps the capitals you used when you created it.
+
+    The part after the dot (like .txt) is just part of the name. MOOS
+    does not care about it, but it helps you remember what a file is.
+
+SAVING IS AUTOMATIC
+    Every change - writing, appending, copying, renaming, deleting - is
+    written to the disk immediately ("write-through"). There is no save
+    command and nothing is lost if the power goes off a moment later.
+
+    When MOOS starts it reads the whole file system into memory, so
+    reading files is instant.
+
+WHAT IS STORED FOR EACH FILE
+    name, size in bytes, the date and time it was last changed, and
+    the contents. ls shows all of this.
+
+WORKING WITH FILES
+    ls                  list all files
+    cat <file>          show a file
+    write <file>        create a file by typing it
+    append <file>       add lines to the end of a file
+    echo text > file    save one line (>> adds instead of replacing)
+    copy <a> <b>        copy a file
+    rename <a> <b>      rename a file
+    rm <file>           delete a file
+    find <text>         search in all files
+    wc <file>           count lines, words and bytes
+    hexdump <file>      show the raw bytes
+    format              erase everything
+
+HOW FILES REACH THE DISK
+    MOOS saves files on the same disk it started from. At start-up it
+    picks the way to talk to that disk:
+
+        on UEFI PCs           the firmware's own disk drivers: USB
+                              sticks, NVMe and SATA SSDs, hard disks,
+                              SD cards - whatever the PC can start from
+        on BIOS PCs           MOOS's own ATA driver for classic IDE/ATA
+                              disks, otherwise the BIOS (USB sticks,
+                              SATA disks in AHCI mode, ...)
+
+    The start-up messages, mem and sysinfo show which one is in use.
+
+SAFETY
+    MOOS only ever writes to the disk it started from, and only inside
+    its own partition. Before writing it checks that the partition's
+    first sector carries the MOOS mark. It never touches another
+    operating system's disk - except when you explicitly ask the
+    installer to (see man install).
+
+RAM-ONLY MODE
+    If the disk cannot be reached, MOOS says so at start-up:
+
+        [WARN] Disk: boot disk not found - files are kept in RAM only
+
+    Everything still works, but files disappear when the computer is
+    turned off. This can happen when MOOS is started in an unusual way,
+    for example over the network.
+
+ON-DISK LAYOUT (FOR THE CURIOUS)
+    A MOOS disk has one partition, which both kinds of PC understand:
+
+        sector 0          master boot record: boot code for BIOS PCs
+                          and the partition table
+        sector 2048 on    the MOOS partition, 4 MB, FAT16, marked as
+                          an "EFI system partition":
+          +0              FAT boot sector (OEM name "MOOS")
+          +8 .. +519      the kernel, loaded by BIOS PCs
+          +528            MOOSFS header "MOOSFS01"
+          +529 .. +530    directory: 32 entries of 32 bytes
+          +536 .. +791    file contents, 8 sectors per file
+          FAT area        \EFI\BOOT\BOOTX64.EFI, started by UEFI PCs
+                          (it carries its own copy of the kernel)
+
+    Your files live in the partition's "reserved sectors", which the
+    FAT file system leaves alone. A directory entry holds the name (20
+    bytes), the size, a "used" flag and the packed modification time.
+
+    If the header is missing at start-up (a brand new disk), MOOS
+    creates an empty file system and a welcome.txt file.
+
+SEE ALSO
+    ls, write, format, mem

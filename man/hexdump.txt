@@ -1,0 +1,49 @@
+NAME
+    hexdump - show the raw bytes of a file
+
+SYNOPSIS
+    hexdump <file>
+
+DESCRIPTION
+    Computers store text as numbers: every character is one byte with a
+    value from 0 to 255. hexdump shows those numbers, so you can see
+    exactly what a file contains, including invisible characters such
+    as line breaks.
+
+    Each row shows 16 bytes:
+
+         0010    73 0A 41 42 ...            |s.AB...|
+         ^^^^    ^^^^^^^^^^^^^^^^           ^^^^^^^^
+         offset  the bytes in hexadecimal   the same bytes as text
+
+    offset     where the row starts, counted in bytes from the start of
+               the file, in hexadecimal (0010 = byte 16)
+    bytes      16 values in hexadecimal (00 to FF). A small gap
+               separates the first 8 from the second 8.
+    text       the printable characters; anything else is shown as .
+
+    Long dumps are shown page by page. The total size is printed at the
+    end.
+
+HEXADECIMAL IN ONE MINUTE
+    Hexadecimal counts in sixteens using the digits 0-9 and A-F
+    (A=10 ... F=15). Two hex digits make one byte: 41 = 4*16+1 = 65.
+    Use the calculator to convert:  calc 0x41  shows 65.
+
+COMMON BYTES
+    0A   line break (Enter)        20   space
+    09   tab                       30-39  digits 0-9
+    41-5A  capitals A-Z            61-7A  small letters a-z
+
+ARGUMENTS
+    file        the file to show
+
+EXAMPLES
+    hexdump welcome.txt
+    hex todo.txt         (short alias)
+
+ALIASES
+    hex
+
+SEE ALSO
+    cat, wc, calc

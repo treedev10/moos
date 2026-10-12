@@ -1,0 +1,79 @@
+NAME
+    keys - every keyboard shortcut in MOOS
+
+EDITING THE COMMAND LINE
+    Left / Right     move the cursor one character
+    Home  or Ctrl+A  jump to the start of the line
+    End   or Ctrl+E  jump to the end of the line
+    Backspace        delete the character before the cursor
+    Delete           delete the character under the cursor
+    Esc   or Ctrl+U  erase the whole line and start again
+
+    You can move into the middle of a line and type: the new text is
+    inserted, nothing is overwritten.
+
+    A command line can be as long as the screen is wide (73 characters
+    after the "moos> " prompt). Extra characters are ignored.
+
+HISTORY
+    Up               show the previous command (press again to go back
+                     further)
+    Down             go forward again; past the newest entry the line
+                     becomes empty
+
+    MOOS remembers the last 16 commands. Typing the same command twice
+    in a row stores it only once. See  man history .
+
+TAB COMPLETION
+    Press Tab while typing a word and MOOS finishes it for you:
+
+      - the first word is completed as a command name
+      - after  man  or  help  it completes manual names
+      - any other word is completed as a file name
+
+    If only one name fits, it is completed and a space is added.
+    If several fit, the part they have in common is filled in. When
+    nothing more can be filled in, Tab lists all the names that fit
+    under the prompt. Pressing Tab on an empty line lists every
+    command.
+
+    Example: typing  wri  then Tab gives  write  .
+
+SPECIAL KEYS
+    Enter            run the command
+    Ctrl+C           cancel: forget the current line (shows ^C). Inside
+                     write and append it cancels without saving. In the
+                     calculator it returns to the shell.
+    Ctrl+D           "end of input": finishes text entry in write and
+                     append (same as typing . on its own line)
+    Ctrl+L           clear the screen and redraw the prompt
+
+READING LONG OUTPUT (THE PAGER)
+    man, help, cat, ls, find and hexdump stop when the screen is full
+    and show a bar at the bottom:
+
+    Space or PgDn    next page
+    Enter or Down    next line
+    Q, Esc or Ctrl+C stop reading
+
+QUESTIONS (Y/N)
+    When MOOS asks a question ending in (y/n):
+
+    y                yes, go ahead
+    n, Enter or Esc  no, leave everything as it is
+
+    Saying no is always the safe choice.
+
+KEYBOARD LAYOUT
+    On BIOS PCs MOOS reads the keyboard itself, with the US layout. On
+    UEFI PCs the firmware reads it - USB and PS/2 keyboards both work,
+    with the layout the firmware uses (usually US). Shift and Caps Lock
+    work as usual. The function keys (F1-F12) and Alt are not used.
+
+THE TEXT EDITOR
+    The full-screen editor has its own shortcuts (Ctrl+S save, Esc
+    quit, Ctrl+F find, Ctrl+K/Ctrl+U cut and paste lines, ...).
+    They are all listed in  man edit .
+
+SEE ALSO
+    intro, history, man, edit

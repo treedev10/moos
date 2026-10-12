@@ -1,0 +1,79 @@
+NAME
+    man - read the manual of a command
+
+SYNOPSIS
+    man
+    man <command>
+    man <guide>
+
+DESCRIPTION
+    man opens a page of the MOOS manual. The screen is cleared and the
+    page is shown from the top, one screen at a time. Every command has
+    a page, and there are four guide pages that explain the system as
+    a whole.
+
+    Typing  man  on its own shows this page.
+
+ARGUMENTS
+    command     any command name or alias, for example ls, dir or calc
+    guide       one of the guides:
+                    intro    a guided tour - start here
+                    keys     every keyboard shortcut
+                    files    how files are stored, names and limits
+                    install  putting MOOS on another computer
+
+MOVING AROUND
+    When a page is longer than the screen, a bar appears at the bottom:
+
+        Space or PgDn      next page
+        Enter or Down      next line
+        Q, Esc or Ctrl+C   stop reading and return to the prompt
+
+    At the end of a page you are back at the prompt automatically.
+
+HOW A PAGE IS ORGANISED
+    Pages use the same headings, in this order (not every page has
+    all of them):
+
+        NAME          the command and a one-line summary
+        SYNOPSIS      how to type it; <angle brackets> mean "put
+                      something here", [square brackets] mean
+                      "optional"
+        DESCRIPTION   what it does, in detail
+        ARGUMENTS     what each part of the command line means
+        EXAMPLES      ready-to-type examples with explanations
+        MESSAGES      what the possible messages mean and what to do
+        ALIASES       other names the command answers to
+        TIPS          handy extra information
+        SEE ALSO      related commands
+
+    Headings are shown in yellow.
+
+EXAMPLES
+    man ls
+        How to list files.
+
+    man del
+        Aliases work too: this shows the page for rm.
+
+    man intro
+        The guided tour.
+
+    man <Tab>
+        Press Tab after "man " to see every page you can open.
+
+MESSAGES
+    No manual entry for 'x'.
+        There is no command or guide with that name. MOOS suggests
+        similar names if it finds any. Type  help  for the full list.
+
+ALIASES
+    help <command> does the same as man <command>.
+
+TIPS
+    The manual pages are plain text files in the man/ folder of the
+    MOOS source code. Change one, run  python build.py  and the new
+    text is part of the system.
+
+SEE ALSO
+    help, intro, keys

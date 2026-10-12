@@ -1,0 +1,76 @@
+NAME
+    write - create a file (or replace one) by typing it
+
+SYNOPSIS
+    write <file>
+
+DESCRIPTION
+    write lets you type a new file line by line. Each line you type is
+    shown after a  |  sign. Press Enter at the end of every line.
+
+    To finish and save, do one of these:
+        - type a single full stop (.) on a line by itself, then Enter
+        - press Ctrl+D
+
+    To give up without saving anything, press Ctrl+C.
+
+    The file is saved to disk as soon as you finish, and MOOS tells
+    you how many bytes it holds.
+
+    If a file with that name already exists, write asks whether to
+    replace it. Answer y to replace it (the old text is lost) or n to
+    keep it. To add to an existing file instead, use append.
+
+ARGUMENTS
+    file        the name for the file: 1 to 19 letters, digits, dots,
+                dashes or underscores. See  man files .
+
+EDITING A LINE
+    While typing a line you can use Left/Right, Home/End, Backspace and
+    Delete to fix mistakes before pressing Enter. Once a line is
+    entered it cannot be changed from inside write - finish, then use
+    write again, or append for additions.
+
+    Each line can be up to 75 characters long (the width of the screen
+    minus the  |  margin).
+
+EXAMPLES
+    write shopping.txt
+          | eggs
+          | flour
+          | milk
+          | .
+        Saved shopping.txt (16 bytes).
+
+    write empty.txt
+          | .
+        Creates a file with no contents.
+
+MESSAGES
+    That file already exists. Replace it? (y/n)
+        Answer y to overwrite, n (or Enter) to leave it alone.
+
+    warning: the file is full (4096 bytes)
+        A file cannot be bigger than 4096 bytes. The line you just typed
+        was not added. Finish with . to save what you have.
+
+    Cancelled - nothing was saved.
+        You pressed Ctrl+C. If you were replacing a file, the old
+        version is still there, unchanged.
+
+    error: invalid file name
+        Only letters, digits and . - _ are allowed, at most 19 of them.
+
+    error: no free file slots
+        All 32 files are in use. Delete one with rm first.
+
+TIPS
+    To change a file that already exists, use the full-screen editor:
+    edit <file> . It lets you move around and fix any line.
+
+    For a single line,  echo some text > file  is quicker.
+
+    The "." line itself is not stored in the file.
+
+SEE ALSO
+    append, echo, cat, rm, files, keys

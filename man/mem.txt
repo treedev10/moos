@@ -1,0 +1,51 @@
+NAME
+    mem - show how memory and disk space are used
+
+SYNOPSIS
+    mem
+
+DESCRIPTION
+    mem prints a map of the computer's memory (RAM) and a summary of
+    the file storage.
+
+MEMORY SECTION
+    Installed RAM       how much memory the BIOS reports. It is often
+                        slightly less than the advertised size because
+                        the BIOS keeps a little for itself.
+    Kernel + manuals    where the MOOS program itself is loaded,
+                        including all of these manual pages
+    Kernel variables    the kernel's working data (screen position,
+                        command history, keyboard buffer and so on)
+    Kernel stack        scratch space the processor uses for
+                        calculations and function calls
+    Screen memory       BIOS: the video card's text buffer. Writing a
+    / Screen            byte there makes a character appear.
+                        UEFI: the graphics mode and the address of its
+                        frame buffer, where MOOS draws every character
+                        pixel by pixel.
+    File cache          a copy of the whole file system, loaded at
+                        start-up so reading files is instant
+    Work buffers        space used while you write, copy or page
+                        through text
+    Unused              everything else - MOOS is tiny, so nearly
+                        all of the memory is free
+
+    Addresses are shown in hexadecimal (0x...). See  man hexdump  for a
+    short introduction to hexadecimal.
+
+STORAGE SECTION
+    Mode     "saved on the boot disk" when files survive a restart,
+             or "RAM only" when the disk cannot be written (see
+             man files)
+    Saved through
+             the MOOS ATA driver, or the BIOS (for USB sticks and
+             SATA/AHCI disks)
+    Files    how many of the 32 file slots are in use
+    Used     the total size of all files
+    Free     how many bytes are left, and in how many empty slots
+
+ARGUMENTS
+    None.
+
+SEE ALSO
+    sysinfo, ls, files

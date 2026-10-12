@@ -1,0 +1,44 @@
+NAME
+    cat - show what is inside a file
+
+SYNOPSIS
+    cat <file>
+
+DESCRIPTION
+    cat prints the contents of a file on the screen. If the file is
+    longer than the screen, it stops after each screenful and waits
+    for you (Space = next page, Enter = next line, Q = stop).
+
+    The name comes from "concatenate", because on other systems it can
+    join files together. In MOOS it simply shows one file.
+
+    Characters that cannot be shown (control codes) are displayed as a
+    dot (.). Use hexdump to see exactly which bytes they are.
+
+ARGUMENTS
+    file        the name of the file to show. Upper and lower case do
+                not matter. Press Tab to complete the name.
+
+EXAMPLES
+    cat welcome.txt
+        Shows the welcome file that comes with MOOS.
+
+    type todo.txt
+        The same, using the DOS-style alias.
+
+MESSAGES
+    usage: cat <file>
+        You did not say which file. Type  ls  to see the names.
+
+    There is no file named 'x'.
+        Check the spelling with  ls . Remember that file names cannot
+        contain spaces.
+
+    (x is empty)
+        The file exists but contains no bytes.
+
+ALIASES
+    type, more
+
+SEE ALSO
+    ls, write, hexdump, wc, find

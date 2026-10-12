@@ -1,0 +1,55 @@
+NAME
+    ls - list all files
+
+SYNOPSIS
+    ls
+
+DESCRIPTION
+    ls shows every file on the disk, one per line, with three columns:
+
+        NAME        the file name
+        SIZE        how many bytes the file contains (B = bytes)
+        MODIFIED    when the file was last changed, as
+                    year-month-day hour:minute
+
+    Below the list a summary shows how many of the 32 file slots are in
+    use and how many bytes all files take together.
+
+    Files are listed in slot order: roughly the order in which they
+    were created. When a file is deleted its slot is reused by the
+    next new file, so a new file can appear in the middle of the list.
+
+    If there are no files at all, ls tells you how to create one.
+
+ARGUMENTS
+    None. Anything typed after ls is ignored.
+
+EXAMPLES
+    ls
+          NAME                     SIZE    MODIFIED
+          welcome.txt             414 B  2026-10-12 09:15
+          todo.txt                 37 B  2026-10-12 10:02
+
+          2 of 32 files, 451 bytes used. Each file can hold up to
+          4096 bytes.
+
+MESSAGES
+    No files yet.
+        The disk is empty. Create a file with  write <name>  or
+        echo hello > hello.txt .
+
+    Note: no disk was found ...
+        MOOS is running in RAM-only mode, so files will be lost when
+        the computer is turned off. See  man files .
+
+ALIASES
+    dir
+
+TIPS
+    A byte is roughly one character of text. A full screen of text is
+    about 2000 bytes, so a 4096-byte file holds about two screens.
+
+    The time comes from the computer's built-in clock (see  man time ).
+
+SEE ALSO
+    cat, wc, mem, files

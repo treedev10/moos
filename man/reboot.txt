@@ -1,0 +1,35 @@
+NAME
+    reboot - restart the computer
+
+SYNOPSIS
+    reboot
+
+DESCRIPTION
+    reboot restarts the computer straight away. MOOS then loads again
+    from the disk, just as when the computer is switched on.
+
+    You do not need to save anything first: MOOS writes every file
+    change to the disk the moment it happens. Your files will be there
+    after the restart. What is lost is only what lives in memory: the
+    screen contents, your command history and your colour setting.
+
+HOW IT WORKS
+    On UEFI PCs MOOS asks the firmware to restart the computer.
+
+    On BIOS PCs MOOS asks the keyboard controller chip to pulse the
+    processor's reset line - the traditional way to reset a PC. If that
+    does not work, it deliberately causes a "triple fault", which every
+    x86 processor answers by resetting itself.
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    reboot
+    restart      alias
+
+ALIASES
+    restart
+
+SEE ALSO
+    shutdown

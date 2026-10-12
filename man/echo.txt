@@ -1,0 +1,65 @@
+NAME
+    echo - print text, or save it to a file
+
+SYNOPSIS
+    echo <text>
+    echo <text> > <file>
+    echo <text> >> <file>
+
+DESCRIPTION
+    In its simplest form echo just prints the text you give it back on
+    the screen.
+
+    With a > sign it saves the text into a file instead, as one line:
+
+        >   REPLACE: the file will contain only this line. If the file
+            exists, its old contents are lost (no question is asked).
+        >>  ADD: the line is added to the end of the file. If the file
+            does not exist yet, it is created.
+
+    After saving, echo shows the new size of the file in grey.
+
+    Spaces at the end of the text are removed. If the whole text is in
+    double quotes, the quotes are removed too, which lets you keep
+    spaces at the start: echo "  indented" > f
+
+ARGUMENTS
+    text        anything you like (it may contain spaces)
+    file        the file to write to, after > or >>
+
+EXAMPLES
+    echo Hello, world!
+        Prints: Hello, world!
+
+    echo buy milk > todo.txt
+        todo.txt now contains one line: buy milk
+
+    echo call mum >> todo.txt
+        Adds a second line to todo.txt.
+
+    echo "  two spaces in front" >> todo.txt
+        Quotes keep the leading spaces.
+
+    echo > blank.txt
+        Creates a file holding only an empty line.
+
+MESSAGES
+    error: put a file name after >
+        You typed > but no file name after it.
+
+    error: file too large
+        Adding the line would make the file bigger than 4096 bytes.
+
+    error: invalid file name / no free file slots
+        See  man files .
+
+TIPS
+    echo is the quickest way to keep a to-do list:
+        echo water the plants >> todo.txt
+        cat todo.txt
+
+    A > sign anywhere in the text starts the file name, so text
+    itself cannot contain > .
+
+SEE ALSO
+    write, append, cat

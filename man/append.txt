@@ -1,0 +1,48 @@
+NAME
+    append - add lines to the end of a file
+
+SYNOPSIS
+    append <file>
+
+DESCRIPTION
+    append works like write, but keeps what is already in the file and
+    adds your new lines after it. It first tells you how many bytes the
+    file already has, then you type new lines, each followed by Enter.
+
+    To finish and save, type a single full stop (.) on a line by
+    itself, or press Ctrl+D. Ctrl+C cancels and leaves the file exactly
+    as it was.
+
+    If the file does not exist yet, append simply creates it.
+
+    If the existing text does not end with a line break, append adds
+    one first so your new text starts on a fresh line.
+
+ARGUMENTS
+    file        the file to add to (or create). Tab completes names.
+
+EXAMPLES
+    append shopping.txt
+        Adding to shopping.txt (16 bytes so far)
+          | butter
+          | .
+        Saved shopping.txt (23 bytes).
+
+MESSAGES
+    x does not exist yet - it will be created.
+        Just information: a new file is made.
+
+    warning: the file is full (4096 bytes)
+        The file reached the size limit; the last line was not added.
+
+    Cancelled - the file was not changed.
+        You pressed Ctrl+C.
+
+    error: invalid file name / no free file slots
+        See  man write .
+
+TIPS
+    To add just one line,  echo text >> file  is quicker.
+
+SEE ALSO
+    write, echo, cat, files

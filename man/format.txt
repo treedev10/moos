@@ -1,0 +1,39 @@
+NAME
+    format - erase all files
+
+SYNOPSIS
+    format
+
+DESCRIPTION
+    format deletes every file on the disk at once and leaves an empty
+    file system - like a brand new disk. This cannot be undone.
+
+    Because it is so destructive, format first shows how many files
+    will be erased and then asks you to type the word YES in capital
+    letters, followed by Enter. Anything else - "yes", "y", an empty
+    line or Ctrl+C - cancels and nothing happens.
+
+    format only erases your files. MOOS itself is not affected and
+    keeps working normally. The welcome.txt file is not recreated.
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    format
+        WARNING: this permanently erases ALL 5 file(s). It cannot be
+        undone.
+        Type YES (in capitals) and press Enter to continue, anything
+        else cancels.
+        confirm> YES
+        Done. All files were erased.
+
+MESSAGES
+    Cancelled - your files are untouched.
+        You did not type YES exactly.
+
+TIPS
+    To delete just one file, use  rm <file>  instead.
+
+SEE ALSO
+    rm, files

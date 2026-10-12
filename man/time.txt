@@ -1,0 +1,43 @@
+NAME
+    time - show today's date and the time
+
+SYNOPSIS
+    time
+
+DESCRIPTION
+    time shows the day of the week, the date and the time:
+
+        Monday, 12 October 2026   14:03:22
+
+    The same date and time are always visible on the right of the
+    status bar at the bottom of the screen, updated every second.
+
+WHERE THE TIME COMES FROM
+    Every PC has a small battery-powered clock (the "real-time clock"
+    or RTC) that keeps running when the computer is off. On BIOS PCs
+    MOOS reads the clock chip directly; on UEFI PCs it asks the
+    firmware, which knows how to read whatever clock the PC has. The
+    clock uses a 24-hour format.
+
+    MOOS cannot change the clock. To correct it, set the time in your
+    computer's BIOS/UEFI setup screen. When MOOS runs inside the QEMU
+    emulator, the clock follows the host computer's time.
+
+    The day of the week is calculated from the date.
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    time
+    date        the same, using an alias
+
+ALIASES
+    date
+
+TIPS
+    ls shows when each file was last changed, using the same clock.
+    To see how long the computer has been running, use  uptime .
+
+SEE ALSO
+    uptime, ls

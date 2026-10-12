@@ -1,0 +1,113 @@
+NAME
+    install - put MOOS on a disk so a computer starts from it
+
+SYNOPSIS
+    install
+
+DESCRIPTION
+    install copies MOOS from the disk it is running from (usually a USB
+    stick) onto another disk of this computer, such as its internal SSD
+    or hard disk. Afterwards the computer can start MOOS without the
+    stick.
+
+    It works the same on new PCs (UEFI firmware) and old PCs (BIOS).
+    The installed disk starts on both kinds.
+
+    The installer takes you through four steps:
+
+        1. It lists every disk it can find, with its type and size.
+           The disk MOOS is running from is marked and cannot be
+           chosen. Disks that are too small or read-only are marked.
+        2. You type the number of the disk to install on.
+        3. You type ERASE in capitals to confirm. Anything else cancels.
+        4. It asks whether your files should be copied too.
+
+    It then copies MOOS (about 4 MB), writes a new partition table and
+    checks the result. This takes a few seconds.
+
+WARNING
+    THE CHOSEN DISK IS COMPLETELY ERASED: every partition, every file
+    and any other operating system on it (Windows, Linux, ...). Only
+    install on a disk you do not need for anything else. Take out any
+    USB disks you do not want to risk before you start.
+
+    Nothing is written until you type ERASE.
+
+WHAT ENDS UP ON THE DISK
+    sector 0        a new master boot record with one partition
+    1 MB onwards    the MOOS partition (4 MB, FAT16, marked as an EFI
+                    system partition): the UEFI loader
+                    \EFI\BOOT\BOOTX64.EFI, the kernel for BIOS PCs and
+                    your files
+    the rest        unused
+
+    Old partition tables at the start and the end of the disk are wiped
+    so other systems do not get confused.
+
+AFTER INSTALLING
+    Take out the USB stick and type  reboot . If the computer still
+    starts something else, open its boot menu (often F12, F11, F10, F8
+    or Esc while the logo is shown) and choose the disk. In the
+    firmware setup you can also make it the first boot device.
+
+EXAMPLES
+    install
+        MOOS installer - copies MOOS onto another disk ...
+          #  type        size
+          1  USB             5 MB  (MOOS is running from this disk)
+          2  NVMe SSD    476.9 GB
+        disk number> 2
+        type ERASE> ERASE
+        You have 3 file(s). Copy your files to the new disk too? (y/n)
+
+GETTING MOOS ONTO A USB STICK FIRST
+    On your main computer, write the file build/moos.img to a USB
+    stick (this erases the stick):
+
+        Windows        Rufus (rufus.ie): choose the stick, SELECT
+                       moos.img, START, and pick "DD image" if asked
+        any system     balenaEtcher: flash from file, pick moos.img
+        Linux / Mac    dd - see INSTALL.md in the MOOS folder
+
+    Then start the PC from the stick: switch it on and press the boot
+    menu key. MOOS starts on UEFI PCs and on old BIOS PCs.
+
+WHAT A PC NEEDS
+    - an x86 PC: 64-bit UEFI firmware (practically every PC since
+      about 2012) or a classic BIOS
+    - Secure Boot turned OFF in the firmware setup. MOOS is not signed
+      by Microsoft, so a PC with Secure Boot on refuses to start it.
+    - a disk of at least 5 MB with 512-byte sectors
+
+    Nothing else: MOOS uses the firmware's own drivers, so USB
+    keyboards, NVMe and SATA disks and any graphics card work.
+
+VIRTUAL MACHINES
+    On your main computer,  python build.py vm  makes ready-to-use
+    disks: moos.vdi (VirtualBox), moos.vmdk (VMware), moos.vhd
+    (Hyper-V generation 1) and moos.vhdx (Hyper-V generation 2). Both
+    BIOS and EFI settings work. See INSTALL.md.
+
+MESSAGES
+    MOOS cannot be installed on that disk (...)
+        The reason is in brackets: the disk MOOS is running from, too
+        small, read-only, or a sector size other than 512 bytes.
+
+    That disk holds the very copy of MOOS that is running now
+        A safety check: the chosen disk contains the partition MOOS is
+        running from.
+
+    error: writing to the disk failed / the disk did not keep ...
+        The disk refused the data. The disk will not start MOOS; try
+        again or use another disk.
+
+    the installer copies MOOS from the disk it started from, but ...
+        MOOS was started in a way that keeps everything in memory
+        (see man files), so there is nothing to copy from.
+
+REMOVING MOOS
+    Install another operating system over it, or erase the disk with
+    another system's disk tool.
+
+SEE ALSO
+    files, reboot, sysinfo, intro

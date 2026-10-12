@@ -1,0 +1,111 @@
+WELCOME TO MOOS
+    MOOS - the Mightily Optimized Operating System - is a tiny
+    operating system written from scratch in x86
+    assembly language. It is not based on Linux, DOS or anything else:
+    the boot loader, the drivers, the file system, the shell and every
+    command were written just for it. The whole system is smaller than
+    a typical photo on your phone.
+
+    It starts on new PCs (UEFI firmware, graphics screens, USB
+    keyboards, NVMe SSDs) as well as on old ones with a classic BIOS,
+    and it can install itself onto a computer's disk - see
+    man install .
+
+    This page is a guided tour. Read it from top to bottom - it takes
+    about five minutes.
+
+READING THIS MANUAL
+    You are inside the manual viewer right now. When the screen is full
+    a bar appears at the bottom:
+
+        Space   show the next page
+        Enter   show one more line
+        Q       stop reading and go back to the prompt
+
+    Every command has its own manual. Type  man <command>  to read it,
+    for example  man ls  or  man calc.
+
+THE PROMPT
+    When you see
+
+        moos>
+
+    the system is waiting for you to type a command. Type the command
+    name, then press Enter. Upper or lower case does not matter, so LS,
+    Ls and ls all mean the same thing.
+
+    Most commands take arguments - extra words that tell them what to
+    work on. Arguments are separated by spaces:
+
+        cat welcome.txt
+        copy welcome.txt backup.txt
+
+STEP 1 - LOOK AROUND
+    help          shows every command with a one-line description
+    ls            lists the files on the disk
+    cat welcome.txt   shows what is inside the file welcome.txt
+    sysinfo       tells you about the computer you are running on
+
+STEP 2 - MAKE YOUR OWN FILE
+    Type:
+
+        write diary.txt
+
+    Now type a few lines of text, pressing Enter after each one. When
+    you are done, type a single full stop (.) on a line by itself and
+    press Enter. Your file is saved immediately. Check it with:
+
+        cat diary.txt
+
+    Add more lines later with  append diary.txt , or quickly save one
+    line with  echo Remember the milk > todo.txt
+
+    To change text that is already in a file, open it in the
+    full-screen editor:
+
+        edit diary.txt
+
+    Move with the arrow keys, type to insert, press Ctrl+S to save and
+    Esc to leave. Everything about the editor is in  man edit .
+
+STEP 3 - LET THE KEYBOARD HELP YOU
+    Tab        finishes a command or file name for you. Type  ca  and
+               press Tab: it becomes  cat . Press Tab again after a
+               space and it completes file names.
+    Up/Down    bring back commands you typed before.
+    Ctrl+C     cancels whatever you are typing.
+    Ctrl+L     clears the screen.
+
+    The full list is in  man keys .
+
+STEP 4 - TRY SOME TOOLS
+    calc 12*(3+4)    a calculator for whole numbers
+    time             today's date and the time
+    color ocean      a blue colour theme (color default to undo)
+    find milk        searches all your files for the word "milk"
+
+MISTAKES ARE OK
+    If you mistype a command, MOOS tells you and suggests what you
+    probably meant:
+
+        moos> lss
+        Unknown command 'lss'. Did you mean ls?
+
+    Commands that destroy something (rm, format, overwriting a file)
+    always ask first. Answer y for yes or n for no.
+
+SAVING AND TURNING OFF
+    There is no "save" step: every change to a file is written to the
+    disk the moment you make it. When you are finished, type
+
+        shutdown
+
+    to power off, or  reboot  to restart. Your files will still be
+    there next time.
+
+WHERE TO GO NEXT
+    man keys     every keyboard shortcut
+    man edit     the text editor
+    man files    how files are stored, and the limits
+    man install  installing MOOS on this computer's disk
+    help         the list of all commands

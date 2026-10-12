@@ -1,0 +1,55 @@
+NAME
+    find - search for text inside files
+
+SYNOPSIS
+    find <text>
+    find <text> <file>
+
+DESCRIPTION
+    find looks through your files line by line and shows every line
+    that contains the text you are looking for. Each result shows the
+    file name, the line number and the line itself:
+
+        todo.txt:3: buy milk
+
+    Upper and lower case are ignored, so  find MILK  also finds "milk"
+    and "Milk".
+
+    Without a file name, all files are searched. With a file name, only
+    that file is searched. At the end, find tells you how many lines
+    matched. Long result lists are shown page by page.
+
+    Very long lines are cut off after 56 characters in the results so
+    each result fits on one screen line.
+
+ARGUMENTS
+    text        what to look for. It is a single word: it cannot
+                contain spaces (the space separates it from the file
+                name). Part of a word works too: "mil" finds "milk".
+    file        optional: search only this file
+
+EXAMPLES
+    find milk
+        Searches every file for "milk".
+
+    find todo notes.txt
+        Searches only notes.txt.
+
+    find .
+        Every line that contains a full stop.
+
+    grep milk
+        The same as find milk, using the Unix-style alias.
+
+MESSAGES
+    No lines contain 'x'.
+        The text was not found anywhere. Check the spelling.
+
+    There is no file named 'x'.
+        The file you named does not exist.
+
+ALIASES
+    grep
+
+SEE ALSO
+    cat, wc, ls

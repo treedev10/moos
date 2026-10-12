@@ -1,0 +1,121 @@
+NAME
+    edit - full-screen text editor
+
+SYNOPSIS
+    edit <file>
+
+DESCRIPTION
+    edit opens a file in a full-screen editor where you can move around
+    freely and change any part of the text - like Notepad or nano.
+    If the file does not exist yet, you start with an empty page and
+    the file is created when you save.
+
+    The screen looks like this:
+
+        top line      the file name, [modified] if there are unsaved
+                      changes, the cursor's line and column, and the
+                      file size (a file holds at most 4096 bytes)
+        middle        your text (22 lines are visible at a time)
+        bottom line   the most important shortcuts, or a message
+
+    Just type to insert text where the blinking cursor is. Nothing is
+    written to the disk until you save with Ctrl+S.
+
+    In the shortcut bar, ^ means the Ctrl key: ^S is Ctrl+S.
+
+MOVING AROUND
+    Arrow keys        one character or one line
+    Home  or Ctrl+A   start of the line
+    End   or Ctrl+E   end of the line
+    PgUp / PgDn       one screen up or down
+    Ctrl+G            go to a line number (1 = the top of the file)
+
+    When you move up or down, the cursor tries to stay in the same
+    column. Lines longer than the screen scroll sideways; a >> sign at
+    the right edge shows that a line continues out of view.
+
+TYPING AND DELETING
+    letters, digits   inserted at the cursor
+    Enter             split the line / start a new line
+    Tab               insert spaces up to the next multiple of 4
+    Backspace         delete the character before the cursor
+                      (at the start of a line: join it to the line above)
+    Delete            delete the character under the cursor
+                      (at the end of a line: join the next line to it)
+
+CUT AND PASTE LINES
+    Ctrl+K   cut the whole line the cursor is on. Press it several
+             times in a row to cut several lines together.
+    Ctrl+U   paste the cut lines above the line the cursor is on.
+
+    To move a block of lines: put the cursor on the first line, press
+    Ctrl+K once per line, move to the new place, press Ctrl+U.
+    To copy lines instead, cut them, paste them straight back with
+    Ctrl+U, then move and press Ctrl+U again.
+
+    The cut lines are kept until you cut something else, even after
+    you close the editor, so you can move lines between files.
+
+FINDING TEXT
+    Ctrl+F   asks what to look for (type it, press Enter) and jumps to
+             the next place it appears after the cursor. Upper and lower
+             case are ignored.
+    Ctrl+N   jumps to the next match of the same text.
+
+    The search continues from the top of the file when it reaches the
+    end. Ctrl+C or an empty answer cancels the question.
+
+SAVING AND LEAVING
+    Ctrl+S            save. The editor stays open.
+    Esc, Ctrl+Q
+    or Ctrl+X         leave the editor. If there are unsaved changes
+                      you are asked:
+                          Y    save, then leave
+                          N    leave without saving (the file on disk
+                               stays as it was at the last save)
+                          Esc  go back to editing
+
+    After leaving, the screen is cleared and a line tells you whether
+    the file was saved.
+
+ARGUMENTS
+    file        the file to open or create: 1 to 19 letters, digits,
+                dots, dashes or underscores (see  man files )
+
+EXAMPLES
+    edit notes.txt
+        Opens notes.txt, or starts a new one.
+
+    nano todo.txt
+        The same, using an alias familiar from Linux.
+
+MESSAGES
+    The file is full
+        A file can be at most 4096 bytes. Delete something before
+        adding more.
+
+    Nothing to cut here
+        The cursor is on the empty last line; there is nothing to cut.
+
+    The clipboard is empty
+        Ctrl+U only works after cutting something with Ctrl+K.
+
+    "x" was not found.
+        The search text does not appear anywhere in the file.
+
+    Could not save: ...
+        Usually "no free file slots": all 32 files are used. Leave
+        with N, delete a file with rm, and try again.
+
+ALIASES
+    nano, notepad
+
+TIPS
+    write and append are handy for typing a quick note line by line;
+    edit is the tool for changing text that already exists.
+
+    The editor has no undo. If you make a mess, leave with Esc and
+    answer N: the file goes back to how it was when you last saved.
+
+SEE ALSO
+    write, append, cat, files, keys

@@ -1,0 +1,94 @@
+NAME
+    calc - integer calculator
+
+SYNOPSIS
+    calc <expression>
+    calc
+
+DESCRIPTION
+    calc works out a sum and prints the answer, in normal (decimal)
+    numbers and in hexadecimal:
+
+        moos> calc (2+3)*4
+        = 20   (hex 14)
+
+    Typing  calc  on its own starts calculator mode: a  calc>  prompt
+    where you can do one sum after another. Leave it with an empty
+    line, q, or Ctrl+C.
+
+    calc works with whole numbers only (no decimals). The range is
+    -2147483648 to 2147483647. If an answer would be outside that range
+    you get an error instead of a wrong number.
+
+OPERATORS
+    Highest priority first:
+
+        ( )      brackets - worked out first
+        ^        power: 2^10 = 1024
+        -x       negative number: -5, -(2+3)
+        * / %    multiply, divide, remainder
+        + -      add, subtract
+
+    Operators of the same priority are worked out left to right, except
+    ^, which goes right to left: 2^3^2 = 2^9 = 512.
+
+    Note that -2^2 = -4, because the power is done before the minus.
+    Write (-2)^2 to get 4.
+
+DIVISION
+    / drops the fraction (it rounds toward zero):
+        7/2 = 3        -7/2 = -3
+    % gives what is left over:
+        7%2 = 1        -7%3 = -1   (it has the sign of the first number)
+
+NUMBERS
+    42          decimal
+    0x2A        hexadecimal (0-9, A-F), for example 0xFF = 255
+    0b101010    binary (0 and 1), for example 0b101 = 5
+    ans         the answer of the previous calculation
+
+    Spaces are optional:  1+2  and  1 + 2  are the same.
+
+EXAMPLES
+    calc 1+2*3            = 7   (multiplication first)
+    calc (1+2)*3          = 9
+    calc 100/7            = 14
+    calc 100%7            = 2
+    calc 2^16             = 65536
+    calc 0xFF             = 255 (converts hex to decimal)
+    calc 255              = 255 (hex FF): converts decimal to hex
+    calc ans*2            doubles the previous answer
+    calc                  starts calculator mode
+
+MESSAGES
+    error: division by zero is not allowed
+        Something was divided by 0 (or % 0).
+
+    error: number too big
+        The answer, or a number you typed, does not fit in the allowed
+        range.
+
+    error: missing closing ')'
+        Every ( needs a matching ).
+
+    error: expected a number or '('
+        A number is missing in the middle, for example  *3  or  2*/3 .
+
+    error: the expression ends too early
+        The sum stops where a number should come, for example  2* .
+
+    error: expected digits after 0x / 0b
+        0x must be followed by hex digits, 0b by 0s and 1s.
+
+    error: unexpected character
+        calc found something it does not understand, like a letter or
+        a ) without a matching (.
+
+    error: negative powers are not supported
+        2^-1 would be 0.5, which is not a whole number.
+
+    "(at character N)" tells you where in your sum the problem is:
+    character 1 is the first one after "calc ".
+
+SEE ALSO
+    hexdump

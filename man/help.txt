@@ -1,0 +1,42 @@
+NAME
+    help - list all commands
+
+SYNOPSIS
+    help
+    help <command>
+
+DESCRIPTION
+    Without arguments, help shows every MOOS command in two columns,
+    each with a short description, followed by the most useful keyboard
+    shortcuts and the names of the guide pages.
+
+    With a command name, help shows that command's full manual. It is
+    exactly the same as typing  man <command> .
+
+ARGUMENTS
+    command     optional. Any command name, alias or guide name
+                (intro, keys, files, install).
+
+EXAMPLES
+    help
+        Shows the overview of all commands.
+
+    help calc
+        Opens the manual for the calculator (same as  man calc ).
+
+    ?
+        A shorter way to type  help .
+
+ALIASES
+    ?
+
+TIPS
+    The overview only shows each command's main name. Several commands
+    also answer to other names that people know from other systems,
+    for example  dir  for ls,  del  for rm or  cls  for clear. Each
+    manual page lists the aliases of its command.
+
+    If you are completely new, start with  man intro .
+
+SEE ALSO
+    man, intro, keys

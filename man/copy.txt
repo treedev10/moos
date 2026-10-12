@@ -1,0 +1,52 @@
+NAME
+    copy - make a copy of a file
+
+SYNOPSIS
+    copy <source> <destination>
+
+DESCRIPTION
+    copy creates a second file with exactly the same contents as the
+    first. After copying, the two files are independent: changing one
+    does not change the other.
+
+    If the destination file already exists, copy asks before replacing
+    it. The copy gets the current date and time as its modification
+    time.
+
+ARGUMENTS
+    source        the file to copy (it must exist)
+    destination   the name for the copy (1 to 19 letters, digits,
+                  dots, dashes or underscores)
+
+EXAMPLES
+    copy diary.txt diary-backup.txt
+        Copied diary.txt to diary-backup.txt (812 bytes).
+
+    cp notes.txt notes2.txt
+        The same, using the Unix-style alias.
+
+MESSAGES
+    usage: copy <source> <destination>
+        You need to give both names.
+
+    There is no file named 'x'.
+        The source file does not exist.
+
+    That file already exists. Replace it? (y/n)
+        The destination exists. y overwrites it, n cancels.
+
+    error: source and destination are the same file
+        A file cannot be copied onto itself.
+
+    error: no free file slots
+        All 32 slots are used. Delete a file with rm first.
+
+ALIASES
+    cp
+
+TIPS
+    Make a copy before big changes - it is an easy way to keep a
+    backup.
+
+SEE ALSO
+    rename, rm, write

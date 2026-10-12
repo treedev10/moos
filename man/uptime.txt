@@ -1,0 +1,29 @@
+NAME
+    uptime - how long the computer has been running
+
+SYNOPSIS
+    uptime
+
+DESCRIPTION
+    uptime shows how much time has passed since MOOS started, in
+    days, hours, minutes and seconds:
+
+        Up for 0 day(s), 1 hour(s), 5 minute(s) and 12 second(s).
+        (390120 timer ticks at 100 per second since start-up)
+
+HOW IT WORKS
+    MOOS programs the PC's timer chip (the PIT) to interrupt the
+    processor 100 times every second. Each interrupt adds one "tick" to
+    a counter. uptime divides that counter by 100 to get seconds.
+
+    The counter restarts from zero every time the computer starts or
+    reboots. It keeps counting correctly for well over a year.
+
+    Between ticks, when nothing needs doing, MOOS halts the processor
+    to save power, so an idle MOOS uses almost no CPU time.
+
+ARGUMENTS
+    None.
+
+SEE ALSO
+    time, sysinfo

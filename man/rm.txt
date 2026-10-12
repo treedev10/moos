@@ -1,0 +1,45 @@
+NAME
+    rm - delete a file
+
+SYNOPSIS
+    rm <file>
+
+DESCRIPTION
+    rm removes a file from the disk for good. MOOS shows the file's
+    name and size and asks you to confirm:
+
+        Delete todo.txt (37 bytes)? (y/n)
+
+    Press y to delete it. Press n, Enter or Esc to keep it.
+
+    There is no recycle bin: a deleted file cannot be brought back. Its
+    slot becomes free for the next new file.
+
+ARGUMENTS
+    file        the file to delete. Tab completes the name.
+
+EXAMPLES
+    rm old-notes.txt
+        Delete old-notes.txt (120 bytes)? (y/n) yes
+        Deleted old-notes.txt.
+
+    del old-notes.txt
+        The same, using the DOS-style alias.
+
+MESSAGES
+    There is no file named 'x'.
+        Nothing was deleted. Check the name with  ls .
+
+    Nothing was deleted.
+        You answered no.
+
+ALIASES
+    del
+
+TIPS
+    Not sure what is in a file? Look first with  cat <file> .
+    Want a backup before deleting? Use  copy <file> <backup-name> .
+    To delete every file at once, see  man format .
+
+SEE ALSO
+    ls, copy, format

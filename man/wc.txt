@@ -1,0 +1,41 @@
+NAME
+    wc - count the lines, words and bytes in a file
+
+SYNOPSIS
+    wc <file>
+
+DESCRIPTION
+    wc ("word count") reads a file and prints three numbers:
+
+        lines   how many lines of text the file has
+        words   how many words it has
+        bytes   its size in bytes (the same number ls shows)
+
+HOW THINGS ARE COUNTED
+    A line ends with a line break (Enter). A last line without a line
+    break still counts as a line.
+
+    A word is any group of characters without spaces, tabs or line
+    breaks in it. "hello, world!" is two words; "2+2=4" is one.
+
+    A byte is one character. Line breaks count as bytes too: a file
+    containing the single line "hi" is 3 bytes ("h", "i" and the line
+    break).
+
+ARGUMENTS
+    file        the file to count
+
+EXAMPLES
+    wc welcome.txt
+          lines   words   bytes  file
+             13      65     414  welcome.txt
+
+MESSAGES
+    usage: wc <file>
+        Name the file to count.
+
+    There is no file named 'x'.
+        Check the name with  ls .
+
+SEE ALSO
+    ls, cat, hexdump

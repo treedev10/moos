@@ -1,0 +1,38 @@
+NAME
+    shutdown - turn the computer off
+
+SYNOPSIS
+    shutdown
+
+DESCRIPTION
+    shutdown ends MOOS and switches the computer off. Your files are
+    already safe on the disk - MOOS saves every change immediately -
+    so it is fine to shut down at any time.
+
+    MOOS switches the power off the standard way: it looks up the
+    power controls in the computer's ACPI tables and uses them. This
+    works on practically every PC made in the last 20 years and in
+    virtual machines (QEMU, VirtualBox, VMware, Hyper-V), whose window
+    then closes. On UEFI PCs MOOS can also ask the firmware to power
+    off.
+
+    If none of that works (very old PCs), MOOS stops safely and shows:
+
+        It is now safe to turn off your computer.
+
+    Then simply press the power button.
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    shutdown
+    exit         alias
+    poweroff     alias
+    halt         alias
+
+ALIASES
+    exit, poweroff, halt
+
+SEE ALSO
+    reboot
