@@ -46,10 +46,12 @@ org KORG
 %define NET_BUF      KV(0x220000)    ; NIC DMA buffers + network scratch (64K)
 %define PKG_BUF      KV(0x230000)    ; downloaded package (512K, under KMEM)
 %define GUI_BB       KV(0x2B0000)    ; GUI back buffer (up to 1280x1024x4 = 5M)
+%define NET_RING     KV(0x7B0000)    ; NIC receive ring: 32K + wrap room
+%define TLS_BASE     KV(0x7C0000)    ; HTTPS buffers (128K, see tls.asm)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
 PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x7B0000 - 0x10000 ; everything above, from kbase
+KMEM_SIZE    equ 0x7E0000 - 0x10000 ; everything above, from kbase
 
 VGA_MEM      equ screen_buf         ; all drawing goes to this copy of the
 SCR_COLS     equ 80                 ; screen; screen_present shows it
@@ -151,6 +153,11 @@ zero_bss:
 %include "src/ata.asm"
 %include "src/fs.asm"
 %include "src/net.asm"
+%include "src/crypto.asm"
+%include "src/aes.asm"
+%include "src/x25519.asm"
+%include "src/rsa.asm"
+%include "src/selftest.asm"
 %include "src/readline.asm"
 %include "src/pager.asm"
 %include "src/shell.asm"

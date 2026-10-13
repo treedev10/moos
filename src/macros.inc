@@ -77,3 +77,40 @@ CMD_FUNC    equ 4
 CMD_DESC    equ 8
 CMD_MAN     equ 12
 CMD_SIZE    equ 16
+
+; -----------------------------------------------------------------------------
+; C-style calls, used by the crypto / TLS code (many arguments per call).
+;   CCALL fn, a, b, c   pushes c, b, a, calls fn, then drops the arguments.
+;   Functions written with CENTER / CLEAVE keep EBX ESI EDI EBP; EAX ECX EDX
+;   may change; the result comes back in EAX. ARG(0) is the first argument.
+;   Pass memory operands as "dword [x]".
+; -----------------------------------------------------------------------------
+%macro CCALL 1-*
+    %rep %0 - 1
+        %rotate -1
+        push %1
+    %endrep
+    %rotate -1
+    call %1
+    %if %0 > 1
+        add esp, 4 * (%0 - 1)
+    %endif
+%endmacro
+
+%macro CENTER 0
+    push ebp
+    mov ebp, esp
+    push ebx
+    push esi
+    push edi
+%endmacro
+
+%macro CLEAVE 0
+    pop edi
+    pop esi
+    pop ebx
+    pop ebp
+    ret
+%endmacro
+
+%define ARG(n) [ebp + 8 + 4 * (n)]
