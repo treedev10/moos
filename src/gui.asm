@@ -76,6 +76,7 @@ wp_oy       resd 1
 gui_quit    resb 1
 
 section .data
+desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
 ga_term     db "term", 0
@@ -313,6 +314,12 @@ cmd_gui:
     PRINTF `The graphical desktop needs a UEFI PC (it draws on a graphics\nscreen). This computer started from a BIOS, so only the text\nconsole is available.\n`
     ret
 .ok:
+    mov esi, desktop_marker         ; the desktop is an installable package
+    call fs_find
+    jnc .installed
+    PRINTF `The desktop is not installed yet. Install it with:\n\n    \x01wapt install desktop\x01n\n\n(this downloads it from the package server - see \x01wman apt\x01n). It is a one-time\nstep; after that, \x01wgui\x01n starts the desktop.\n`
+    ret
+.installed:
     call gfx_init
     jnc .have_gfx
     PRINTF `No graphics screen is available.\n`

@@ -446,9 +446,9 @@ mode_fits:
     jb .bad
     cmp edx, r13d
     jb .bad
-    cmp eax, 1920
-    ja .bad
-    cmp edx, 1200
+    cmp eax, 1280                   ; cap the size so the window does not
+    ja .bad                         ; fill a typical 1080p+ monitor
+    cmp edx, 1024
     ja .bad
     clc
     ret
