@@ -18,6 +18,7 @@ calc_esp    resd 1
 calc_msg    resd 1
 calc_res    resd 1
 calc_ans    resd 1                  ; last result, available as "ans"
+id_buf      resb 32                 ; an identifier read by the parser
 
 section .data
 calc_prompt     db "calc> ", 0
@@ -30,6 +31,7 @@ ce_expected     db "expected a number or '('", 0
 ce_incomplete   db "the expression ends too early", 0
 ce_negexp       db "negative powers are not supported (whole numbers only)", 0
 ce_digits       db "expected digits after 0x / 0b", 0
+ce_unknown_var  db "unknown name (variable not set)", 0
 
 section .text
 
@@ -79,7 +81,7 @@ calc_eval:
     mov [calc_esp], esp
     mov [calc_ptr], esi
     mov [calc_start], esi
-    call c_expr
+    call c_compare
     call c_peek
     test bl, bl
     jz .ok
@@ -115,6 +117,73 @@ c_peek:
     mov [calc_ptr], esi
     mov bl, [esi]
     pop esi
+    ret
+
+; c_compare: an expression, then an optional comparison ( < > <= >= == != ),
+; giving 1 or 0. This is the top level, so "if a < b" works in scripts and
+; "calc 3 < 5" gives 1.
+c_compare:
+    call c_expr
+    call c_peek
+    mov dl, bl
+    cmp bl, '<'
+    je .op
+    cmp bl, '>'
+    je .op
+    cmp bl, '='
+    je .op
+    cmp bl, '!'
+    je .op
+    ret
+.op:
+    inc dword [calc_ptr]
+    mov dh, 0
+    call c_peek
+    cmp bl, '='
+    jne .right
+    inc dword [calc_ptr]
+    mov dh, '='
+.right:
+    push eax                        ; left value
+    call c_expr                     ; right value
+    mov ecx, eax                    ; ECX = right
+    pop eax                         ; EAX = left
+    ; Decide which setcc to use FIRST (these cmps clobber the flags), then do
+    ; cmp eax,ecx immediately before the setcc so no instruction disturbs it.
+    cmp dl, '<'
+    je .lt
+    cmp dl, '>'
+    je .gt
+    cmp dl, '='
+    je .eq
+    cmp eax, ecx                    ; "!="
+    setne al
+    jmp .done
+.lt:
+    cmp dh, '='
+    je .le
+    cmp eax, ecx
+    setl al
+    jmp .done
+.le:
+    cmp eax, ecx
+    setle al
+    jmp .done
+.gt:
+    cmp dh, '='
+    je .ge
+    cmp eax, ecx
+    setg al
+    jmp .done
+.ge:
+    cmp eax, ecx
+    setge al
+    jmp .done
+.eq:
+    cmp eax, ecx
+    sete al
+.done:
+    movzx eax, al
     ret
 
 c_expr:
@@ -261,19 +330,50 @@ c_primary:
     cmp bl, '9'
     jbe c_number
 .word:
-    mov edi, [calc_ptr]
-    mov esi, str_ans
-    call str_iprefix
-    jne .bad
-    add dword [calc_ptr], 3
-    mov eax, [calc_ans]
-    ret
-.bad:
+    mov esi, [calc_ptr]
+    mov al, [esi]
+    call to_lower
+    cmp al, 'a'
+    jb .not_ident
+    cmp al, 'z'
+    jbe .read
+    cmp byte [esi], '_'
+    je .read
+.not_ident:
     mov esi, ce_expected
     test bl, bl
     jnz calc_fail
     mov esi, ce_incomplete
     jmp calc_fail
+.read:
+    mov edi, id_buf                 ; read the identifier
+.rl:
+    mov al, [esi]
+    call is_ident_char
+    jc .id_done
+    mov [edi], al
+    inc edi
+    inc esi
+    cmp edi, id_buf + 30
+    jb .rl
+.id_done:
+    mov byte [edi], 0
+    mov [calc_ptr], esi
+    mov esi, id_buf                 ; "ans"?
+    mov edi, str_ans
+    call str_icmp
+    je .is_ans
+    mov esi, id_buf                 ; a variable?
+    call var_lookup
+    jc .unknown
+    ret
+.is_ans:
+    mov eax, [calc_ans]
+    ret
+.unknown:
+    mov esi, ce_unknown_var
+    jmp calc_fail
+
 .paren:
     inc dword [calc_ptr]
     call c_expr
@@ -285,6 +385,30 @@ c_primary:
 .no_close:
     mov esi, ce_paren
     jmp calc_fail
+
+; is_ident_char: AL = char -> CF=0 if it is a letter, digit or '_'
+is_ident_char:
+    cmp al, '_'
+    je .yes
+    cmp al, '0'
+    jb .no
+    cmp al, '9'
+    jbe .yes
+    push eax
+    call to_lower
+    cmp al, 'a'
+    jb .no_pop
+    cmp al, 'z'
+    ja .no_pop
+    pop eax
+.yes:
+    clc
+    ret
+.no_pop:
+    pop eax
+.no:
+    stc
+    ret
 
 c_number:
     mov esi, [calc_ptr]

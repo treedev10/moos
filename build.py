@@ -116,7 +116,8 @@ def ovmf_paths():
 
 
 def assemble(nasm, source, output, defines=()):
-    cmd = [nasm, "-f", "bin", source, "-o", output] + ["-D" + d for d in defines]
+    cmd = [nasm, "-f", "bin", "-w-error=label-redef-late", source, "-o", output] + \
+        ["-D" + d for d in defines]
     result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if result.stdout or result.stderr:
         print((result.stdout + result.stderr).rstrip())

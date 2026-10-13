@@ -36,6 +36,7 @@ cmd_table:
     COMMAND "hexdump",  cmd_hexdump,  "show a file as hex bytes",   man_hexdump
     COMMAND "echo",     cmd_echo,     "print text / save to file",  man_echo
     COMMAND "calc",     cmd_calc,     "integer calculator",         man_calc
+    COMMAND "run",      cmd_run,      "run a MOOS script",          man_script
     COMMAND "clear",    cmd_clear,    "clear the screen",           man_clear
     COMMAND "color",    cmd_color,    "change screen colours",      man_color
     COMMAND "time",     cmd_time,     "show date and time",         man_time

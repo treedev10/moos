@@ -1,0 +1,43 @@
+NAME
+    script - the MOOS scripting language (.ms files)
+
+SYNOPSIS
+    run <file>
+
+DESCRIPTION
+    A MOOS script is a text file of simple statements, one per line. Run it
+    with  run <file> . Create scripts with the  edit  command, or install
+    them as packages ( man apt ).
+
+STATEMENTS
+    # comment            a line starting with # is ignored
+    set x = <expr>       give the variable x a value (also:  x = <expr>)
+    print "text" <expr>  print items separated by spaces, then a new line
+    if <condition>       run the block that follows when the condition is
+        ...              true; an optional  else  block runs when false
+    else
+        ...
+    end
+    while <condition>    repeat the block while the condition stays true
+        ...
+    end
+
+EXPRESSIONS
+    Expressions use the same engine as the  calc  command: whole numbers,
+    variables, + - * / % ^, brackets, and comparisons < > <= >= == != .
+    A condition is just an expression: 0 is false, anything else is true.
+
+EXAMPLE
+    set n = 1
+    while n <= 5
+        print "line" n
+        set n = n + 1
+    end
+
+NOTES
+    In  print , a quoted "string" is one item; anything else up to the next
+    space is one expression, so write expressions without spaces there
+    (print "sum:" 2+2) or compute them with set first.
+
+SEE ALSO
+    calc, edit, apt, run
