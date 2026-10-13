@@ -1,8 +1,19 @@
 ; =============================================================================
-;  gui_apps.asm - the desktop apps: terminal, editor, script IDE, browser
+;  gui_apps.asm - the desktop apps: terminal, editor, script IDE, settings
+;  (the browser is in browser.asm)
+;
+;  Each app draws into the content box of its window (cb_x, cb_y, cb_w,
+;  cb_h - see gui_win.asm), so it follows the window when it is moved or
+;  resized. The Text Editor and the Script IDE can be open at the same time,
+;  so each has its own text buffer (a TX_ block).
 ; =============================================================================
 GUI_LOG     equ 16384
 APP_BUF     equ 4096
+TX_LEN      equ 0                   ; text buffer block: length of the text,
+TX_DIRTY    equ 4                   ; 1 = changed since saved,
+TX_FILE     equ 8                   ; the file it belongs to,
+TX_BUF      equ 32                  ; then the text itself
+TX_SIZE     equ TX_BUF + APP_BUF
 
 section .bss
 alignb 4
@@ -13,12 +24,9 @@ term_log    resb GUI_LOG
 term_log_len resd 1
 term_input  resb 160
 term_input_len resd 1
-app_buf     resb APP_BUF        ; editor / IDE text
-app_buf_len resd 1
-app_file    resb 24            ; file the editor/IDE works on
-app_dirty   resb 1
-brow_url    resb 160
-brow_url_len resd 1
+alignb 4
+tx_edit     resb TX_SIZE        ; the Text Editor's text
+tx_ide      resb TX_SIZE        ; the Script IDE's text
 ta_x        resd 1
 ta_y        resd 1
 ta_cols     resd 1
@@ -34,7 +42,6 @@ ide_file     db "script.ms", 0
 edit_file    db "notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
 edit_hint    db "Ctrl+S = Save", 0
-brow_hint    db "Type a URL, then Enter:  https://raw.githubusercontent.com/treedev10/moos/HEAD/README.md", 0
 bl_edit      db "edit", 0
 bl_write     db "write", 0
 bl_append    db "append", 0
@@ -44,8 +51,13 @@ bl_run_blk   db "(that command needs the full screen - run it from the text cons
 
 section .text
 
-; gui_log_char: append AL to the terminal log (strips \x01 colour escapes)
+; gui_log_char: append AL to the terminal log (strips \x01 colour escapes).
+; gui_capture = 2 throws the text away instead (the browser, while loading).
 gui_log_char:
+    cmp byte [gui_capture], 2
+    jne .keep
+    ret
+.keep:
     cmp byte [term_esc], 0
     je .not_esc
     mov byte [term_esc], 0          ; drop the colour letter
@@ -262,50 +274,81 @@ term_firstword_is:
     ret
 
 ; ------------------------------------------------- Editor / Script IDE
+; tx_for: EAX = APP_EDITOR or APP_IDE -> EBX = its text block
+tx_for:
+    mov ebx, tx_edit
+    cmp eax, APP_IDE
+    jne .r
+    mov ebx, tx_ide
+.r: ret
+
+; editor_app_init: EAX = app. Load its file (notes.txt / script.ms).
 editor_app_init:
+    pushad
+    call tx_for
     mov esi, edit_file              ; choose the file by app
-    cmp dword [cur_app], APP_IDE
+    cmp eax, APP_IDE
     jne .have
     mov esi, ide_file
 .have:
-    mov edi, app_file
+    lea edi, [ebx + TX_FILE]
     call str_copy
-    mov dword [app_buf_len], 0
-    mov byte [app_buf], 0
-    mov byte [app_dirty], 0
-    mov esi, app_file               ; load it if it exists
-    call fs_find
+    mov dword [ebx + TX_LEN], 0
+    mov byte [ebx + TX_BUF], 0
+    mov dword [ebx + TX_DIRTY], 0
+    mov ebp, ebx
+    lea esi, [ebp + TX_FILE]        ; load it if it exists
+    call fs_find                    ; (EBX = its index)
     jc .empty
     mov ecx, [edi + DE_SIZE]
     cmp ecx, APP_BUF - 1
     jb .size_ok
     mov ecx, APP_BUF - 1
 .size_ok:
-    mov [app_buf_len], ecx
+    mov [ebp + TX_LEN], ecx
     call fs_slot
-    mov edi, app_buf
+    lea edi, [ebp + TX_BUF]
     call mem_copy
-    mov ecx, [app_buf_len]
-    mov byte [app_buf + ecx], 0
+    mov byte [edi + ecx], 0
 .empty:
+    popad
     ret
 
+; app_text_draw: EAX = APP_EDITOR or APP_IDE -> its text, then a status line
 app_text_draw:
     pushad
+    mov [txd_app], eax
+    call tx_for
     call gui_content_box
     dec dword [ta_rows]             ; leave a row for the status line
     mov dword [ta_fg], 0xE0E0E0
-    mov ecx, [app_buf_len]
-    mov byte [app_buf + ecx], 0
-    mov esi, app_buf
+    mov ecx, [ebx + TX_LEN]
+    mov byte [ebx + TX_BUF + ecx], 0
+    ; show the end of the text (where typing goes) if it does not all fit
+    lea esi, [ebx + TX_BUF]
+    call gui_text_tail
     call gui_textarea_from
+    mov eax, [ta_rows]              ; a text cursor after the last character
+    cmp [gta_row], eax
+    jae .no_cursor
+    mov ecx, [gta_col]
+    shl ecx, 3
+    add ecx, [ta_x]
+    mov edx, [gta_row]
+    shl edx, 4
+    add edx, [ta_y]
+    add edx, 13
+    RECT ecx, edx, 8, 2, 0xE0E0E0
+.no_cursor:
     ; status line: filename + hint
     mov ecx, [ta_x]
     mov eax, [ta_rows]
     imul eax, 16
     add eax, [ta_y]
     mov edx, eax
-    mov esi, app_file
+    mov eax, [txd_app]
+    call tx_for
+    lea esi, [ebx + TX_FILE]
     mov eax, 0x80C0FF
     push edx
     call gfx_rgb
@@ -316,7 +359,7 @@ app_text_draw:
     mov ecx, [ta_x]
     add ecx, 8 * 14
     mov esi, edit_hint
-    cmp dword [cur_app], APP_IDE
+    cmp dword [txd_app], APP_IDE
     jne .h
     mov esi, ide_hint
 .h:
@@ -330,7 +373,12 @@ app_text_draw:
     popad
     ret
 
+; editor_app_key: EAX = key, for the focused Text Editor or Script IDE
 editor_app_key:
+    push eax
+    mov eax, [cur_app]
+    call tx_for
+    pop eax
     cmp eax, 19                     ; Ctrl+S = save
     je .save
     cmp eax, 18                     ; Ctrl+R = run (Script IDE)
@@ -344,171 +392,69 @@ editor_app_key:
     cmp eax, '~'
     ja .r
 .ins:
-    mov ecx, [app_buf_len]
+    mov ecx, [ebx + TX_LEN]
     cmp ecx, APP_BUF - 2
     jae .r
-    mov [app_buf + ecx], al
-    inc dword [app_buf_len]
-    mov byte [app_dirty], 1
+    mov [ebx + TX_BUF + ecx], al
+    inc dword [ebx + TX_LEN]
+    mov dword [ebx + TX_DIRTY], 1
 .r:
     ret
 .nl:
     mov al, 10
     jmp .ins
 .back:
-    mov ecx, [app_buf_len]
+    mov ecx, [ebx + TX_LEN]
     test ecx, ecx
     jz .r
-    dec dword [app_buf_len]
-    mov byte [app_dirty], 1
+    dec dword [ebx + TX_LEN]
+    mov dword [ebx + TX_DIRTY], 1
     ret
 .maybe_run:
     cmp dword [cur_app], APP_IDE
     jne .r
     jmp ide_run
 .save:
-    mov ecx, [app_buf_len]
-    mov byte [app_buf + ecx], 0
-    mov esi, app_file
-    mov edx, app_buf
+    jmp tx_save
+
+; tx_save: EBX = text block -> write it to its file
+tx_save:
+    pushad
+    mov ecx, [ebx + TX_LEN]
+    mov byte [ebx + TX_BUF + ecx], 0
+    lea esi, [ebx + TX_FILE]
+    lea edx, [ebx + TX_BUF]
     call fs_save
-    mov byte [app_dirty], 0
-    cmp dword [cur_app], APP_IDE
-    jne .r
-    ; IDE: also run it and show output in the log (switch nothing, draw later)
+    mov dword [ebx + TX_DIRTY], 0
+    popad
     ret
 
-; ide_run: run the IDE buffer as a script (Ctrl+R or the Run button); the
-; output is shown in the Terminal window
+; ide_run: run the IDE's script (Ctrl+R or the Run button); the output is
+; shown in the Terminal window, which is opened or brought to the front
 ide_run:
     pushad
-    mov ecx, [app_buf_len]
-    mov byte [app_buf + ecx], 0
-    mov esi, app_file               ; save first
-    mov edx, app_buf
-    call fs_save
-    ; run with capture into the terminal log, then switch to the terminal
-    mov dword [term_log_len], 0
+    mov ebx, tx_ide
+    call tx_save                    ; save first
+    test dword [wn_f + APP_TERM * 4], WF_OPEN
+    jnz .term_open
+    mov eax, APP_TERM
+    call gui_open
+.term_open:
+    mov dword [term_log_len], 0     ; run with capture into the terminal log
     mov byte [gui_capture], 1
-    mov esi, app_buf
+    lea esi, [tx_ide + TX_BUF]
     call script_run
     mov byte [gui_capture], 0
-    mov dword [cur_app], APP_TERM   ; show the output in the terminal view
     mov dword [term_input_len], 0
     mov byte [term_input], 0
+    mov eax, APP_TERM               ; show the output in the terminal
+    call gui_raise
     popad
     ret
 
-; ---------------------------------------------------------------- Browser
-brow_init:
-    mov dword [brow_url_len], 0
-    mov byte [brow_url], 0
-    mov dword [term_log_len], 0     ; reuse the log as the page buffer view
-    ret
-
-app_brow_draw:
-    pushad
-    call gui_content_box
-    ; URL bar
-    mov ecx, [ta_x]
-    mov edx, [ta_y]
-    mov esi, brow_hint
-    cmp dword [brow_url_len], 0
-    je .showhint
-    mov esi, brow_url
-.showhint:
-    mov eax, 0x90E0FF
-    push edx
-    call gfx_rgb
-    mov ebx, eax
-    mov ebp, -1
-    pop edx
-    call gfx_text
-    add dword [ta_y], 24
-    dec dword [ta_rows]
-    mov dword [ta_fg], 0xD8D8D8
-    mov ecx, [term_log_len]         ; the page is held in term_log
-    mov byte [term_log + ecx], 0
-    mov esi, term_log
-    call gui_textarea_from
-    popad
-    ret
-
-brow_key:
-    cmp eax, 10
-    je brow_go
-    cmp eax, 8
-    je .back
-    cmp eax, ' '
-    jb .r
-    cmp eax, '~'
-    ja .r
-    mov ecx, [brow_url_len]
-    cmp ecx, 150
-    jae .r
-    mov [brow_url + ecx], al
-    inc dword [brow_url_len]
-    mov byte [brow_url + ecx + 1], 0
-.r:
-    ret
-.back:
-    mov ecx, [brow_url_len]
-    test ecx, ecx
-    jz .r
-    dec dword [brow_url_len]
-    mov byte [brow_url + ecx - 1], 0
-    ret
-
-; brow_go: fetch brow_url (http:// or https://) and show the page text.
-; HTTPS pages are only shown if the server's certificate checks out.
-brow_go:
-    pushad
-    mov dword [term_log_len], 0
-    mov byte [url_insecure], 0
-    mov esi, brow_url
-    call url_fetch
-    jc .failed
-    mov esi, brow_s_https           ; one status line, then the page
-    cmp byte [url_scheme], 1
-    je .st
-    mov esi, brow_s_http
-.st:
-    mov edi, term_log
-    call str_copy
-    call str_len
-    mov edi, term_log
-    add edi, ecx
-    mov ebx, ecx                    ; bytes used so far
-    mov esi, PKG_BUF
-    mov ecx, [pkg_len]
-    mov eax, GUI_LOG - 2
-    sub eax, ebx
-    cmp ecx, eax
-    jbe .cok
-    mov ecx, eax
-.cok:
-    call mem_copy
-    add ebx, ecx
-    mov [term_log_len], ebx
-    popad
-    ret
-.failed:
-    mov edi, term_log
-    mov esi, brow_e_fail
-    call str_copy
-    mov esi, [url_err]
-    mov edi, term_log
-    call str_append
-    mov esi, term_log
-    call str_len
-    mov [term_log_len], ecx
-    popad
-    ret
-
-section .data
-brow_s_https db "[ HTTPS - TLS 1.3, certificate checked ]", 10, 10, 0
-brow_s_http  db "[ plain HTTP - not encrypted ]", 10, 10, 0
-brow_e_fail  db "Could not load that page: ", 0
+section .bss
+alignb 4
+txd_app resd 1
 section .text
 
 ; ---------------------------------------------------------------- Settings
@@ -671,6 +617,25 @@ alignb 4
 set_y resd 1
 section .text
 
+; settings_click: a click on one of the numbered lines does what its key does
+settings_click:
+    pushad
+    mov eax, [mouse_y]
+    sub eax, [cb_y]
+    sub eax, 6 + 44 + 18 + 10       ; (where settings_draw puts line 1)
+    js .done
+    shr eax, 1                      ; / 18 pixels per line
+    xor edx, edx
+    mov ecx, 9
+    div ecx
+    cmp eax, 6
+    jae .done
+    add eax, '1'
+    call settings_key
+.done:
+    popad
+    ret
+
 settings_key:
     cmp al, '1'
     je .fmt
@@ -748,24 +713,81 @@ settings_key:
     ret
 
 ; ---------------------------------------------------- shared text helpers
-; gui_content_box: set ta_x/ta_y/ta_cols/ta_rows to the window's content area
+; gui_content_box: set ta_x/ta_y/ta_cols/ta_rows to the window's content
+; box (cb_*, set by the window manager), less a margin
 gui_content_box:
     push eax
-    mov eax, WIN_X
+    mov eax, [cb_x]
     add eax, 10
     mov [ta_x], eax
-    mov eax, WIN_Y
-    add eax, 34
+    mov eax, [cb_y]
+    add eax, 6
     mov [ta_y], eax
-    mov eax, [win_w]
+    mov eax, [cb_w]
     sub eax, 20
-    shr eax, 3                      ; / 8 px per char
+    jns .w
+    xor eax, eax
+.w: shr eax, 3                      ; / 8 px per char
     mov [ta_cols], eax
-    mov eax, [win_h]
-    sub eax, 44
-    shr eax, 4                      ; / 16 px per row
+    mov eax, [cb_h]
+    sub eax, 12
+    jns .h
+    xor eax, eax
+.h: shr eax, 4                      ; / 16 px per row
     mov [ta_rows], eax
     pop eax
+    ret
+
+; gui_text_tail: ESI = text -> ESI moved forward so that what is left fits
+; in ta_rows rows of ta_cols (wrapped the way gui_textarea_from wraps)
+gui_text_tail:
+    pushad
+    mov ebx, esi                    ; EBX = start of the text
+    cmp dword [ta_cols], 0
+    je .done
+    cmp dword [ta_rows], 0
+    je .done
+.again:
+    xor ecx, ecx                    ; count the rows from ESI
+    xor edx, edx                    ; (column)
+    mov edi, esi
+.c: mov al, [edi]
+    test al, al
+    jz .counted
+    inc edi
+    cmp al, 10
+    je .row
+    cmp al, 9
+    jne .ch
+    add edx, 3
+.ch:
+    inc edx
+    cmp edx, [ta_cols]
+    jb .c
+.row:
+    xor edx, edx
+    inc ecx
+    jmp .c
+.counted:
+    cmp ecx, [ta_rows]              ; the last row is where the cursor goes
+    jb .fits
+.skip:                              ; too many: drop the first row
+    xor edx, edx
+.s1:
+    mov al, [esi]
+    test al, al
+    jz .fits
+    inc esi
+    cmp al, 10
+    je .again
+    inc edx
+    cmp edx, [ta_cols]
+    jb .s1
+    jmp .again
+.fits:
+    mov [esp + 4], esi              ; (ESI after popad)
+.done:
+    popad
     ret
 
 ; gui_textarea_from: ESI = NUL-terminated text, rendered wrapped into ta_*

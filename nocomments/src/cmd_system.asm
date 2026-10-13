@@ -114,6 +114,8 @@ cmd_mem:
     PRINTF `  File cache ......... 0x%08x - 0x%08x  (132 KB)\n`, FS_DIR, eax
     mov eax, OUTBUF + OUTBUF_SIZE
     PRINTF `  Work buffers ....... 0x%08x - 0x%08x  (124 KB)\n`, SCRATCH, eax
+    mov eax, BR_BASE + 0x200000
+    PRINTF `  Desktop browser .... 0x%08x - 0x%08x  (2 MB)\n`, BR_BASE, eax
     PRINTF `  Used by MOOS ....... about %d KB in total - the rest is free\n`, KMEM_SIZE / 1024
 .storage:
     call fs_stats

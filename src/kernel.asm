@@ -25,6 +25,8 @@
 ;    0x101000  file system data cache (32 slots x 4 KB)
 ;    0x200000  scratch buffer (64 KB) - text being written / copied / edited
 ;    0x210000  output buffer (60 KB) - text shown by the pager
+;    0x220000  network buffers, downloads, the desktop's back buffer, HTTPS
+;    0x7E0000  the web browser's pages, layout and history (2 MB)
 ; =============================================================================
 bits 32
 %ifndef KORG
@@ -48,10 +50,11 @@ org KORG
 %define GUI_BB       KV(0x2B0000)    ; GUI back buffer (up to 1280x1024x4 = 5M)
 %define NET_RING     KV(0x7B0000)    ; NIC receive ring: 32K + wrap room
 %define TLS_BASE     KV(0x7C0000)    ; HTTPS buffers (128K, see tls.asm)
+%define BR_BASE      KV(0x7E0000)    ; web browser (2M, see html.asm)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
 PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x7E0000 - 0x10000 ; everything above, from kbase
+KMEM_SIZE    equ 0x9E0000 - 0x10000 ; everything above, from kbase
 
 VGA_MEM      equ screen_buf         ; all drawing goes to this copy of the
 SCR_COLS     equ 80                 ; screen; screen_present shows it

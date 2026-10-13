@@ -137,6 +137,12 @@ kbd_poll:
 .pscan:
     cmp ebx, 0x17
     je .pesc
+    lea eax, [ebx - 0x0B]
+    cmp eax, 11
+    ja .pnof
+    add eax, KEY_F1
+    jmp .pdone
+.pnof:
     cmp ebx, 0x0A
     ja .none
     movzx eax, word [efi_scan_keys + ebx * 2]

@@ -23,6 +23,12 @@ STEP is either text to type (use \\n for Enter) or a command:
     @mouse=DX,DY    move the mouse (needs a mouse, e.g. --extra
                     "-device qemu-xhci -device usb-mouse")
     @click          press and release the left mouse button
+    @ptr=X,Y[,B]    put MOOS's own mouse at X,Y with button B (1 = held,
+                    0 = up) by writing its memory through QEMU's gdbstub.
+                    QEMU's UEFI firmware has no mouse driver at all, so
+                    this is how the desktop's mouse handling is tested.
+                    Several in a row make a drag.
+    @wheel=N        turn MOOS's mouse wheel N notches (+ = away from you)
     @mon=COMMAND    run a QEMU monitor command and print its answer
     @exit           check that QEMU has exited (after "shutdown")
 
@@ -50,6 +56,73 @@ PLAIN = {' ': 'spc', '\n': 'ret', '.': 'dot', ',': 'comma', '/': 'slash',
          '[': 'bracket_left', ']': 'bracket_right', '\\': 'backslash',
          '`': 'grave_accent', '\t': 'tab'}
 MAGIC = b'MOOSSCRN'
+
+
+def kernel_symbols(names):
+    """Addresses of kernel labels (as assembled at 0x10000), from a NASM map."""
+    tmp = tempfile.mkdtemp(prefix='moosmap')
+    try:
+        wrap = os.path.join(tmp, 'wrap.asm')
+        with open(wrap, 'w') as f:
+            f.write('[map symbols %s]\n%%include "src/kernel.asm"\n'
+                    % os.path.join(tmp, 'k.map').replace('\\', '/'))
+        subprocess.run(['nasm', '-f', 'bin', '-w-error=label-redef-late', wrap,
+                        '-o', os.path.join(tmp, 'k.bin')], cwd=ROOT, check=True)
+        found = {}
+        for line in open(os.path.join(tmp, 'k.map')):
+            parts = line.split()
+            if len(parts) == 3 and parts[2] in names:
+                found[parts[2]] = int(parts[0], 16)
+        return found
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class Gdb:
+    """Just enough of the GDB remote protocol to write guest memory."""
+
+    def __init__(self, port):
+        for _ in range(100):
+            try:
+                self.sock = socket.create_connection(('127.0.0.1', port), timeout=30)
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError('cannot reach the QEMU gdbstub')
+        self.buf = b''
+        self.packet('?')                       # QEMU stopped the guest for us
+        self.go()
+
+    def read_packet(self):
+        while True:
+            start = self.buf.find(b'$')
+            end = self.buf.find(b'#', start)
+            if start >= 0 and end >= 0 and len(self.buf) >= end + 3:
+                data = self.buf[start + 1:end]
+                self.buf = self.buf[end + 3:]
+                self.sock.sendall(b'+')
+                return data
+            self.buf += self.sock.recv(4096)
+
+    def send(self, text):
+        data = text.encode()
+        self.sock.sendall(b'$%s#%02x' % (data, sum(data) & 0xFF))
+
+    def packet(self, text):
+        self.send(text)
+        return self.read_packet()
+
+    def go(self):
+        self.send('c')
+
+    def write(self, addr, data):
+        self.sock.sendall(b'\x03')            # stop the guest
+        self.read_packet()
+        reply = self.packet('M%x,%x:%s' % (addr, len(data), data.hex()))
+        self.go()
+        if reply != b'OK':
+            raise RuntimeError('gdbstub write failed: %r' % reply)
 
 
 def key_for(ch):
@@ -163,9 +236,15 @@ def main():
     disk = os.path.join(tmpdir, 'disk' + os.path.splitext(image)[1])
     shutil.copy(image, disk)
     port = 45454
+    gdb_port = 45455
+    want_ptr = any(a.startswith(('@ptr=', '@wheel=')) for a in args)
     cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
          '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
+    if want_ptr:
+        syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
+        cmd += ['-gdb', 'tcp:127.0.0.1:%d' % gdb_port]
+    gdb = None
     if nic == 'none':
         cmd += ['-nic', 'none']         # (else QEMU adds an e1000 by itself)
     else:
@@ -208,6 +287,18 @@ def main():
                 out = mon.cmd(step[5:]).decode('utf-8', 'replace')
                 out = ''.join(c for c in out if c == '\n' or c >= ' ')
                 print(out.replace('(qemu) ', '').strip())
+            elif step.startswith(('@ptr=', '@wheel=')):
+                if gdb is None:
+                    gdb = Gdb(gdb_port)
+                base = screen.addr - 16 - syms['screen_magic']   # where MOOS is
+                if step.startswith('@wheel='):
+                    gdb.write(base + syms['mouse_wheel'],
+                              int(step[7:]).to_bytes(4, 'little', signed=True))
+                else:
+                    v = [int(x) for x in step[5:].split(',')] + [0]
+                    gdb.write(base + syms['mouse_x'],
+                              b''.join(int(x).to_bytes(4, 'little') for x in v[:3]))
+                time.sleep(0.15)
             elif step == '@click':
                 mon.cmd('mouse_button 1')
                 time.sleep(0.2)

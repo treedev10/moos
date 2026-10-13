@@ -1,9 +1,21 @@
+GS_BOLD     equ 1
+GS_ITALIC   equ 2
+GS_ULINE    equ 4
+GS_STRIKE   equ 8
 section .bss
 alignb 4
 gfx_w       resd 1
 gfx_h       resd 1
 gfx_fb      resd 1
 gfx_fbpitch resd 1
+gfx_cx0     resd 1
+gfx_cy0     resd 1
+gfx_cx1     resd 1
+gfx_cy1     resd 1
+gfx_sv0     resd 1
+gfx_sv1     resd 1
+gfx_sv2     resd 1
+gfx_sv3     resd 1
 gfx_ready   resb 1
 
 section .text
@@ -23,6 +35,7 @@ gfx_init:
     mov eax, [bootinfo + BI.fb_pitch]
     mov [gfx_fbpitch], eax
     mov byte [gfx_ready], 1
+    call gfx_clip_full
     pop eax
     clc
     ret
@@ -94,33 +107,114 @@ gfx_clear:
     pop ecx
     ret
 
+gfx_clip_full:
+    push eax
+    xor eax, eax
+    mov [gfx_cx0], eax
+    mov [gfx_cy0], eax
+    mov eax, [gfx_w]
+    mov [gfx_cx1], eax
+    mov eax, [gfx_h]
+    mov [gfx_cy1], eax
+    pop eax
+    ret
+
+gfx_clip_set:
+    pushad
+    call gfx_clip
+    jnc .ok
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+.ok:
+    mov [gfx_cx0], ecx
+    mov [gfx_cy0], edx
+    add ecx, esi
+    add edx, edi
+    mov [gfx_cx1], ecx
+    mov [gfx_cy1], edx
+    popad
+    ret
+
+gfx_clip_save:
+    push eax
+    mov eax, [gfx_cx0]
+    mov [gfx_sv0], eax
+    mov eax, [gfx_cy0]
+    mov [gfx_sv1], eax
+    mov eax, [gfx_cx1]
+    mov [gfx_sv2], eax
+    mov eax, [gfx_cy1]
+    mov [gfx_sv3], eax
+    pop eax
+    ret
+gfx_clip_restore:
+    push eax
+    mov eax, [gfx_sv0]
+    mov [gfx_cx0], eax
+    mov eax, [gfx_sv1]
+    mov [gfx_cy0], eax
+    mov eax, [gfx_sv2]
+    mov [gfx_cx1], eax
+    mov eax, [gfx_sv3]
+    mov [gfx_cy1], eax
+    pop eax
+    ret
+
+gfx_clip_and:
+    push eax
+    push esi
+    push edi
+    add esi, ecx
+    add edi, edx
+    cmp ecx, [gfx_cx0]
+    jle .x0
+    mov [gfx_cx0], ecx
+.x0:
+    cmp edx, [gfx_cy0]
+    jle .y0
+    mov [gfx_cy0], edx
+.y0:
+    cmp esi, [gfx_cx1]
+    jge .x1
+    mov [gfx_cx1], esi
+.x1:
+    cmp edi, [gfx_cy1]
+    jge .y1
+    mov [gfx_cy1], edi
+.y1:
+    pop edi
+    pop esi
+    pop eax
+    ret
+
 gfx_fillrect:
     pushad
     mov ebp, eax
-
-    test ecx, ecx
-    jns .x_ok
-    add esi, ecx
-    xor ecx, ecx
+    mov eax, [gfx_cx0]
+    sub eax, ecx
+    jle .x_ok
+    sub esi, eax
+    mov ecx, [gfx_cx0]
 .x_ok:
-    test edx, edx
-    jns .y_ok
-    add edi, edx
-    xor edx, edx
+    mov eax, [gfx_cy0]
+    sub eax, edx
+    jle .y_ok
+    sub edi, eax
+    mov edx, [gfx_cy0]
 .y_ok:
-    mov eax, ecx
-    add eax, esi
-    cmp eax, [gfx_w]
+    mov eax, [gfx_cx1]
+    sub eax, ecx
+    cmp esi, eax
     jle .w_ok
-    mov esi, [gfx_w]
-    sub esi, ecx
+    mov esi, eax
 .w_ok:
-    mov eax, edx
-    add eax, edi
-    cmp eax, [gfx_h]
+    mov eax, [gfx_cy1]
+    sub eax, edx
+    cmp edi, eax
     jle .h_ok
-    mov edi, [gfx_h]
-    sub edi, edx
+    mov edi, eax
 .h_ok:
     test esi, esi
     jle .done
@@ -150,14 +244,37 @@ gfx_fillrect:
     popad
     ret
 
+gfx_frame:
+    pushad
+    push edi
+    mov edi, 1
+    call gfx_fillrect
+    pop edi
+    push edx
+    lea edx, [edx + edi - 1]
+    push edi
+    mov edi, 1
+    call gfx_fillrect
+    pop edi
+    pop edx
+    push esi
+    mov esi, 1
+    call gfx_fillrect
+    pop esi
+    lea ecx, [ecx + esi - 1]
+    mov esi, 1
+    call gfx_fillrect
+    popad
+    ret
+
 gfx_pixel:
-    cmp ecx, 0
+    cmp ecx, [gfx_cx0]
     jl .no
-    cmp ecx, [gfx_w]
+    cmp ecx, [gfx_cx1]
     jge .no
-    cmp edx, 0
+    cmp edx, [gfx_cy0]
     jl .no
-    cmp edx, [gfx_h]
+    cmp edx, [gfx_cy1]
     jge .no
     push edi
     push edx
@@ -173,71 +290,168 @@ gfx_pixel:
 section .bss
 alignb 4
 gfx_scale   resd 1
+gfx_cw      resd 1
+gfx_style   resd 1
 section .text
 
 gfx_char:
+    push dword [gfx_cw]
+    push dword [gfx_style]
+    push eax
+    mov eax, [gfx_scale]
+    shl eax, 3
+    mov [gfx_cw], eax
+    mov dword [gfx_style], 0
+    pop eax
+    call gfx_glyph
+    pop dword [gfx_style]
+    pop dword [gfx_cw]
+    ret
+
+gfx_glyph:
     pushad
     movzx eax, al
     shl eax, 4
     add eax, font_8x16
-    mov [gc_glyph], eax
-    mov [gc_x0], ecx
-    mov dword [gc_row], 0
+    mov [gg_glyph], eax
+    mov [gg_x], ecx
+    mov [gg_y], edx
+    mov [gg_fg], ebx
+    mov eax, [gfx_cw]
+    cmp eax, [gg_maskw]
+    je .masks
+    call gg_masks_make
+.masks:
+    add eax, eax
+    mov [gg_ch], eax
+    mov dword [gg_dy], 0
 .row:
-    mov eax, [gc_glyph]
-    movzx eax, byte [eax]
-    inc dword [gc_glyph]
-    mov [gc_bits], eax
-    mov dword [gc_sy], 0
-.vrep:
-    mov ecx, [gc_x0]
-    mov dword [gc_bit], 0x80
-.col:
-    mov eax, [gc_bits]
-    test eax, [gc_bit]
-    jnz .fg
-    cmp ebp, -1
-    je .skip
-    mov eax, ebp
-    jmp .put
-.fg:
-    mov eax, ebx
-.put:
-    mov dword [gc_sx], 0
-.hrep:
-    call gfx_pixel
-    inc ecx
-    inc dword [gc_sx]
-    mov esi, [gc_sx]
-    cmp esi, [gfx_scale]
-    jb .hrep
-    jmp .nextbit
-.skip:
-    mov eax, [gfx_scale]
+    mov eax, [gg_dy]
+    cmp eax, [gg_ch]
+    jae .done
+    add eax, [gg_y]
+    cmp eax, [gfx_cy0]
+    jl .next
+    cmp eax, [gfx_cy1]
+    jge .done
+    imul eax, [gfx_w]
+    mov [gg_rowp], eax
+    mov eax, [gg_dy]
+    shl eax, 3
+    xor edx, edx
+    div dword [gfx_cw]
+    mov ecx, eax
+    mov ebx, [gg_glyph]
+    movzx ebx, byte [ebx + ecx]
+    mov al, [gfx_style]
+    test al, GS_BOLD
+    jz .nb
+    mov edx, ebx
+    shr edx, 1
+    or ebx, edx
+.nb:
+    test al, GS_ULINE
+    jz .nu
+    cmp ecx, 14
+    jne .nu
+    mov ebx, 0xFF
+.nu:
+    test al, GS_STRIKE
+    jz .ns
+    cmp ecx, 8
+    jne .ns
+    mov ebx, 0xFF
+.ns:
+    mov ecx, [gg_x]
+    test al, GS_ITALIC
+    jz .ni
+    mov eax, [gg_ch]
+    dec eax
+    sub eax, [gg_dy]
+    xor edx, edx
+    push ecx
+    mov ecx, 5
+    div ecx
+    pop ecx
     add ecx, eax
-.nextbit:
-    shr dword [gc_bit], 1
-    jnz .col
-    inc edx
-    inc dword [gc_sy]
-    mov esi, [gc_sy]
-    cmp esi, [gfx_scale]
-    jb .vrep
-    inc dword [gc_row]
-    cmp dword [gc_row], 16
-    jb .row
+.ni:
+    xor esi, esi
+    mov eax, [gfx_cx0]
+    sub eax, ecx
+    jle .c0
+    mov esi, eax
+.c0:
+    mov edx, [gfx_cx1]
+    sub edx, ecx
+    cmp edx, [gfx_cw]
+    jle .c1
+    mov edx, [gfx_cw]
+.c1:
+    cmp esi, edx
+    jge .next
+    mov edi, [gg_rowp]
+    add edi, ecx
+    add edi, esi
+    lea edi, [GUI_BB + edi * 4]
+    mov eax, [gg_fg]
+.col:
+    test bl, [gg_masks + esi]
+    jz .bg
+    mov [edi], eax
+    jmp .cn
+.bg:
+    cmp ebp, -1
+    je .cn
+    mov [edi], ebp
+.cn:
+    add edi, 4
+    inc esi
+    cmp esi, edx
+    jl .col
+.next:
+    inc dword [gg_dy]
+    jmp .row
+.done:
+    popad
+    ret
+
+gg_masks_make:
+    pushad
+    mov [gg_maskw], eax
+    mov ebx, eax
+    xor ecx, ecx
+.l:
+    cmp ecx, ebx
+    jae .done
+    cmp ecx, 32
+    jae .done
+    mov eax, ecx
+    shl eax, 3
+    xor edx, edx
+    div ebx
+    push ecx
+    mov ecx, eax
+    mov al, 0x80
+    shr al, cl
+    pop ecx
+    mov [gg_masks + ecx], al
+    inc ecx
+    jmp .l
+.done:
     popad
     ret
 
 section .bss
 alignb 4
-gc_glyph resd 1
-gc_x0    resd 1
-gc_row   resd 1
-gc_bits  resd 1
-gc_bit   resd 1
-gc_sx    resd 1
-gc_sy    resd 1
+gg_glyph resd 1
+gg_x     resd 1
+gg_y     resd 1
+gg_fg    resd 1
+gg_ch    resd 1
+gg_dy    resd 1
+gg_rowp  resd 1
+gg_maskw resd 1
+gg_masks resb 32
 section .text
 
 gfx_text:
@@ -260,6 +474,33 @@ section .bss
 alignb 4
 gt_x resd 1
 section .text
+
+gfx_icon:
+    push ebx
+    mov ebx, 16
+    call gfx_bitmap
+    pop ebx
+    ret
+
+gfx_bitmap:
+    pushad
+.row:
+    movzx edi, word [esi]
+    add esi, 2
+    push ecx
+.col:
+    test di, 0x8000
+    jz .n
+    call gfx_pixel
+.n: inc ecx
+    shl di, 1
+    jnz .col
+    pop ecx
+    inc edx
+    dec ebx
+    jnz .row
+    popad
+    ret
 
 gfx_tri:
     pushad

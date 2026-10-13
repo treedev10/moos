@@ -35,6 +35,9 @@ tcp_deadline    resd 1
 pkg_len         resd 1              ; bytes received into PKG_BUF
 http_status     resd 1
 http_date       resb 40
+http_location   resb 512            ; Location: (where a redirect points)
+http_ctype      resb 64             ; Content-Type:
+http_tenc       resb 32             ; Transfer-Encoding:
 tcp_pseudo      resb 12
 alignb 4
 tcp_dst         resd 1              ; where tcp_pump puts received bytes
@@ -149,6 +152,7 @@ tcp_send_seg:
 
 section .bss
 tcp_seg_len resd 1
+tcp_syn_try resd 1
 section .text
 
 ; tcp_wait: wait for a TCP segment for our connection. EAX = deadline (ticks).
@@ -223,13 +227,19 @@ tcp_connect:
     mov dword [tcp_rcv_nxt], 0
     mov byte [tcp_closed], 0
     mov byte [tcp_fin_sent], 0
+    mov dword [tcp_syn_try], 3          ; a lost SYN is sent again (3 tries)
+.syn:
     mov al, TCP_SYN                     ; send SYN
     xor ecx, ecx
     call tcp_send_seg
     mov eax, [ticks]
-    add eax, 200
+    add eax, 150
     call tcp_wait
-    jc .fail
+    jnc .answer
+    dec dword [tcp_syn_try]
+    jnz .syn
+    jmp .fail
+.answer:
     test byte [tcp_rx_flags], TCP_RST
     jnz .fail
     mov al, TCP_SYN | TCP_ACK
@@ -513,6 +523,9 @@ http_parse:
     pushad
     mov dword [http_status], 0
     mov byte [http_date], 0
+    mov byte [http_location], 0
+    mov byte [http_ctype], 0
+    mov byte [http_tenc], 0
     mov esi, PKG_BUF                    ; status line: "HTTP/1.x NNN ..."
     mov ecx, [pkg_len]
     cmp ecx, 12
@@ -572,6 +585,18 @@ http_parse:
 .cd_done:
     mov byte [ebx], 0
 .not_date:
+    mov edi, http_loc_hdr               ; a few more headers the browser uses
+    mov ebx, http_location
+    mov edx, 512
+    call hdr_grab
+    mov edi, http_ctype_hdr
+    mov ebx, http_ctype
+    mov edx, 64
+    call hdr_grab
+    mov edi, http_tenc_hdr
+    mov ebx, http_tenc
+    mov edx, 32
+    call hdr_grab
     call next_line                      ; advance ESI/ECX to the next line
     jc .no_body
     cmp byte [esi], 13                  ; blank line = end of headers
@@ -605,6 +630,40 @@ http_parse:
     ret
 .no_headers:
     mov dword [pkg_len], 0
+    popad
+    ret
+
+; hdr_grab: ESI = a header line, EDI = its name ("location:", lower case),
+; EBX = where its value goes, EDX = room there. If the line is that header,
+; its value (without leading spaces, up to the end of the line) is copied.
+hdr_grab:
+    pushad
+    call line_prefix_ci
+    jc .done
+.sp:
+    cmp byte [esi], ' '
+    jne .copy
+    inc esi
+    jmp .sp
+.copy:
+    dec edx                             ; (room for the 0)
+.c: mov al, [esi]
+    cmp al, 13
+    je .end
+    cmp al, 10
+    je .end
+    test al, al
+    jz .end
+    test edx, edx
+    jz .end
+    mov [ebx], al
+    inc ebx
+    inc esi
+    dec edx
+    jmp .c
+.end:
+    mov byte [ebx], 0
+.done:
     popad
     ret
 
@@ -823,6 +882,9 @@ http_get_str    db "GET ", 0
 http_ver_str    db " HTTP/1.0", 13, 10, "Host: ", 0
 http_tail_str   db 13, 10, "User-Agent: MOOS", 13, 10, "Connection: close", 13, 10, 13, 10, 0
 http_date_hdr   db "date:", 0
+http_loc_hdr    db "location:", 0
+http_ctype_hdr  db "content-type:", 0
+http_tenc_hdr   db "transfer-encoding:", 0
 
 section .bss
 alignb 4

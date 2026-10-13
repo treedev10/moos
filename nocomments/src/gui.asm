@@ -1,6 +1,7 @@
 TASKBAR_H   equ 34
-CUR_W       equ 16
+CUR_W       equ 24
 CUR_H       equ 20
+CUR_DX      equ 6
 TB_N        equ 6
 TB_QUIT     equ 5
 
@@ -28,6 +29,7 @@ TB_QUIT     equ 5
 section .bss
 alignb 4
 gui_quit    resb 1
+gui_active  resb 1
 gui_dirty   resb 1
 alignb 4
 gc_mx       resd 1
@@ -47,9 +49,11 @@ section .data
 desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
-gui_hint1   db "Click an app on the taskbar, or press its number:", 0
-gui_hint2   db "1 Terminal    2 Editor    3 Script IDE    4 Browser    5 Settings", 0
-gui_hint3   db "Esc closes a window. Esc on the empty desktop leaves.", 0
+gui_hint1   db "Click an app on the taskbar, or press its key:", 0
+gui_hint2   db "F1 Terminal   F2 Editor   F3 Script IDE   F4 Browser   F5 Settings", 0
+gui_hint3   db "Drag a title bar to move a window, an edge or corner to resize it.", 0
+gui_hint4   db "Keys: F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
+gui_hint5   db "Esc closes a window. Esc on the empty desktop leaves.", 0
 gui_nomouse db "No mouse found - the PC's firmware offers none. Use the keys above.", 0
 ga_term     db "term", 0
 ga_editor   db "editor", 0
@@ -79,6 +83,13 @@ dk_slate    db "Slate grey", 0
 dk_black    db "Black", 0
 dk_steel    db "Steel blue", 0
 
+hand_black  dw 0x0600, 0x0900, 0x0900, 0x0900, 0x0900, 0x09C0, 0x0938, 0x6926
+            dw 0x9925, 0x8801, 0x4001, 0x2001, 0x2002, 0x1002, 0x1004, 0x0804
+            dw 0x0804, 0x0FFC
+hand_white  dw 0x0000, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x06C0, 0x06D8
+            dw 0x66DA, 0x77FE, 0x3FFE, 0x1FFE, 0x1FFC, 0x0FFC, 0x0FF8, 0x07F8
+            dw 0x07F8, 0x0000
+
 section .text
 
 gui_wallpaper:
@@ -102,16 +113,35 @@ gui_wallpaper:
     TEXT 40, 74, gui_sub, 0xD8E4EA, -1
     TEXT 40, 120, gui_hint1, 0xD8E4EA, -1
     TEXT 40, 140, gui_hint2, 0xFFFFFF, -1
-    TEXT 40, 160, gui_hint3, 0xD8E4EA, -1
+    TEXT 40, 166, gui_hint3, 0xD8E4EA, -1
+    TEXT 40, 186, gui_hint4, 0xD8E4EA, -1
+    TEXT 40, 206, gui_hint5, 0xD8E4EA, -1
     cmp byte [mouse_ok], 0
     jne .done
-    TEXT 40, 196, gui_nomouse, 0xFFD27A, -1
+    TEXT 40, 242, gui_nomouse, 0xFFD27A, -1
 .done:
     popad
     ret
 
 gui_cursor:
     pushad
+    cmp dword [pg_hover], 0
+    je .arrow
+    mov ecx, [gc_mx]
+    sub ecx, 5
+    mov edx, [gc_my]
+    mov ebx, 18
+    mov eax, 0x000000
+    call gfx_rgb
+    mov esi, hand_black
+    call gfx_bitmap
+    mov eax, 0xFFFFFF
+    call gfx_rgb
+    mov esi, hand_white
+    call gfx_bitmap
+    popad
+    ret
+.arrow:
     mov esi, [gc_mx]
     mov edx, [gc_my]
 
@@ -151,6 +181,7 @@ gui_cursor:
 
 cur_rect:
     mov ecx, [gc_mx]
+    sub ecx, CUR_DX
     mov edx, [gc_my]
     mov esi, CUR_W
     mov edi, CUR_H
@@ -221,6 +252,14 @@ gui_taskbar:
     mov [tb_cx], eax
     mov eax, 0x2C3844
     mov ebx, 0x46627E
+    test dword [wn_f + ecx * 4 + 4], WF_OPEN
+    jz .draw
+    mov eax, 0x34495C
+    lea edx, [ecx + 1]
+    cmp edx, [cur_app]
+    jne .draw
+    mov eax, 0x3D6A92
+    mov ebx, 0x4F82AE
     jmp .draw
 .quit_pos:
     mov eax, [gfx_w]
@@ -250,6 +289,20 @@ gui_taskbar:
     mov edx, [tb_top]
     add edx, 10
     TEXT ecx, edx, esi, 0xE6ECF2, -1
+    mov ecx, [tb_i]
+    cmp ecx, TB_QUIT
+    je .no_bar
+    test dword [wn_f + ecx * 4 + 4], WF_OPEN
+    jz .no_bar
+    mov esi, [tb_x1 + ecx * 4]
+    mov ecx, [tb_x0 + ecx * 4]
+    sub esi, ecx
+    sub esi, 16
+    add ecx, 8
+    mov edx, [tb_top]
+    add edx, TASKBAR_H - 7
+    RECT ecx, edx, esi, 2, 0x8FC3EA
+.no_bar:
     inc dword [tb_i]
     cmp dword [tb_i], TB_N
     jb .btn
@@ -313,7 +366,9 @@ gui_clock_check:
     je .done
     mov [gui_clk_sec], al
     or byte [gui_dirty], 2
-    cmp dword [cur_app], APP_SETTINGS
+    mov eax, [wn_f + APP_SETTINGS * 4]
+    and eax, WF_OPEN | WF_MIN
+    cmp eax, WF_OPEN
     jne .done
     or byte [gui_dirty], 1
 .done:
@@ -406,9 +461,10 @@ cmd_gui:
     PRINTF `No graphics screen is available.\n`
     ret
 .have_gfx:
+    mov byte [gui_active], 1
     call efi_mouse_init
     mov byte [gui_quit], 0
-    mov dword [cur_app], APP_NONE
+    call wm_reset
     mov dword [tb_hover], -1
     mov dword [prev_btn], 0
     mov eax, [mouse_x]
@@ -420,39 +476,42 @@ cmd_gui:
     mov byte [gui_clk_sec], 0xFF
     cmp dword [argc], 2
     jb .start
-    mov esi, [argv + 4]
+    mov ebx, 1
+.arg:
+    cmp ebx, [argc]
+    jae .start
+    mov esi, [argv + ebx * 4]
+    inc ebx
+    mov eax, APP_TERM
     mov edi, ga_term
     call str_icmp
-    je .o_term
+    je .open
+    mov eax, APP_EDITOR
     mov edi, ga_editor
     call str_icmp
-    je .o_edit
+    je .open
+    mov eax, APP_IDE
     mov edi, ga_ide
     call str_icmp
-    je .o_ide
-    mov edi, ga_browser
-    call str_icmp
-    je .o_brow
+    je .open
+    mov eax, APP_SETTINGS
     mov edi, ga_settings
     call str_icmp
-    je .o_set
-    jmp .start
-.o_set:
-    mov eax, APP_SETTINGS
-    jmp .open
-.o_term:
-    mov eax, APP_TERM
-    jmp .open
-.o_edit:
-    mov eax, APP_EDITOR
-    jmp .open
-.o_ide:
-    mov eax, APP_IDE
-    jmp .open
-.o_brow:
+    je .open
     mov eax, APP_BROWSER
+    mov edi, ga_browser
+    call str_icmp
+    jne .arg
+    call gui_open
+    cmp ebx, [argc]
+    jae .start
+    mov esi, [argv + ebx * 4]
+    inc ebx
+    call brow_open_url
+    jmp .arg
 .open:
     call gui_open
+    jmp .arg
 .start:
     mov byte [gui_dirty], 1
     call gui_redraw
@@ -460,19 +519,12 @@ cmd_gui:
     call efi_mouse_poll
     call gui_hover_check
     call gui_handle
+    call gui_wheel
     call gui_clock_check
 .keys:
     call kbd_poll
     test eax, eax
     jz .draw
-    or byte [gui_dirty], 1
-    cmp eax, 27
-    jne .key
-    cmp dword [cur_app], APP_NONE
-    je .exit
-    mov dword [cur_app], APP_NONE
-    jmp .keys
-.key:
     call gui_key
     cmp byte [gui_quit], 0
     je .keys
@@ -491,6 +543,7 @@ cmd_gui:
 
 gui_restore_console:
     pushad
+    mov byte [gui_active], 0
     mov edi, screen_drawn
     mov ecx, SCR_COLS * SCR_ROWS
     mov ax, 0xFFFF

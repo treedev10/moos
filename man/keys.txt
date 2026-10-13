@@ -68,12 +68,25 @@ KEYBOARD LAYOUT
     On BIOS PCs MOOS reads the keyboard itself, with the US layout. On
     UEFI PCs the firmware reads it - USB and PS/2 keyboards both work,
     with the layout the firmware uses (usually US). Shift and Caps Lock
-    work as usual. The function keys (F1-F12) and Alt are not used.
+    work as usual. The function keys are used only by the desktop (see
+    below); Alt is not used.
 
 THE TEXT EDITOR
     The full-screen editor has its own shortcuts (Ctrl+S save, Esc
     quit, Ctrl+F find, Ctrl+K/Ctrl+U cut and paste lines, ...).
     They are all listed in  man edit .
 
+THE DESKTOP
+    In the graphical desktop (gui, UEFI PCs):
+
+    F1 - F5          open Terminal, Editor, Script IDE, Browser, Settings
+    F6               next window
+    F7 / F8          move / resize the window with the arrow keys
+    F9 / F10         minimize / maximize (or put back) the window
+    Esc              close the window; on the empty desktop, leave
+
+    The browser's own keys (Ctrl+L, Tab, Backspace, ...) are in
+    man browser .
+
 SEE ALSO
-    intro, history, man, edit
+    intro, history, man, edit, gui, browser

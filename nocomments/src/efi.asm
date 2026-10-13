@@ -58,7 +58,10 @@ ptr_accy    resd 1
 mouse_x     resd 1
 mouse_y     resd 1
 mouse_btn   resd 1
+mouse_wheel resd 1
 mouse_ok    resb 1
+alignb 8
+ptr_lastz   resq MAX_PTRS
 
 section .data
 guid_block_io   dd 0x964E5B21
@@ -164,6 +167,7 @@ efi_mouse_init:
     setnz byte [mouse_ok]
     mov dword [ptr_accx], 0
     mov dword [ptr_accy], 0
+    mov dword [mouse_wheel], 0
     mov eax, [gfx_w]
     shr eax, 1
     mov [mouse_x], eax
@@ -643,6 +647,16 @@ ptr_abs_apply:
     mov eax, [rel ptr_state + 24]
     and eax, 1
     mov [rel mouse_btn], eax
+    mov rax, [rcx + 16]
+    cmp rax, [rcx + 40]
+    jge .no_z
+    mov rax, [rel ptr_state + 16]
+    lea rdx, [rel ptr_lastz]
+    mov r8, rax
+    sub rax, [rdx + r12 * 8]
+    mov [rdx + r12 * 8], r8
+    add [rel mouse_wheel], eax
+.no_z:
     ret
 
 .map:
@@ -686,6 +700,8 @@ ptr_rel_apply:
     movzx eax, byte [rel ptr_state + 12]
     and eax, 1
     mov [rel mouse_btn], eax
+    mov eax, [rel ptr_state + 8]
+    add [rel mouse_wheel], eax
     ret
 
 .axis:

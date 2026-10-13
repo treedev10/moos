@@ -3,31 +3,59 @@ NAME
 
 SYNOPSIS
     gui
-    gui term | editor | ide | browser | settings
+    gui term | editor | ide | browser | settings ...
+    gui browser <address>
 
 DESCRIPTION
-    gui starts a simple graphical desktop with a mouse, a taskbar and
-    windows. It needs a UEFI PC (it draws on a graphics screen); on an
-    old BIOS PC only the text console is available.
+    gui starts a graphical desktop with a mouse, a taskbar and windows.
+    It needs a UEFI PC (it draws on a graphics screen); on an old BIOS PC
+    only the text console is available.
 
     The desktop is a plain colour (pick another in Settings) with a
-    taskbar along the bottom: buttons for the built-in apps, a clock, and
-    Quit. Click a button to open that app in a window; click the red x to
-    close it. "gui <app>" starts straight in that app.
+    taskbar along the bottom: a button for each app, a clock, and Quit.
+    Click a button to open that app in a window. "gui <app>" starts with
+    those apps open; "gui browser <address>" opens the browser there.
+
+WINDOWS
+    Every app has its own window, and any number can be open at once.
+    They overlap; the one in front has the focus (a brighter title bar)
+    and gets what you type. Click a window to bring it to the front.
+
+    Move        drag the title bar
+    Resize      drag any edge or corner; the dotted corner at the bottom
+                right is the easiest to grab. The app inside follows:
+                the terminal and editor get more rows, the browser lays
+                its page out again to the new width.
+    Maximize    the middle title-bar button, or double-click the title
+                bar; again (or drag the title bar) to put it back
+    Minimize    the left title-bar button; the window is kept, and its
+                taskbar button brings it back
+    Close       the red x, or Esc
+
+    Taskbar buttons show which apps are open (a bar under the button)
+    and which has the focus (brighter). Clicking the button of the app
+    in front minimizes it.
 
 KEYS
-    The desktop also works without a mouse:
-      1 - 5     on the empty desktop, open Terminal, Editor, Script IDE,
-                Browser or Settings
-      Esc       close the window; on the empty desktop, leave it
+    Everything also works without a mouse:
+      F1 - F5   open (or bring to the front) Terminal, Editor, Script
+                IDE, Browser or Settings
+      1 - 5     the same, when no window has the focus
+      F6        next window
+      F7        move the window with the arrow keys; Enter when done
+      F8        resize the window with the arrow keys; Enter when done
+      F9        minimize the window
+      F10       maximize the window, or put it back
+      Esc       close the window; with no window open, leave the desktop
+                (in the browser, Esc first stops typing an address)
 
 THE MOUSE
     MOOS uses the mouse through the PC's UEFI firmware, so any USB or
     PS/2 mouse (or touch screen) that works in the firmware's own setup
-    screens should work. Settings shows how many the firmware offers.
-    If it offers none, the desktop says "No mouse found"; use the keys
-    above. Some PCs offer a mouse only with "Fast Boot" turned off in the
-    firmware setup.
+    screens should work, wheel included. Settings shows how many the
+    firmware offers. If it offers none, the desktop says "No mouse
+    found"; use the keys above. Some PCs offer a mouse only with "Fast
+    Boot" turned off in the firmware setup.
 
 APPS
     Terminal     type commands and see their output, like the text
@@ -37,16 +65,15 @@ APPS
     Script IDE   edit a MOOS script (script.ms); Ctrl+S saves, and the
                  Run button or Ctrl+R runs it and shows the output in the
                  Terminal
-    Browser      type an https:// (or http://) address and press Enter to
-                 fetch a page and show its text. HTTPS pages are shown only
-                 if the site's certificate checks out (see man get)
+    Browser      a web browser: pages with headings, links, lists,
+                 tables and forms, over HTTP and HTTPS - see  man browser
     Settings     change the clock format (12/24-hour), the status-bar
                  colour, the timezone and the desktop colour, sync the
                  clock from the internet, or connect to the network -
-                 press the number keys and + / - shown in the window
+                 click a line, or press its number (and + / -)
 
 INSTALLING
     The desktop is also offered as a package:  apt install desktop
 
 SEE ALSO
-    apt, net, script, edit
+    browser, apt, net, script, edit

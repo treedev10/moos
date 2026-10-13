@@ -1,0 +1,80 @@
+NAME
+    browser - the web browser of the MOOS desktop
+
+SYNOPSIS
+    gui browser
+    gui browser <address>
+
+DESCRIPTION
+    The Browser app shows web pages. It reads the HTML itself and lays
+    the page out to the width of its window: headings in larger letters,
+    paragraphs, bold, italic, underlined and struck text, code, lists
+    with bullets or numbers, tables with their columns lined up, quotes,
+    preformatted text, rules, form fields and links. Making the window
+    wider or narrower lays the page out again to fit.
+
+    It talks HTTP and HTTPS. HTTPS pages are shown only if the site's
+    certificate checks out (see  man get); a green lock in the address
+    bar and the status line say the page came over HTTPS. Plain text
+    files are shown as they are.
+
+    It does not run JavaScript, apply style sheets or show pictures: a
+    picture is shown as its description (its "alt" text) in [brackets].
+    Pages built mostly by JavaScript show little. Parts that a page
+    marks as hidden are left out.
+
+THE WINDOW
+    Along the top: Back, Forward, Reload, Home (the start page), the
+    address bar, and Go. Along the bottom: the status line - what is
+    loading, how big the page was and how safely it came, or where the
+    link under the mouse leads. The scroll bar is on the right.
+
+    Click a link to follow it; the mouse pointer becomes a hand over
+    links. Drag the scroll bar, click above or below its thumb, or turn
+    the mouse wheel to scroll.
+
+KEYS
+    Ctrl+L          type an address (typing on the page does it too)
+    Enter           go to the address / follow the link chosen with Tab
+    Esc             stop typing (the address bar shows the page again)
+    Tab             choose the next link on the page
+    Up, Down        scroll a little
+    PgUp, PgDn      scroll a window's height (Space too)
+    Home, End       the top / the end of the page
+    Backspace       back (Ctrl+B too)
+    Ctrl+F          forward
+    Ctrl+R          reload
+
+ADDRESSES
+    http://host/path and https://host/path work; an address without
+    http:// or https:// is taken as http:// (so  example.com  works).
+    Many sites answer that by sending the browser on to their https://
+    address, which it follows (up to 8 such steps).
+
+    #part at the end of an address scrolls to that place on the page.
+    view-source:<address> shows a page's HTML as text.
+    about:home is the start page; about:test shows what can be drawn.
+
+FORMS
+    Click a text box and type; Enter (or the form's button) sends the
+    form. Click boxes and round buttons to tick them. Forms are sent
+    the GET way (as ?name=value after the address), which is how
+    search boxes work; forms that need POST say so in the status line.
+
+MESSAGES
+    Could not load this page
+        Shown with the reason: the network is not connected (see
+        man net), the server could not be found or reached, or the
+        HTTPS check failed - for example "the server uses an ECDSA
+        certificate", which MOOS cannot check yet.
+    MOOS cannot show this file
+        The address is a picture, a program or another kind of file.
+        It can be saved from the Terminal with  get <address> <file>.
+
+TIPS
+    Pages up to 512 KB are loaded; a bigger one is shown as far as it
+    came. Text-based sites work best. The browser keeps no cookies, so
+    sites that need you to sign in will not let you.
+
+SEE ALSO
+    gui, get, net

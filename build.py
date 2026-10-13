@@ -101,11 +101,15 @@ def ovmf_paths():
     qemu_dir = os.path.dirname(qemu_path())
     for share in (os.path.join(qemu_dir, "share"), "/usr/share/qemu", "/usr/share/OVMF",
                   "/opt/homebrew/share/qemu", "/usr/local/share/qemu"):
-        code = os.path.join(share, "edk2-x86_64-code.fd")
-        if not os.path.isfile(code):
-            code = os.path.join(share, "OVMF_CODE.fd")
+        # QEMU's own names, then the Linux distributions' (Debian/Ubuntu: _4M)
+        for code_name, vars_name in (("edk2-x86_64-code.fd", "edk2-i386-vars.fd"),
+                                     ("OVMF_CODE.fd", "OVMF_VARS.fd"),
+                                     ("OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd")):
+            code = os.path.join(share, code_name)
+            vars_src = os.path.join(share, vars_name)
+            if os.path.isfile(code):
+                break
         if os.path.isfile(code):
-            vars_src = os.path.join(share, "edk2-i386-vars.fd")
             if not os.path.isfile(vars_src):
                 vars_src = os.path.join(share, "OVMF_VARS.fd")
             vars_copy = os.path.join(BUILD, "uefi-vars.fd")

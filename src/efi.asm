@@ -75,7 +75,10 @@ ptr_accy    resd 1
 mouse_x     resd 1
 mouse_y     resd 1
 mouse_btn   resd 1
+mouse_wheel resd 1              ; wheel turns not yet used (+ = away from you)
 mouse_ok    resb 1
+alignb 8
+ptr_lastz   resq MAX_PTRS       ; last wheel position of each Absolute Pointer
 
 section .data
 guid_block_io   dd 0x964E5B21
@@ -189,6 +192,7 @@ efi_mouse_init:
     setnz byte [mouse_ok]
     mov dword [ptr_accx], 0
     mov dword [ptr_accy], 0
+    mov dword [mouse_wheel], 0
     mov eax, [gfx_w]
     shr eax, 1
     mov [mouse_x], eax
@@ -697,6 +701,16 @@ ptr_abs_apply:
     mov eax, [rel ptr_state + 24]       ; ActiveButtons (bit 0 = touch / left)
     and eax, 1
     mov [rel mouse_btn], eax
+    mov rax, [rcx + 16]                 ; a wheel: MinZ < MaxZ
+    cmp rax, [rcx + 40]
+    jge .no_z
+    mov rax, [rel ptr_state + 16]       ; CurrentZ: count how far it turned
+    lea rdx, [rel ptr_lastz]
+    mov r8, rax
+    sub rax, [rdx + r12 * 8]
+    mov [rdx + r12 * 8], r8
+    add [rel mouse_wheel], eax
+.no_z:
     ret
 ; .map: RAX = value, R8 = min, R9 = max, R10 = screen size -> EAX = pixel
 .map:
@@ -720,7 +734,8 @@ ptr_abs_apply:
     ret
 
 ; ptr_rel_apply: RSI = Simple Pointer, ptr_state = its state (movement X, Y,
-; Z as signed 32-bit counts, then the left and right buttons). The device's
+; Z as signed 32-bit counts, then the left and right buttons). Z is the
+; wheel. The device's
 ; Mode says how many counts make a millimetre; MOOS moves the cursor 8
 ; pixels per millimetre, which is one pixel per count with the usual USB
 ; mouse driver (it reports 8 counts per mm). Fractions carry over.
@@ -745,6 +760,8 @@ ptr_rel_apply:
     movzx eax, byte [rel ptr_state + 12] ; LeftButton
     and eax, 1
     mov [rel mouse_btn], eax
+    mov eax, [rel ptr_state + 8]        ; the wheel (RelativeMovementZ)
+    add [rel mouse_wheel], eax
     ret
 ; .axis: RAX = counts, R8 = counts per mm (0 = not given), R9 -> leftover
 ; sixteenths -> EAX = whole pixels to move

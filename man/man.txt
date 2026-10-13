@@ -9,8 +9,8 @@ SYNOPSIS
 DESCRIPTION
     man opens a page of the MOOS manual. The screen is cleared and the
     page is shown from the top, one screen at a time. Every command has
-    a page, and there are four guide pages that explain the system as
-    a whole.
+    a page, and there are guide pages that explain the system as a
+    whole.
 
     Typing  man  on its own shows this page.
 
@@ -21,6 +21,7 @@ ARGUMENTS
                     keys     every keyboard shortcut
                     files    how files are stored, names and limits
                     install  putting MOOS on another computer
+                    browser  the desktop's web browser
 
 MOVING AROUND
     When a page is longer than the screen, a bar appears at the bottom:

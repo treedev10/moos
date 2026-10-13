@@ -115,7 +115,8 @@ kbd_getkey_uefi:                    ; (EBX is already saved)
     ret
 
 ; kbd_poll: non-blocking. EAX = key (ASCII or KEY_*) or 0 if none waiting.
-; On BIOS, drains the scan-code buffer; on UEFI, one ReadKeyStroke.
+; On BIOS, drains the scan-code buffer; on UEFI, one ReadKeyStroke (which
+; also reports F1-F12 as KEY_F1-KEY_F12, for the desktop).
 kbd_poll:
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je .uefi
@@ -146,6 +147,12 @@ kbd_poll:
 .pscan:
     cmp ebx, 0x17
     je .pesc
+    lea eax, [ebx - 0x0B]               ; F1-F12 are scan codes 0x0B-0x16
+    cmp eax, 11
+    ja .pnof
+    add eax, KEY_F1
+    jmp .pdone
+.pnof:
     cmp ebx, 0x0A
     ja .none
     movzx eax, word [efi_scan_keys + ebx * 2]
