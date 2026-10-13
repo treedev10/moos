@@ -1,0 +1,49 @@
+NAME
+    clock - clock settings, and getting the time from the internet
+
+SYNOPSIS
+    clock
+    clock 24 | clock 12
+    clock color <name>
+    clock tz <offset>
+    clock sync | clock local
+
+DESCRIPTION
+    clock shows the current time and your settings. The settings are saved
+    in the file clock.cfg, so they last across restarts.
+
+    clock 24     show time as 24-hour ("military") time, like 14:30
+    clock 12     show time as 12-hour time, like 2:30 PM
+
+    clock color <name>
+        Change the colour of the status bar at the bottom of the screen.
+        Use a colour name such as blue, green, red or black (see the
+        color command for the full list).
+
+    clock tz <offset>
+        Set your timezone as an offset from UTC, used when the time comes
+        from the internet. Examples:  clock tz -5   clock tz +5:30
+
+    clock sync
+        Connect to the network if needed, ask an internet time server
+        (NTP) for the current time, and switch the clock to it. This is
+        accurate to about a second.
+
+    clock local
+        Switch back to the computer's own hardware clock.
+
+HOW INTERNET TIME WORKS
+    Internet time (NTP) is in UTC. MOOS adds your timezone offset for
+    display. MOOS keeps counting from the synced time using its own timer,
+    so the clock stays right without asking again. The time is not written
+    back to the hardware clock, so after a restart MOOS uses the hardware
+    clock again until you run  clock sync  once more.
+
+EXAMPLES
+    clock sync         get the time from the internet
+    clock tz -8        US Pacific (UTC-8)
+    clock 12           12-hour display
+    clock color blue   a blue status bar
+
+SEE ALSO
+    time, net, color

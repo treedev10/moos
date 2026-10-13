@@ -24,6 +24,7 @@ kp_base         resb 1
 alignb 4
 out_ptr         resd 1
 status_last     resd 1
+clk_bar_ap      resb 1
 numbuf          resb 39
 numbuf_end      resb 1
 alignb 16
@@ -37,6 +38,9 @@ vga_init:
     pushad
     mov dword [screen_magic], 'MOOS'
     mov dword [screen_magic + 4], 'SCRN'
+    mov byte [clk_24h], 1           ; clock defaults (before clk_init runs)
+    mov byte [clk_color], C_STATUS
+    mov byte [clk_bar_ap], 'a'
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je .graphics
     mov dx, 0x3D4                   ; text mode: underline cursor
@@ -545,7 +549,8 @@ status_draw:
     pushad
     mov edi, VGA_MEM + TEXT_ROWS * SCR_COLS * 2
     mov ecx, SCR_COLS
-    mov ax, (C_STATUS << 8) | ' '
+    mov ah, [clk_color]
+    mov al, ' '
     rep stosw
     mov esi, status_text
     mov edi, VGA_MEM + TEXT_ROWS * SCR_COLS * 2
@@ -592,6 +597,23 @@ status_tick:
     call .chr
     call .chr
     movzx eax, byte [rtc_hour]
+    cmp byte [clk_24h], 0           ; 12-hour display?
+    jne .hour
+    cmp al, 12
+    jb .ampm_am
+    mov byte [clk_bar_ap], 'p'
+    cmp al, 12
+    jbe .hour12
+    sub al, 12
+    jmp .hour12
+.ampm_am:
+    mov byte [clk_bar_ap], 'a'
+    test al, al
+    jnz .hour12
+    mov al, 12
+.hour12:
+    movzx eax, al
+.hour:
     call .num2
     mov al, ':'
     call .chr
@@ -601,6 +623,10 @@ status_tick:
     call .chr
     movzx eax, byte [rtc_sec]
     call .num2
+    cmp byte [clk_24h], 0
+    jne .done
+    mov al, [clk_bar_ap]
+    call .chr
 .done:
     popad
     ret

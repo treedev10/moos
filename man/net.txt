@@ -1,0 +1,43 @@
+NAME
+    net - connect MOOS to the network
+
+SYNOPSIS
+    net up
+    net status
+    net test
+
+DESCRIPTION
+    net brings up networking and shows what MOOS got from the network.
+
+    net up connects: it finds the network card, then uses DHCP to get an
+    IP address, a gateway and a DNS server, like any other computer on
+    the network.
+
+    net status shows the current settings (address, gateway, DNS, and the
+    network card) or says the network is not connected yet.
+
+    net test looks up pool.ntp.org and asks it for the time, to check that
+    name lookup and the internet both work.
+
+HARDWARE
+    MOOS drives the RealTek RTL8139 network card itself. It is what QEMU,
+    VirtualBox and VMware emulate by default, and it was common on PCs of
+    the Pentium era. Other cards are not supported.
+
+    In QEMU, start with  -netdev user -device rtl8139  (build.py adds this
+    for you with  python build.py run  /  uefi ).
+
+WHAT NEEDS THE NETWORK
+    clock sync   gets the real time from the internet (man clock)
+    apt          installs packages over the network (man apt)
+
+MESSAGES
+    no supported network card found
+        There is no RTL8139. In QEMU, add the device as shown above.
+
+    no reply from DHCP
+        The card is there but nothing answered. Check that networking is
+        connected (in QEMU, that you used -netdev user).
+
+SEE ALSO
+    clock, apt, sysinfo

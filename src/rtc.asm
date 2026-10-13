@@ -59,6 +59,14 @@ rtc_bcd:
 
 ; rtc_read: fill rtc_* with the current date and time
 rtc_read:
+    cmp byte [clk_source], 1        ; synced from the internet?
+    jne .hardware
+    push eax
+    call clk_now_epoch
+    call epoch_to_datetime
+    pop eax
+    ret
+.hardware:
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je rtc_read_uefi
     pushad

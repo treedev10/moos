@@ -39,6 +39,8 @@ cmd_table:
     COMMAND "clear",    cmd_clear,    "clear the screen",           man_clear
     COMMAND "color",    cmd_color,    "change screen colours",      man_color
     COMMAND "time",     cmd_time,     "show date and time",         man_time
+    COMMAND "clock",    cmd_clock,    "clock settings, time sync",  man_clock
+    COMMAND "net",      cmd_net,      "connect to the network",     man_net
     COMMAND "uptime",   cmd_uptime,   "time since start-up",        man_uptime
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
     COMMAND "sysinfo",  cmd_sysinfo,  "system and CPU details",     man_sysinfo

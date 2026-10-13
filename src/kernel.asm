@@ -43,9 +43,12 @@ org KORG
 %define FS_DATA      KV(0x101000)
 %define SCRATCH      KV(0x200000)
 %define OUTBUF       KV(0x210000)
+%define NET_BUF      KV(0x220000)    ; NIC DMA buffers + network scratch (64K)
+%define PKG_BUF      KV(0x230000)    ; downloaded package (512K, under KMEM)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
-KMEM_SIZE    equ 0x220000 - 0x10000 ; everything above, from kbase
+PKG_BUF_SIZE equ 0x80000
+KMEM_SIZE    equ 0x2B0000 - 0x10000 ; everything above, from kbase
 
 VGA_MEM      equ screen_buf         ; all drawing goes to this copy of the
 SCR_COLS     equ 80                 ; screen; screen_present shows it
@@ -115,6 +118,7 @@ kernel_entry_uefi:
 
 kernel_common:
     call fs_init
+    call clk_init
     call shell_run
 .hang:
     hlt
@@ -144,11 +148,14 @@ zero_bss:
 %include "src/rtc.asm"
 %include "src/ata.asm"
 %include "src/fs.asm"
+%include "src/net.asm"
 %include "src/readline.asm"
 %include "src/pager.asm"
 %include "src/shell.asm"
 %include "src/cmd_files.asm"
 %include "src/cmd_system.asm"
+%include "src/cmd_net.asm"
+%include "src/cmd_clock.asm"
 %include "src/calc.asm"
 %include "src/editor.asm"
 %include "src/installer.asm"
