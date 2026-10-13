@@ -166,8 +166,13 @@ fb_setup:
     call efi64
     ret
 
-; screen_present: show screen_buf on the real screen
+; screen_present: show screen_buf on the real screen (not while the
+; graphical desktop owns the screen: then the text console waits unseen)
 screen_present:
+    cmp byte [gui_active], 0
+    je .go
+    ret
+.go:
     pushad
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je .graphics
