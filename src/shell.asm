@@ -48,6 +48,7 @@ cmd_table:
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
     COMMAND "sysinfo",  cmd_sysinfo,  "system and CPU details",     man_sysinfo
     COMMAND "history",  cmd_history,  "list recent commands",       man_history
+    COMMAND "login",    cmd_login,    "optional sign-in screen",    man_login
     COMMAND "format",   cmd_format,   "erase all files",            man_format
     COMMAND "install",  cmd_install,  "install MOOS on a disk",     man_install
     COMMAND "reboot",   cmd_reboot,   "restart the computer",       man_reboot

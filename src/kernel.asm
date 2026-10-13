@@ -120,6 +120,7 @@ kernel_entry_uefi:
 kernel_common:
     call fs_init
     call clk_init
+    call signin_maybe
     call shell_run
 .hang:
     hlt
@@ -158,6 +159,7 @@ zero_bss:
 %include "src/cmd_net.asm"
 %include "src/cmd_clock.asm"
 %include "src/cmd_apt.asm"
+%include "src/cmd_login.asm"
 %include "src/script.asm"
 %include "src/gfx.asm"
 %include "src/gui.asm"

@@ -1,0 +1,29 @@
+NAME
+    login - turn the optional sign-in screen on or off
+
+SYNOPSIS
+    login
+    login set <user> <password>
+    login off
+
+DESCRIPTION
+    By default MOOS starts straight at the shell. login set turns on a
+    sign-in screen: every start-up then asks for the password before the
+    shell appears.
+
+    login              show whether sign-in is on or off
+    login set U P      turn it on with user name U and password P
+    login off          turn it off again
+
+    The setting is stored in the file login.cfg (the password is kept as
+    a hash, not in plain text).
+
+NOT REAL SECURITY
+    This is light protection for a personal machine. The password is not
+    used to encrypt anything, and anyone who can edit the disk from
+    another system can remove login.cfg. There is no password recovery:
+    if you forget it, delete login.cfg (for example with rm after booting
+    another MOOS disk) to turn sign-in off.
+
+SEE ALSO
+    format, files
