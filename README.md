@@ -13,7 +13,7 @@ onto a computer's disk.
 **New since the first version:** wired networking (DHCP/DNS/TCP), **HTTPS**
 with MOOS's own TLS 1.3 and X.509 code, an `apt` package manager that installs **straight from
 GitHub** (`apt install /user/repo`), internet clock sync, a `run` scripting language, a
-graphical desktop (`gui`) with a low-poly stag wallpaper and apps, and an optional sign-in
+graphical desktop (`gui`) with windowed apps, and an optional sign-in
 screen. See [handoff.md](handoff.md) for the full picture.
 
 ```
@@ -111,8 +111,8 @@ Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, 
   over checked HTTPS. Publishing a package is just committing a `moos.pkg`; see
   [PACKAGES.md](PACKAGES.md).
 - **Scripting** (`run file.ms`): variables, `if/else`, `while`, `print`, and expressions.
-- **Desktop** (`apt install desktop`, then `gui`): a low-poly moose wallpaper, a taskbar,
-  a mouse, and windowed apps — Terminal, Text Editor, Script IDE, an HTTPS Browser, and
+- **Desktop** (`apt install desktop`, then `gui`): a plain-colour desktop, a taskbar,
+  a mouse (USB or PS/2, through the firmware), and windowed apps — Terminal, Text Editor, Script IDE, an HTTPS Browser, and
   Settings. UEFI only.
 
 ## How it works

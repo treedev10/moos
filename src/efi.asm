@@ -16,6 +16,10 @@
 ; =============================================================================
 EFI_CHUNK   equ 128                     ; sectors per disk request (64 KB)
 MAX_DISKS   equ 16
+MAX_PTRS    equ 8                       ; mice / touch devices we listen to
+PTR_ABS     equ 1                       ; Absolute Pointer (tablet, touch screen)
+PTR_REL     equ 2                       ; Simple Pointer (an ordinary mouse)
+PTR_VIRT    equ 0x80                    ; (flag) the firmware's "all of them"
 
 ; disk table entry, filled by efi_list_disks (UEFI) / bios_list_disks (BIOS)
 DT_HANDLE   equ 0                       ; Block I/O protocol (UEFI)
@@ -60,13 +64,14 @@ drawn_cursor resd 1
 alignb 16
 cell_buf    resd 16 * 32                ; one cell, for Blt-only screens
 alignb 8
-abs_ptr     resq 1              ; Absolute Pointer protocol
-ptr_state   resb 32            ; EFI_ABSOLUTE_POINTER_STATE
+ptr_ifs     resq MAX_PTRS       ; pointer devices: Absolute or Simple Pointer
+ptr_kinds   resb MAX_PTRS       ; PTR_ABS / PTR_REL for each
+ptr_state   resb 40             ; the state GetState fills in
 alignb 4
-abs_minx    resd 1
-abs_maxx    resd 1
-abs_miny    resd 1
-abs_maxy    resd 1
+ptr_n       resd 1              ; how many were found
+ptr_real    resd 3              ; real devices of each kind (by PTR_ABS/REL)
+ptr_accx    resd 1              ; leftover sixteenths of a pixel (relative mice)
+ptr_accy    resd 1
 mouse_x     resd 1
 mouse_y     resd 1
 mouse_btn   resd 1
@@ -82,6 +87,9 @@ guid_dev_path   dd 0x09576E91
 guid_abs_ptr    dd 0x8D59D32B
                 dw 0xC655, 0x4AE9
                 db 0x9B, 0x15, 0xF2, 0x59, 0x04, 0x99, 0x2A, 0x43
+guid_simple_ptr dd 0x31878C87
+                dw 0x0B75, 0x11D5
+                db 0x9A, 0x4F, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D
 vga_rgb:        ; the classic 16 colours as R, G, B
     db 0x00,0x00,0x00, 0x00,0x00,0xAA, 0x00,0xAA,0x00, 0x00,0xAA,0xAA
     db 0xAA,0x00,0x00, 0xAA,0x00,0xAA, 0xAA,0x55,0x00, 0xAA,0xAA,0xAA
@@ -173,11 +181,14 @@ efi_list_disks:
     mov [disk_count], eax
     ret
 
-; efi_mouse_init: find the pointer device. AL (mouse_ok) = 1 if present.
+; efi_mouse_init: find the pointer devices. mouse_ok = 1 if there is one.
 efi_mouse_init:
     mov eax, efi_ptrinit64
     call efi64
-    mov [mouse_ok], al
+    test eax, eax
+    setnz byte [mouse_ok]
+    mov dword [ptr_accx], 0
+    mov dword [ptr_accy], 0
     mov eax, [gfx_w]
     shr eax, 1
     mov [mouse_x], eax
@@ -252,12 +263,10 @@ efi_readkey64:
 ; efi_keypoll64: non-blocking key read -> EAX = scan<<16 | char, 0 if none
 efi_keypoll64:
     ENTER64
-    sub rsp, 8
     mov rcx, [rel bootinfo + BI.conin]
     lea rdx, [rel efi_key]
     mov dword [rdx], 0
     call [rcx + 8]                      ; ReadKeyStroke
-    add rsp, 8
     test rax, rax
     jnz .none
     mov eax, [rel efi_key]
@@ -555,84 +564,228 @@ draw_cell64:
     pop rbx
     ret
 
-; efi_ptrinit64: locate the Absolute Pointer protocol -> EAX = 1 if found
+; efi_ptrinit64: find every pointer device -> EAX = how many.
+; Two kinds: Absolute Pointer devices (touch screens, QEMU's tablet) report
+; a position; Simple Pointer devices (ordinary USB and PS/2 mice) report how
+; far they moved. Firmware often starts the mouse driver only when something
+; needs it, so every device is connected first.
 efi_ptrinit64:
     ENTER64
-    mov qword [rel abs_ptr], 0
-    mov rax, [rel bootinfo + BI.bs]
-    lea rcx, [rel guid_abs_ptr]
-    xor edx, edx
-    lea r8, [rel abs_ptr]
-    call [rax + 320]                    ; LocateProtocol
-    test rax, rax
-    jnz .none
-    mov rsi, [rel abs_ptr]
-    test rsi, rsi
-    jz .none
-    mov rcx, [rsi + 24]                 ; Mode
-    mov eax, [rcx + 0]
-    mov [rel abs_minx], eax
-    mov eax, [rcx + 24]
-    mov [rel abs_maxx], eax
-    mov eax, [rcx + 8]
-    mov [rel abs_miny], eax
-    mov eax, [rcx + 32]
-    mov [rel abs_maxy], eax
-    mov eax, 1
-    LEAVE64
-.none:
+    call connect_all64
     xor eax, eax
+    mov [rel ptr_n], eax
+    mov [rel ptr_real + PTR_ABS * 4], eax
+    mov [rel ptr_real + PTR_REL * 4], eax
+    lea r15, [rel guid_abs_ptr]
+    mov r14d, PTR_ABS
+    call .collect
+    lea r15, [rel guid_simple_ptr]
+    mov r14d, PTR_REL
+    call .collect
+    mov eax, [rel ptr_real + PTR_ABS * 4]
+    add eax, [rel ptr_real + PTR_REL * 4]
     LEAVE64
+; .collect: add every handle carrying protocol R15, as kind R14. The console
+; handle carries the firmware's virtual device that merges all the others:
+; it is listened to as well (harmless - reading it drains the real ones) but
+; not counted, since it exists even when there is no mouse at all.
+.collect:
+    sub rsp, 56                         ; (keeps the stack 16-byte aligned)
+    mov rax, [rel bootinfo + BI.bs]
+    mov ecx, 2                          ; ByProtocol
+    mov rdx, r15
+    xor r8d, r8d
+    lea r9, [rel efi_tmp]               ; -> number of handles
+    lea r10, [rel efi_tmp + 8]          ; -> the handle buffer
+    mov [rsp + 32], r10
+    call [rax + 312]                    ; LocateHandleBuffer
+    test rax, rax
+    jnz .c_done
+    mov r12, [rel efi_tmp + 8]
+    mov rbx, r12
+    mov r13, [rel efi_tmp]
+.c_next:
+    test r13, r13
+    jz .c_free
+    mov eax, [rel ptr_n]
+    cmp eax, MAX_PTRS
+    jae .c_free
+    lea r8, [rel ptr_ifs]
+    lea r8, [r8 + rax * 8]              ; where the interface goes
+    mov qword [r8], 0
+    mov rax, [rel bootinfo + BI.bs]
+    mov rcx, [r12]
+    mov rdx, r15
+    call [rax + 152]                    ; HandleProtocol
+    test rax, rax
+    jnz .c_skip
+    mov eax, [rel ptr_n]
+    lea rcx, [rel ptr_ifs]
+    cmp qword [rcx + rax * 8], 0
+    je .c_skip
+    lea rcx, [rel ptr_kinds]
+    mov [rcx + rax], r14b
+    inc dword [rel ptr_n]
+    mov rdx, [rel bootinfo + BI.systab]
+    mov rdx, [rdx + 40]                 ; ConsoleInHandle
+    cmp rdx, [r12]
+    je .c_virtual
+    lea rdx, [rel ptr_real]
+    inc dword [rdx + r14 * 4]
+    jmp .c_skip
+.c_virtual:
+    or byte [rcx + rax], PTR_VIRT
+.c_skip:
+    add r12, 8
+    dec r13
+    jmp .c_next
+.c_free:
+    mov rax, [rel bootinfo + BI.bs]
+    mov rcx, rbx
+    call [rax + 72]                     ; FreePool
+.c_done:
+    add rsp, 56
+    ret
 
-; efi_ptrget64: read the pointer and map it to screen pixels
+; efi_ptrget64: read every pointer device; update mouse_x / mouse_y / mouse_btn
 efi_ptrget64:
     ENTER64
-    mov rsi, [rel abs_ptr]
-    test rsi, rsi
-    jz .done
-    sub rsp, 32
+    xor r12d, r12d
+.next:
+    cmp r12d, [rel ptr_n]
+    jae .done
+    lea rax, [rel ptr_ifs]
+    mov rsi, [rax + r12 * 8]
+    lea rax, [rel ptr_kinds]
+    movzx r13d, byte [rax + r12]
+    and r13d, ~PTR_VIRT
     mov rcx, rsi
     lea rdx, [rel ptr_state]
-    call [rsi + 8]                      ; GetState
-    add rsp, 32
+    call [rsi + 8]                      ; GetState (same place in both kinds)
     test rax, rax
-    jnz .done                           ; EFI_NOT_READY: keep the last position
-    mov eax, [rel ptr_state + 0]        ; CurrentX
-    sub eax, [rel abs_minx]
-    imul eax, [rel gfx_w]
-    mov ecx, [rel abs_maxx]
-    sub ecx, [rel abs_minx]
-    test ecx, ecx
-    jz .done
-    xor edx, edx
-    div ecx
-    cmp eax, [rel gfx_w]
-    jb .x_ok
-    mov eax, [rel gfx_w]
-    dec eax
-.x_ok:
-    mov [rel mouse_x], eax
-    mov eax, [rel ptr_state + 8]        ; CurrentY
-    sub eax, [rel abs_miny]
-    imul eax, [rel gfx_h]
-    mov ecx, [rel abs_maxy]
-    sub ecx, [rel abs_miny]
-    test ecx, ecx
-    jz .done
-    xor edx, edx
-    div ecx
-    cmp eax, [rel gfx_h]
-    jb .y_ok
-    mov eax, [rel gfx_h]
-    dec eax
-.y_ok:
-    mov [rel mouse_y], eax
-    mov eax, [rel ptr_state + 24]       ; ActiveButtons (bit 0 = touch/click)
-    and eax, 1
-    mov [rel mouse_btn], eax
+    jnz .skip                           ; EFI_NOT_READY: nothing new from it
+    cmp r13d, PTR_ABS
+    jne .rel
+    call ptr_abs_apply
+    jmp .skip
+.rel:
+    call ptr_rel_apply
+.skip:
+    inc r12d
+    jmp .next
 .done:
     xor eax, eax
     LEAVE64
+
+; ptr_abs_apply: RSI = Absolute Pointer, ptr_state = its state (CurrentX,
+; CurrentY, CurrentZ as 64-bit numbers, then ActiveButtons). Maps the
+; position from the device's range onto the screen.
+ptr_abs_apply:
+    mov rcx, [rsi + 24]                 ; Mode: MinX, MinY, MinZ, MaxX, MaxY ...
+    mov rax, [rel ptr_state + 0]
+    mov r8, [rcx + 0]
+    mov r9, [rcx + 24]
+    mov r10d, [rel gfx_w]
+    call .map
+    mov [rel mouse_x], eax
+    mov rax, [rel ptr_state + 8]
+    mov r8, [rcx + 8]
+    mov r9, [rcx + 32]
+    mov r10d, [rel gfx_h]
+    call .map
+    mov [rel mouse_y], eax
+    mov eax, [rel ptr_state + 24]       ; ActiveButtons (bit 0 = touch / left)
+    and eax, 1
+    mov [rel mouse_btn], eax
+    ret
+; .map: RAX = value, R8 = min, R9 = max, R10 = screen size -> EAX = pixel
+.map:
+    sub r9, r8
+    jbe .m0                             ; (no usable range)
+    sub rax, r8
+    jb .m0                              ; below the minimum
+    cmp rax, r9
+    jbe .m1
+    mov rax, r9
+.m1:
+    mul r10                             ; RDX:RAX = offset * size
+    div r9
+    cmp rax, r10
+    jb .m2
+    lea rax, [r10 - 1]
+.m2:
+    ret
+.m0:
+    xor eax, eax
+    ret
+
+; ptr_rel_apply: RSI = Simple Pointer, ptr_state = its state (movement X, Y,
+; Z as signed 32-bit counts, then the left and right buttons). The device's
+; Mode says how many counts make a millimetre; MOOS moves the cursor 8
+; pixels per millimetre, which is one pixel per count with the usual USB
+; mouse driver (it reports 8 counts per mm). Fractions carry over.
+ptr_rel_apply:
+    mov rcx, [rsi + 24]                 ; Mode: ResolutionX, ResolutionY, ...
+    movsxd rax, dword [rel ptr_state + 0]
+    mov r8, [rcx + 0]
+    lea r9, [rel ptr_accx]
+    call .axis
+    add eax, [rel mouse_x]
+    mov r10d, [rel gfx_w]
+    call .clamp
+    mov [rel mouse_x], eax
+    movsxd rax, dword [rel ptr_state + 4]
+    mov r8, [rcx + 8]
+    lea r9, [rel ptr_accy]
+    call .axis
+    add eax, [rel mouse_y]
+    mov r10d, [rel gfx_h]
+    call .clamp
+    mov [rel mouse_y], eax
+    movzx eax, byte [rel ptr_state + 12] ; LeftButton
+    and eax, 1
+    mov [rel mouse_btn], eax
+    ret
+; .axis: RAX = counts, R8 = counts per mm (0 = not given), R9 -> leftover
+; sixteenths -> EAX = whole pixels to move
+.axis:
+    shl rax, 7                          ; counts * 8 px * 16 sixteenths
+    test r8, r8
+    jz .unscaled
+    cqo
+    idiv r8
+    jmp .add
+.unscaled:
+    sar rax, 3                          ; one count = one pixel
+.add:
+    add eax, [r9]
+    cdq
+    mov r10d, 16
+    idiv r10d                           ; EAX = pixels, EDX = sixteenths left
+    mov [r9], edx
+    mov edx, eax                        ; faster when moved fast: past 4
+    sar edx, 31                         ; pixels at a time, count double
+    mov r10d, eax
+    xor r10d, edx
+    sub r10d, edx                       ; |pixels|
+    sub r10d, 4
+    jle .slow
+    xor r10d, edx
+    sub r10d, edx                       ; the extra, signed again
+    add eax, r10d
+.slow:
+    ret
+; .clamp: EAX = position, R10 = size -> EAX within 0 .. size-1
+.clamp:
+    test eax, eax
+    jns .c1
+    xor eax, eax
+.c1:
+    cmp eax, r10d
+    jb .c2
+    lea eax, [r10 - 1]
+.c2:
+    ret
 
 ; efi_listdisks64: every whole disk with Block I/O -> disk_tab, EAX = count
 efi_listdisks64:

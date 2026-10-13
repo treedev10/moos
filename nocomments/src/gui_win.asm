@@ -7,6 +7,7 @@ APP_SETTINGS equ 5
 
 WIN_X       equ 60
 WIN_Y       equ 70
+RUN_W       equ 56
 
 section .bss
 alignb 4
@@ -55,6 +56,16 @@ gui_windows:
     mov esi, close_x
     lea ecx, [ecx + 5]
     TEXT ecx, WIN_Y + 6, close_x, 0xFFFFFF, -1
+    cmp dword [cur_app], APP_IDE
+    jne .no_run
+    mov ecx, [gui_close_x]
+    sub ecx, RUN_W + 8
+    mov [gui_run_x], ecx
+    RECT ecx, WIN_Y + 4, RUN_W, 18, 0x2E7D4F
+    mov ecx, [gui_run_x]
+    add ecx, 16
+    TEXT ecx, WIN_Y + 6, run_label, 0xFFFFFF, -1
+.no_run:
 
     mov eax, [cur_app]
     cmp eax, APP_TERM
@@ -80,9 +91,11 @@ gui_windows:
 
 section .data
 close_x db "x", 0
+run_label db "Run", 0
 section .bss
 alignb 4
 gui_close_x resd 1
+gui_run_x   resd 1
 section .text
 
 gui_open:
@@ -110,6 +123,7 @@ gui_handle:
     jz .done
     test ebx, ebx
     jnz .done
+    or byte [gui_dirty], 1
 
     mov eax, [gfx_h]
     sub eax, TASKBAR_H
@@ -118,22 +132,30 @@ gui_handle:
 
     cmp dword [cur_app], APP_NONE
     je .done
-    mov eax, [mouse_x]
-    cmp eax, [gui_close_x]
-    jb .maybe_content
-    mov ecx, [gui_close_x]
-    add ecx, 18
-    cmp eax, ecx
-    ja .maybe_content
     mov eax, [mouse_y]
     cmp eax, WIN_Y + 4
-    jb .maybe_content
+    jb .done
     cmp eax, WIN_Y + 22
-    ja .maybe_content
+    ja .done
+    mov eax, [mouse_x]
+    mov ecx, [gui_close_x]
+    cmp eax, ecx
+    jb .run
+    add ecx, 18
+    cmp eax, ecx
+    ja .done
     mov dword [cur_app], APP_NONE
     jmp .done
-.maybe_content:
-    call app_click
+.run:
+    cmp dword [cur_app], APP_IDE
+    jne .done
+    mov ecx, [gui_run_x]
+    cmp eax, ecx
+    jb .done
+    add ecx, RUN_W
+    cmp eax, ecx
+    ja .done
+    call ide_run
     jmp .done
 .taskbar:
     call gui_taskbar_click
@@ -142,45 +164,27 @@ gui_handle:
     ret
 
 gui_taskbar_click:
-    mov eax, [mouse_x]
-    mov ecx, [gfx_w]
-    sub ecx, 110
-    cmp eax, ecx
-    jae .quit
-
-    cmp eax, 14 + 8 * 9
-    jb .term
-    cmp eax, 14 + 8 * 17
-    jb .editor
-    cmp eax, 14 + 8 * 29
-    jb .ide
-    cmp eax, 14 + 8 * 38
-    jb .browser
-    cmp eax, 14 + 8 * 48
-    jb .settings
-    ret
-.settings:
-    mov eax, APP_SETTINGS
-    jmp gui_open
-.term:
-    mov eax, APP_TERM
-    jmp gui_open
-.editor:
-    mov eax, APP_EDITOR
-    jmp gui_open
-.ide:
-    mov eax, APP_IDE
-    jmp gui_open
-.browser:
-    mov eax, APP_BROWSER
+    call tb_hit
+    cmp eax, TB_QUIT
+    je .quit
+    test eax, eax
+    js .r
+    inc eax
     jmp gui_open
 .quit:
     mov byte [gui_quit], 1
-    ret
+.r: ret
 
 gui_key:
     cmp dword [cur_app], APP_NONE
-    je .r
+    jne .app
+    cmp eax, '1'
+    jb .r
+    cmp eax, '5'
+    ja .r
+    sub eax, '0'
+    jmp gui_open
+.app:
     cmp dword [cur_app], APP_TERM
     je term_key
     cmp dword [cur_app], APP_BROWSER

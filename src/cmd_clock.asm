@@ -5,6 +5,7 @@
 ;    - 24-hour ("military") or 12-hour display
 ;    - the colour of the status bar
 ;    - a timezone offset, used with internet time (which is UTC)
+;    - the desktop's background colour (chosen in the desktop's Settings)
 ;
 ;  "clock sync" asks an internet time server (NTP) for the time and switches
 ;  the clock to it. The hardware clock is still there as a fallback.
@@ -17,6 +18,7 @@ alignb 4
 clk_24h         resb 1          ; 1 = 24-hour, 0 = 12-hour
 clk_color       resb 1          ; status bar attribute
 clk_source      resb 1          ; 0 = hardware clock, 1 = internet
+desk_color      resb 1          ; desktop colour (index into desk_rgb, gui.asm)
 alignb 4
 clk_tz_min      resd 1          ; timezone offset from UTC, in minutes
 net_epoch_base  resd 1          ; synced Unix time ...
@@ -46,6 +48,7 @@ clk_defaults:
     mov byte [clk_24h], 1
     mov byte [clk_color], C_STATUS
     mov byte [clk_source], 0
+    mov byte [desk_color], 0
     mov dword [clk_tz_min], 0
     ret
 
@@ -63,6 +66,8 @@ clk_init:
     mov [clk_24h], al
     mov al, [esi + 1]
     mov [clk_color], al
+    mov al, [esi + 2]
+    mov [desk_color], al
     mov eax, [esi + 3]
     mov [clk_tz_min], eax
 .done:
@@ -77,7 +82,8 @@ clk_save:
     mov [edi], al
     mov al, [clk_color]
     mov [edi + 1], al
-    mov byte [edi + 2], 0
+    mov al, [desk_color]
+    mov [edi + 2], al
     mov eax, [clk_tz_min]
     mov [edi + 3], eax
     mov esi, clk_cfg_name

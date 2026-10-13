@@ -3,6 +3,7 @@ alignb 4
 clk_24h         resb 1
 clk_color       resb 1
 clk_source      resb 1
+desk_color      resb 1
 alignb 4
 clk_tz_min      resd 1
 net_epoch_base  resd 1
@@ -31,6 +32,7 @@ clk_defaults:
     mov byte [clk_24h], 1
     mov byte [clk_color], C_STATUS
     mov byte [clk_source], 0
+    mov byte [desk_color], 0
     mov dword [clk_tz_min], 0
     ret
 
@@ -47,6 +49,8 @@ clk_init:
     mov [clk_24h], al
     mov al, [esi + 1]
     mov [clk_color], al
+    mov al, [esi + 2]
+    mov [desk_color], al
     mov eax, [esi + 3]
     mov [clk_tz_min], eax
 .done:
@@ -60,7 +64,8 @@ clk_save:
     mov [edi], al
     mov al, [clk_color]
     mov [edi + 1], al
-    mov byte [edi + 2], 0
+    mov al, [desk_color]
+    mov [edi + 2], al
     mov eax, [clk_tz_min]
     mov [edi + 3], eax
     mov esi, clk_cfg_name

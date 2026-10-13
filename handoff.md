@@ -60,7 +60,8 @@ each step. The installer and disk persistence were verified across reboots.
   `hello`, `demos` (also `moos.pkg` at the repo root). Guide: `PACKAGES.md`.
 - **Scripting** (`run`): a small language (variables, `if/else`, `while`, `print`,
   expressions with comparisons), sharing the calculator's expression engine.
-- **Desktop** (`gui`, UEFI only): low-poly moose wallpaper, taskbar + clock, mouse cursor,
+- **Desktop** (`gui`, UEFI only): solid-colour background (8 choices in Settings, saved in
+  clock.cfg byte 2), taskbar buttons with hover + clock, mouse cursor, keys 1-5 / Esc,
   and windowed apps — Terminal (runs real commands), Text Editor, Script IDE (edit + run),
   Browser (fetches `https://` and `http://` pages) and Settings. Installed with
   `apt install desktop`.
@@ -198,14 +199,20 @@ The commented source is canonical.
   512 KB package buffer; saved files to 4 KB (the MOOSFS limit).
 - **GUI apps are deliberately simple**: the editor is append/backspace/enter (no mid-line
   cursor); the browser shows page text only (no HTML rendering); one window at a time.
-- **Mouse interaction** (clicking taskbar buttons / the close box) is implemented but was
-  hard to drive in the headless test harness, so it was verified mainly by launching apps
-  via `gui <app>` from the keyboard. Worth a manual click-through.
+- **The mouse comes from the firmware**: `efi_ptrinit64` connects all drivers, then polls
+  every Absolute Pointer (tablets/touch) and Simple Pointer (USB/PS/2 mice) handle. The
+  console handle's merged virtual device is polled but not counted (it exists even with no
+  mouse). QEMU's OVMF has **no mouse driver at all** (no UsbMouseDxe/Ps2MouseDxe/tablet), so
+  the relative-mouse path was tested with a temporary scripted fake Simple Pointer (moved
+  to the Settings button and clicked it). Not yet confirmed with a real mouse on hardware.
+  `screentest.py` has `@mouse=DX,DY`, `@click` and `@mon=CMD` for firmware that has one.
+- **Drawing**: the desktop redraws fully only on keys, clicks and clock ticks; mouse moves
+  just restore/redraw the 16x20 cursor area (`gfx_copy_rect`, `gfx_present_rect`).
 - **Sign-in is light protection**, not real security (simple password hash, no encryption).
 
 ## Good next steps
 
-- Click-through test of the GUI with a real mouse; add window dragging and multiple windows.
+- Confirm the mouse on real PCs; add window dragging and multiple windows.
 - A fuller GUI text editor (cursor movement, selection) reusing `src/editor.asm` logic.
 - BIOS graphics (VBE) so the desktop runs on old PCs too.
 - Confirm the RTL8168 driver on a real board; a virtio-net driver for BIOS-mode VMs.

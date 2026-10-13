@@ -128,7 +128,7 @@ app_term_draw:
     imul edx, 16
     add edx, [ta_y]
     mov esi, term_prompt
-    mov ebx, 0xFFFFFF
+    mov eax, 0x7CE08A
     push edx
     call gfx_rgb
     mov ebx, eax
@@ -294,7 +294,7 @@ app_text_draw:
     add eax, [ta_y]
     mov edx, eax
     mov esi, app_file
-    mov ebx, 0x80C0FF
+    mov eax, 0x80C0FF
     push edx
     call gfx_rgb
     mov ebx, eax
@@ -366,13 +366,6 @@ editor_app_key:
 
     ret
 
-app_click:
-    cmp dword [cur_app], APP_IDE
-    je ide_run
-    cmp dword [cur_app], APP_BROWSER
-    je brow_go
-    ret
-
 ide_run:
     pushad
     mov ecx, [app_buf_len]
@@ -409,7 +402,7 @@ app_brow_draw:
     je .showhint
     mov esi, brow_url
 .showhint:
-    mov ebx, 0x90E0FF
+    mov eax, 0x90E0FF
     push edx
     call gfx_rgb
     mov ebx, eax
@@ -598,6 +591,16 @@ settings_draw:
     call out_begin
     PRINTF `5  Connect to the network`
     call .line
+
+    movzx eax, byte [desk_color]
+    cmp eax, DESK_NCOLORS
+    jb .dc
+    xor eax, eax
+.dc:
+    mov esi, [desk_names + eax * 4]
+    call out_begin
+    PRINTF `6  Desktop colour ........ %s`, esi
+    call .line
     add dword [set_y], 12
 
     call rtc_read
@@ -622,6 +625,12 @@ settings_draw:
 .noip:
     PRINTF `%s`, set_notconn
 .netshown:
+    call .line
+
+    mov eax, [ptr_real + PTR_REL * 4]
+    mov ebx, [ptr_real + PTR_ABS * 4]
+    call out_begin
+    PRINTF `Mouse: ...... %d mouse(s), %d touch screen(s) / tablet(s)`, eax, ebx
     call .line
     add dword [set_y], 10
 
@@ -651,6 +660,8 @@ settings_key:
     je .sync
     cmp al, '5'
     je .net
+    cmp al, '6'
+    je .desk
     cmp al, '+'
     je .tzup
     cmp al, '='
@@ -675,6 +686,16 @@ settings_key:
     or ebx, 0x0F
     mov [clk_color], bl
     call status_draw
+    call clk_save
+    ret
+.desk:
+    movzx eax, byte [desk_color]
+    inc eax
+    cmp eax, DESK_NCOLORS
+    jb .dk_ok
+    xor eax, eax
+.dk_ok:
+    mov [desk_color], al
     call clk_save
     ret
 .tzup:

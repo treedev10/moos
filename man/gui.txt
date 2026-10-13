@@ -3,16 +3,31 @@ NAME
 
 SYNOPSIS
     gui
+    gui term | editor | ide | browser | settings
 
 DESCRIPTION
     gui starts a simple graphical desktop with a mouse, a taskbar and
     windows. It needs a UEFI PC (it draws on a graphics screen); on an
     old BIOS PC only the text console is available.
 
-    The desktop has a low-poly moose wallpaper and a taskbar along the
-    bottom with a clock and buttons to open the built-in apps. Click a
-    button to open an app in a window; click the red x to close it.
-    Press Esc or click Quit to leave the desktop.
+    The desktop is a plain colour (pick another in Settings) with a
+    taskbar along the bottom: buttons for the built-in apps, a clock, and
+    Quit. Click a button to open that app in a window; click the red x to
+    close it. "gui <app>" starts straight in that app.
+
+KEYS
+    The desktop also works without a mouse:
+      1 - 5     on the empty desktop, open Terminal, Editor, Script IDE,
+                Browser or Settings
+      Esc       close the window; on the empty desktop, leave it
+
+THE MOUSE
+    MOOS uses the mouse through the PC's UEFI firmware, so any USB or
+    PS/2 mouse (or touch screen) that works in the firmware's own setup
+    screens should work. Settings shows how many the firmware offers.
+    If it offers none, the desktop says "No mouse found"; use the keys
+    above. Some PCs offer a mouse only with "Fast Boot" turned off in the
+    firmware setup.
 
 APPS
     Terminal     type commands and see their output, like the text
@@ -20,14 +35,15 @@ APPS
                  available here)
     Text Editor  type into a text file; Ctrl+S saves it (notes.txt)
     Script IDE   edit a MOOS script (script.ms); Ctrl+S saves, and the
-                 Run action runs it and shows the output in the Terminal
+                 Run button or Ctrl+R runs it and shows the output in the
+                 Terminal
     Browser      type an https:// (or http://) address and press Enter to
                  fetch a page and show its text. HTTPS pages are shown only
                  if the site's certificate checks out (see man get)
     Settings     change the clock format (12/24-hour), the status-bar
-                 colour and the timezone, sync the clock from the
-                 internet, or connect to the network - press the number
-                 keys and + / - shown in the window
+                 colour, the timezone and the desktop colour, sync the
+                 clock from the internet, or connect to the network -
+                 press the number keys and + / - shown in the window
 
 INSTALLING
     The desktop is also offered as a package:  apt install desktop

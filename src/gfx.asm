@@ -282,7 +282,7 @@ gt_x resd 1
 section .text
 
 ; gfx_tri: filled triangle. Points in tri_px[0..2]/tri_py[0..2], EAX = pixel.
-; Scanline fill - simple and fine for the low-poly wallpaper.
+; Scanline fill - simple, and fine for small shapes like the mouse cursor.
 gfx_tri:
     pushad
     mov [tri_col], eax
@@ -437,6 +437,116 @@ gfx_present:
     lea esi, [esi + ecx * 4]
     lea edi, [edi + edx * 4]
     dec ebx
+    jnz .row
+.done:
+    popad
+    ret
+
+; gfx_clip: ECX = x, EDX = y, ESI = width, EDI = height -> the same rectangle
+; cut to the screen; CF=1 if nothing of it is on screen
+gfx_clip:
+    test ecx, ecx
+    jns .x
+    add esi, ecx
+    xor ecx, ecx
+.x: test edx, edx
+    jns .y
+    add edi, edx
+    xor edx, edx
+.y: push eax
+    mov eax, [gfx_w]
+    sub eax, ecx                    ; room to the right
+    cmp esi, eax
+    jle .w
+    mov esi, eax
+.w: mov eax, [gfx_h]
+    sub eax, edx                    ; room below
+    cmp edi, eax
+    jle .h
+    mov edi, eax
+.h: pop eax
+    test esi, esi
+    jle .none
+    test edi, edi
+    jle .none
+    clc
+    ret
+.none:
+    stc
+    ret
+
+; gfx_present_rect: copy one rectangle (ECX = x, EDX = y, ESI = width,
+; EDI = height) of the back buffer to the screen. Much cheaper than
+; gfx_present when only the mouse cursor moved.
+gfx_present_rect:
+    pushad
+    cmp byte [gfx_ready], 0
+    je .done
+    call gfx_clip
+    jc .done
+    mov eax, edx                    ; destination: framebuffer row
+    imul eax, [gfx_fbpitch]
+    add eax, ecx
+    shl eax, 2
+    add eax, [gfx_fb]
+    mov ebp, eax
+    imul edx, [gfx_w]               ; source: back-buffer row
+    add edx, ecx
+    lea ebx, [GUI_BB + edx * 4]
+.row:
+    push esi
+    push edi
+    mov ecx, esi
+    mov esi, ebx
+    mov edi, ebp
+    rep movsd
+    pop edi
+    pop esi
+    mov eax, [gfx_w]
+    lea ebx, [ebx + eax * 4]
+    mov eax, [gfx_fbpitch]
+    lea ebp, [ebp + eax * 4]
+    dec edi
+    jnz .row
+.done:
+    popad
+    ret
+
+; gfx_copy_rect: copy a rectangle (ECX, EDX, ESI, EDI as above) between the
+; back buffer and a packed buffer at EBX. EAX = 0 saves (back buffer ->
+; buffer), 1 restores (buffer -> back buffer). Used to put back what was
+; under the mouse cursor.
+gfx_copy_rect:
+    pushad
+    call gfx_clip
+    jc .done
+    imul edx, [gfx_w]
+    add edx, ecx
+    lea edx, [GUI_BB + edx * 4]     ; back-buffer row
+.row:
+    push esi
+    push edi
+    mov ecx, esi
+    test eax, eax
+    jnz .restore
+    mov esi, edx
+    mov edi, ebx
+    rep movsd
+    mov ebx, edi
+    jmp .next
+.restore:
+    mov esi, ebx
+    mov edi, edx
+    rep movsd
+    mov ebx, esi
+.next:
+    pop edi
+    pop esi
+    push eax
+    mov eax, [gfx_w]
+    lea edx, [edx + eax * 4]
+    pop eax
+    dec edi
     jnz .row
 .done:
     popad

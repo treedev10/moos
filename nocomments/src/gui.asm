@@ -1,51 +1,12 @@
 TASKBAR_H   equ 34
-
-%macro TRI 7
-    mov eax, %1
-    add eax, [wp_ox]
-    mov [tri_px + 0], eax
-    mov eax, %2
-    add eax, [wp_oy]
-    mov [tri_py + 0], eax
-    mov eax, %3
-    add eax, [wp_ox]
-    mov [tri_px + 4], eax
-    mov eax, %4
-    add eax, [wp_oy]
-    mov [tri_py + 4], eax
-    mov eax, %5
-    add eax, [wp_ox]
-    mov [tri_px + 8], eax
-    mov eax, %6
-    add eax, [wp_oy]
-    mov [tri_py + 8], eax
-    mov eax, %7
-    call gfx_rgb
-    call gfx_tri
-%endmacro
+CUR_W       equ 16
+CUR_H       equ 20
+TB_N        equ 6
+TB_QUIT     equ 5
 
 %macro RECT 5
     mov ecx, %1
     mov edx, %2
-    mov esi, %3
-    mov edi, %4
-    mov eax, %5
-    call gfx_rgb
-    call gfx_fillrect
-%endmacro
-
-DEER_CX equ 220
-
-%macro DTM 7
-    TRI %1, %2, %3, %4, %5, %6, %7
-    TRI (2*DEER_CX-%1), %2, (2*DEER_CX-%3), %4, (2*DEER_CX-%5), %6, %7
-%endmacro
-
-%macro RECT_OFF 5
-    mov ecx, %1
-    add ecx, [wp_ox]
-    mov edx, %2
-    add edx, [wp_oy]
     mov esi, %3
     mov edi, %4
     mov eax, %5
@@ -66,132 +27,91 @@ DEER_CX equ 220
 
 section .bss
 alignb 4
-wp_ox       resd 1
-wp_oy       resd 1
 gui_quit    resb 1
+gui_dirty   resb 1
+alignb 4
+gc_mx       resd 1
+gc_my       resd 1
+cur_under   resd CUR_W * CUR_H
+tb_hover    resd 1
+tb_x0       resd TB_N
+tb_x1       resd TB_N
+tb_i        resd 1
+tb_cx       resd 1
+tb_top      resd 1
+tb_col      resd 1
+gui_clk_tick resd 1
+gui_clk_sec resb 1
 
 section .data
 desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
+gui_hint1   db "Click an app on the taskbar, or press its number:", 0
+gui_hint2   db "1 Terminal    2 Editor    3 Script IDE    4 Browser    5 Settings", 0
+gui_hint3   db "Esc closes a window. Esc on the empty desktop leaves.", 0
+gui_nomouse db "No mouse found - the PC's firmware offers none. Use the keys above.", 0
 ga_term     db "term", 0
 ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
 ga_settings db "settings", 0
-tb_apps     db "Terminal  Editor  Script IDE  Browser  Settings       Quit", 0
+tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_quit
+tb_lens     db 8, 6, 10, 7, 8, 4
+tb_l_term   db "Terminal", 0
+tb_l_edit   db "Editor", 0
+tb_l_ide    db "Script IDE", 0
+tb_l_brow   db "Browser", 0
+tb_l_set    db "Settings", 0
+tb_l_quit   db "Quit", 0
+
+DESK_NCOLORS equ 8
+desk_rgb    dd 0x1D5568, 0x1F3A5F, 0x2D5A3D, 0x4B2F5C
+            dd 0x6A2A35, 0x34393F, 0x0E1014, 0x3E6E8E
+desk_names  dd dk_teal, dk_navy, dk_green, dk_purple
+            dd dk_wine, dk_slate, dk_black, dk_steel
+dk_teal     db "Teal", 0
+dk_navy     db "Navy blue", 0
+dk_green    db "Forest green", 0
+dk_purple   db "Purple", 0
+dk_wine     db "Wine red", 0
+dk_slate    db "Slate grey", 0
+dk_black    db "Black", 0
+dk_steel    db "Steel blue", 0
 
 section .text
 
 gui_wallpaper:
     pushad
-    mov eax, [gfx_h]
-    sub eax, TASKBAR_H
-    mov [gw_usable], eax
+    movzx eax, byte [desk_color]
+    cmp eax, DESK_NCOLORS
+    jb .colour
+    xor eax, eax
+.colour:
+    mov eax, [desk_rgb + eax * 4]
+    call gfx_rgb
+    xor ecx, ecx
     xor edx, edx
-    mov esi, [gw_usable]
-    mov edi, 6
-    push edi
-    mov eax, esi
-    xor edx, edx
-    mov ecx, 6
-    div ecx
-    mov [gw_band], eax
-    pop edi
-    xor edx, edx
-    RECT 0, edx, [gfx_w], [gw_band], 0x0B1E2A
-    mov edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x0F2838
-    add edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x133448
-    add edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x184258
-    add edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x1E5266
-    add edx, [gw_band]
-    mov edi, [gw_usable]
-    sub edi, edx
-    RECT 0, edx, [gfx_w], edi, 0x236074
-
-    mov eax, [gfx_w]
-    shr eax, 1
-    sub eax, DEER_CX
-    mov [wp_ox], eax
-    mov eax, [gw_usable]
-    sub eax, 450
-    sar eax, 1
-    cmp eax, 20
-    jge .oy_ok
-    mov eax, 20
-.oy_ok:
-    mov [wp_oy], eax
-    call gui_deer
-
+    mov esi, [gfx_w]
+    mov edi, [gfx_h]
+    sub edi, TASKBAR_H
+    call gfx_fillrect
     mov dword [gfx_scale], 3
     TEXT 40, 26, gui_title, 0xF4F0E6, -1
     mov dword [gfx_scale], 1
-    TEXT 40, 74, gui_sub, 0xBFE0DF, -1
+    TEXT 40, 74, gui_sub, 0xD8E4EA, -1
+    TEXT 40, 120, gui_hint1, 0xD8E4EA, -1
+    TEXT 40, 140, gui_hint2, 0xFFFFFF, -1
+    TEXT 40, 160, gui_hint3, 0xD8E4EA, -1
+    cmp byte [mouse_ok], 0
+    jne .done
+    TEXT 40, 196, gui_nomouse, 0xFFD27A, -1
+.done:
     popad
-    ret
-
-section .bss
-alignb 4
-gw_band    resd 1
-gw_usable  resd 1
-gw_horizon resd 1
-section .text
-
-%define C_ANTLER1 0x202E3A
-%define C_ANTLER2 0x3A5262
-%define C_ANTLER3 0x6E4A2C
-%define C_DARK    0x111C28
-%define C_NAVY    0x1B3346
-%define C_TEAL    0x2E6E7A
-%define C_BROWN   0x6E4A2C
-%define C_TAN     0x9A6A3A
-%define C_CREAM   0xD8C4A0
-gui_deer:
-    push eax
-
-    DTM 258,164, 300,150, 250,30,  C_ANTLER1
-    DTM 270,156, 314,150, 340,26,  C_ANTLER2
-    DTM 282,160, 324,152, 412,54,  C_ANTLER1
-    DTM 294,168, 332,158, 436,114, C_ANTLER2
-    DTM 302,178, 338,170, 416,182, C_ANTLER1
-    DTM 258,166, 300,150, 300,108, C_ANTLER1
-    DTM 254,172, 294,150, 306,186, C_ANTLER2
-
-    DTM 150,204, 110,190, 150,256, C_BROWN
-    DTM 150,210, 150,256, 186,236, C_TAN
-
-    DTM 220,116, 150,176, 220,214, C_DARK
-    DTM 220,116, 220,214, 284,166, C_NAVY
-
-    DTM 150,176, 220,214, 138,252, C_NAVY
-    DTM 138,252, 220,214, 210,330, C_BROWN
-    DTM 220,214, 266,244, 210,330, C_TEAL
-    DTM 138,252, 210,330, 170,372, C_TAN
-
-    DTM 170,372, 210,330, 220,432, C_NAVY
-    DTM 170,372, 220,432, 206,392, C_DARK
-
-    DTM 162,250, 186,262, 166,280, C_DARK
-
-    DTM 220,258, 198,330, 220,326, C_TAN
-    DTM 220,326, 202,352, 220,398, C_CREAM
-    DTM 220,326, 220,398, 238,352, C_TAN
-    DTM 220,352, 208,370, 220,392, C_DARK
-    pop eax
     ret
 
 gui_cursor:
     pushad
-    mov dword [wp_ox], 0
-    mov dword [wp_oy], 0
-    mov eax, [mouse_x]
-    mov [gc_mx], eax
-    mov eax, [mouse_y]
-    mov [gc_my], eax
     mov esi, [gc_mx]
     mov edx, [gc_my]
 
@@ -228,28 +148,175 @@ gui_cursor:
     call gfx_tri
     popad
     ret
-section .bss
-alignb 4
-gc_mx resd 1
-gc_my resd 1
-section .text
+
+cur_rect:
+    mov ecx, [gc_mx]
+    mov edx, [gc_my]
+    mov esi, CUR_W
+    mov edi, CUR_H
+    ret
+
+gui_cursor_show:
+    pushad
+    call cur_rect
+    mov ebx, cur_under
+    xor eax, eax
+    call gfx_copy_rect
+    call gui_cursor
+    popad
+    ret
+
+gui_cursor_update:
+    pushad
+    mov eax, [mouse_x]
+    cmp eax, [gc_mx]
+    jne .moved
+    mov eax, [mouse_y]
+    cmp eax, [gc_my]
+    je .done
+.moved:
+    call cur_rect
+    mov ebx, cur_under
+    mov eax, 1
+    call gfx_copy_rect
+    push ecx
+    push edx
+    mov eax, [mouse_x]
+    mov [gc_mx], eax
+    mov eax, [mouse_y]
+    mov [gc_my], eax
+    call gui_cursor_show
+    pop edx
+    pop ecx
+    call gfx_present_rect
+    call cur_rect
+    call gfx_present_rect
+.done:
+    popad
+    ret
 
 gui_taskbar:
     pushad
     mov edx, [gfx_h]
     sub edx, TASKBAR_H
+    mov [tb_top], edx
     RECT 0, edx, [gfx_w], TASKBAR_H, 0x202830
-    add edx, 2
+    mov edx, [tb_top]
     RECT 0, edx, [gfx_w], 2, 0x4A5A6A
-    add edx, 8
     mov dword [gfx_scale], 1
-    TEXT 14, edx, tb_apps, 0xDDE4EC, -1
+    mov dword [tb_cx], 8
+    mov dword [tb_i], 0
+.btn:
+    mov ecx, [tb_i]
+    cmp ecx, TB_QUIT
+    je .quit_pos
+    movzx eax, byte [tb_lens + ecx]
+    shl eax, 3
+    add eax, 20
+    mov edx, [tb_cx]
+    mov [tb_x0 + ecx * 4], edx
+    add eax, edx
+    mov [tb_x1 + ecx * 4], eax
+    add eax, 6
+    mov [tb_cx], eax
+    mov eax, 0x2C3844
+    mov ebx, 0x46627E
+    jmp .draw
+.quit_pos:
+    mov eax, [gfx_w]
+    sub eax, 8
+    mov [tb_x1 + ecx * 4], eax
+    sub eax, 52
+    mov [tb_x0 + ecx * 4], eax
+    mov eax, 0x5A2A2A
+    mov ebx, 0x8A3A3A
+.draw:
+    cmp ecx, [tb_hover]
+    jne .col
+    mov eax, ebx
+.col:
+    mov [tb_col], eax
+    mov ecx, [tb_i]
+    mov esi, [tb_x1 + ecx * 4]
+    mov ecx, [tb_x0 + ecx * 4]
+    sub esi, ecx
+    mov edx, [tb_top]
+    add edx, 6
+    RECT ecx, edx, esi, TASKBAR_H - 10, [tb_col]
+    mov ecx, [tb_i]
+    mov esi, [tb_labels + ecx * 4]
+    mov ecx, [tb_x0 + ecx * 4]
+    add ecx, 10
+    mov edx, [tb_top]
+    add edx, 10
+    TEXT ecx, edx, esi, 0xE6ECF2, -1
+    inc dword [tb_i]
+    cmp dword [tb_i], TB_N
+    jb .btn
 
     call rtc_read
     call gui_clock_str
     mov ecx, [gfx_w]
-    sub ecx, 150
+    sub ecx, 60 + 16 + 64
+    mov edx, [tb_top]
+    add edx, 10
     TEXT ecx, edx, gui_clockbuf, 0xB7E27A, -1
+    popad
+    ret
+
+tb_hit:
+    push ecx
+    mov eax, [gfx_h]
+    sub eax, TASKBAR_H
+    cmp [mouse_y], eax
+    jb .none
+    xor ecx, ecx
+.l: mov eax, [mouse_x]
+    cmp eax, [tb_x0 + ecx * 4]
+    jb .n
+    cmp eax, [tb_x1 + ecx * 4]
+    jb .hit
+.n: inc ecx
+    cmp ecx, TB_N
+    jb .l
+.none:
+    mov eax, -1
+    pop ecx
+    ret
+.hit:
+    mov eax, ecx
+    pop ecx
+    ret
+
+gui_hover_check:
+    push eax
+    call tb_hit
+    cmp eax, [tb_hover]
+    je .same
+    mov [tb_hover], eax
+    or byte [gui_dirty], 2
+.same:
+    pop eax
+    ret
+
+gui_clock_check:
+    pushad
+    mov eax, [ticks]
+    sub eax, [gui_clk_tick]
+    cmp eax, 20
+    jb .done
+    mov eax, [ticks]
+    mov [gui_clk_tick], eax
+    call rtc_read
+    mov al, [rtc_sec]
+    cmp al, [gui_clk_sec]
+    je .done
+    mov [gui_clk_sec], al
+    or byte [gui_dirty], 2
+    cmp dword [cur_app], APP_SETTINGS
+    jne .done
+    or byte [gui_dirty], 1
+.done:
     popad
     ret
 
@@ -300,6 +367,28 @@ section .bss
 gui_clockbuf resb 16
 section .text
 
+gui_redraw:
+    pushad
+    call gui_wallpaper
+    call gui_windows
+    call gui_taskbar
+    call gui_cursor_show
+    test byte [gui_dirty], 1
+    jz .bar
+    call gfx_present
+    jmp .done
+.bar:
+    xor ecx, ecx
+    mov edx, [gfx_h]
+    sub edx, TASKBAR_H
+    mov esi, [gfx_w]
+    mov edi, TASKBAR_H
+    call gfx_present_rect
+.done:
+    mov byte [gui_dirty], 0
+    popad
+    ret
+
 cmd_gui:
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je .ok
@@ -320,8 +409,17 @@ cmd_gui:
     call efi_mouse_init
     mov byte [gui_quit], 0
     mov dword [cur_app], APP_NONE
+    mov dword [tb_hover], -1
+    mov dword [prev_btn], 0
+    mov eax, [mouse_x]
+    mov [gc_mx], eax
+    mov eax, [mouse_y]
+    mov [gc_my], eax
+    mov eax, [ticks]
+    mov [gui_clk_tick], eax
+    mov byte [gui_clk_sec], 0xFF
     cmp dword [argc], 2
-    jb .loop
+    jb .start
     mov esi, [argv + 4]
     mov edi, ga_term
     call str_icmp
@@ -338,42 +436,54 @@ cmd_gui:
     mov edi, ga_settings
     call str_icmp
     je .o_set
-    jmp .loop
+    jmp .start
 .o_set:
     mov eax, APP_SETTINGS
-    call gui_open
-    jmp .loop
+    jmp .open
 .o_term:
     mov eax, APP_TERM
-    call gui_open
-    jmp .loop
+    jmp .open
 .o_edit:
     mov eax, APP_EDITOR
-    call gui_open
-    jmp .loop
+    jmp .open
 .o_ide:
     mov eax, APP_IDE
-    call gui_open
-    jmp .loop
+    jmp .open
 .o_brow:
     mov eax, APP_BROWSER
+.open:
     call gui_open
+.start:
+    mov byte [gui_dirty], 1
+    call gui_redraw
 .loop:
-    call gui_wallpaper
-    call gui_windows
-    call gui_taskbar
-    call gui_cursor
-    call gfx_present
     call efi_mouse_poll
+    call gui_hover_check
     call gui_handle
+    call gui_clock_check
+.keys:
     call kbd_poll
     test eax, eax
-    jz .loop
+    jz .draw
+    or byte [gui_dirty], 1
     cmp eax, 27
+    jne .key
+    cmp dword [cur_app], APP_NONE
     je .exit
+    mov dword [cur_app], APP_NONE
+    jmp .keys
+.key:
     call gui_key
     cmp byte [gui_quit], 0
+    je .keys
+.draw:
+    cmp byte [gui_quit], 0
+    jne .exit
+    call gui_cursor_update
+    cmp byte [gui_dirty], 0
     je .loop
+    call gui_redraw
+    jmp .loop
 .exit:
 
     call gui_restore_console

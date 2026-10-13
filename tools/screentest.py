@@ -20,6 +20,10 @@ STEP is either text to type (use \\n for Enter) or a command:
     @png=FILE       save a real screenshot of the display as PNG
     @wait=SECONDS   pause
     @key=NAME       press a QEMU key name (up, down, tab, esc, ctrl-c, ...)
+    @mouse=DX,DY    move the mouse (needs a mouse, e.g. --extra
+                    "-device qemu-xhci -device usb-mouse")
+    @click          press and release the left mouse button
+    @mon=COMMAND    run a QEMU monitor command and print its answer
     @exit           check that QEMU has exited (after "shutdown")
 
 The image is copied first, so tests never touch your real disk image.
@@ -196,6 +200,19 @@ def main():
             elif step.startswith('@key='):
                 mon.cmd('sendkey ' + step[5:])
                 time.sleep(0.2)
+            elif step.startswith('@mouse='):
+                dx, dy = step[7:].split(',')
+                mon.cmd('mouse_move %d %d' % (int(dx), int(dy)))
+                time.sleep(0.3)
+            elif step.startswith('@mon='):
+                out = mon.cmd(step[5:]).decode('utf-8', 'replace')
+                out = ''.join(c for c in out if c == '\n' or c >= ' ')
+                print(out.replace('(qemu) ', '').strip())
+            elif step == '@click':
+                mon.cmd('mouse_button 1')
+                time.sleep(0.2)
+                mon.cmd('mouse_button 0')
+                time.sleep(0.3)
             elif step == '@exit':
                 try:
                     proc.wait(timeout=10)

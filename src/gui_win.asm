@@ -2,12 +2,13 @@
 ;  gui_win.asm - windows and apps for the MOOS desktop
 ;
 ;  One window at a time (kept simple). gui_open launches an app; the window
-;  shows its content; clicks on the taskbar buttons switch apps; the window's
-;  close box or the taskbar Quit leaves. Apps:
+;  shows its content; the taskbar buttons (or keys 1-5 on the empty desktop)
+;  switch apps; the window's close box or Esc closes it; Quit leaves. Apps:
 ;    1 Terminal   - type commands, see output (runs the real shell commands)
 ;    2 Editor     - edit a text file
-;    3 Script IDE - edit a .ms file and Run it
-;    4 Browser    - fetch an http:// page and show its text
+;    3 Script IDE - edit a .ms file and Run it (Run button or Ctrl+R)
+;    4 Browser    - fetch an http:// or https:// page and show its text
+;    5 Settings   - clock, colours, network
 ; =============================================================================
 APP_NONE    equ 0
 APP_TERM    equ 1
@@ -18,6 +19,7 @@ APP_SETTINGS equ 5
 
 WIN_X       equ 60
 WIN_Y       equ 70
+RUN_W       equ 56                  ; the Script IDE's Run button
 
 section .bss
 alignb 4
@@ -67,6 +69,16 @@ gui_windows:
     mov esi, close_x
     lea ecx, [ecx + 5]
     TEXT ecx, WIN_Y + 6, close_x, 0xFFFFFF, -1
+    cmp dword [cur_app], APP_IDE    ; the Script IDE has a Run button
+    jne .no_run
+    mov ecx, [gui_close_x]
+    sub ecx, RUN_W + 8
+    mov [gui_run_x], ecx
+    RECT ecx, WIN_Y + 4, RUN_W, 18, 0x2E7D4F
+    mov ecx, [gui_run_x]
+    add ecx, 16
+    TEXT ecx, WIN_Y + 6, run_label, 0xFFFFFF, -1
+.no_run:
     ; content
     mov eax, [cur_app]
     cmp eax, APP_TERM
@@ -92,9 +104,11 @@ gui_windows:
 
 section .data
 close_x db "x", 0
+run_label db "Run", 0
 section .bss
 alignb 4
 gui_close_x resd 1
+gui_run_x   resd 1
 section .text
 
 ; gui_open: EAX = app id. Initialise and show it.
@@ -125,30 +139,39 @@ gui_handle:
     jz .done
     test ebx, ebx
     jnz .done                       ; only the moment of pressing
+    or byte [gui_dirty], 1
     ; taskbar?
     mov eax, [gfx_h]
     sub eax, TASKBAR_H
     cmp [mouse_y], eax
     jae .taskbar
-    ; close box?
+    ; the window's title bar: close box, or the IDE's Run button
     cmp dword [cur_app], APP_NONE
     je .done
-    mov eax, [mouse_x]
-    cmp eax, [gui_close_x]
-    jb .maybe_content
-    mov ecx, [gui_close_x]
-    add ecx, 18
-    cmp eax, ecx
-    ja .maybe_content
     mov eax, [mouse_y]
     cmp eax, WIN_Y + 4
-    jb .maybe_content
+    jb .done
     cmp eax, WIN_Y + 22
-    ja .maybe_content
+    ja .done
+    mov eax, [mouse_x]
+    mov ecx, [gui_close_x]
+    cmp eax, ecx
+    jb .run
+    add ecx, 18
+    cmp eax, ecx
+    ja .done
     mov dword [cur_app], APP_NONE
     jmp .done
-.maybe_content:
-    call app_click                  ; let the app handle a content click
+.run:
+    cmp dword [cur_app], APP_IDE
+    jne .done
+    mov ecx, [gui_run_x]
+    cmp eax, ecx
+    jb .done
+    add ecx, RUN_W
+    cmp eax, ecx
+    ja .done
+    call ide_run
     jmp .done
 .taskbar:
     call gui_taskbar_click
@@ -156,49 +179,31 @@ gui_handle:
     popad
     ret
 
-; gui_taskbar_click: pick an app by the click's x position (buttons are laid
-; out left to right; approximate hit zones by pixel ranges)
+; gui_taskbar_click: open the app whose button was clicked, or Quit
 gui_taskbar_click:
-    mov eax, [mouse_x]
-    mov ecx, [gfx_w]                ; Quit is on the right
-    sub ecx, 110
-    cmp eax, ecx
-    jae .quit
-    ; buttons from the left at x=14, 8px/char
-    cmp eax, 14 + 8 * 9
-    jb .term
-    cmp eax, 14 + 8 * 17
-    jb .editor
-    cmp eax, 14 + 8 * 29
-    jb .ide
-    cmp eax, 14 + 8 * 38
-    jb .browser
-    cmp eax, 14 + 8 * 48
-    jb .settings
-    ret
-.settings:
-    mov eax, APP_SETTINGS
-    jmp gui_open
-.term:
-    mov eax, APP_TERM
-    jmp gui_open
-.editor:
-    mov eax, APP_EDITOR
-    jmp gui_open
-.ide:
-    mov eax, APP_IDE
-    jmp gui_open
-.browser:
-    mov eax, APP_BROWSER
+    call tb_hit
+    cmp eax, TB_QUIT
+    je .quit
+    test eax, eax
+    js .r
+    inc eax                         ; button 0 is app 1 (Terminal), ...
     jmp gui_open
 .quit:
     mov byte [gui_quit], 1
-    ret
+.r: ret
 
-; gui_key: EAX = key -> hand to the focused app
+; gui_key: EAX = key -> hand to the open app. On the empty desktop, 1-5
+; open the apps (so it can be used without a mouse).
 gui_key:
     cmp dword [cur_app], APP_NONE
-    je .r
+    jne .app
+    cmp eax, '1'
+    jb .r
+    cmp eax, '5'
+    ja .r
+    sub eax, '0'                    ; '1' -> APP_TERM ... '5' -> APP_SETTINGS
+    jmp gui_open
+.app:
     cmp dword [cur_app], APP_TERM
     je term_key
     cmp dword [cur_app], APP_BROWSER
