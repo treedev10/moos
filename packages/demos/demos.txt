@@ -1,0 +1,7 @@
+MOOS demo scripts, installed from GitHub with:  apt install /treedev10/moos
+
+  run primes.ms      prime numbers below 60
+  run fizzbuzz.ms    FizzBuzz from 1 to 20
+  run countdown.ms   a launch countdown
+
+Open them in the Script IDE or with  edit  to see how they work.

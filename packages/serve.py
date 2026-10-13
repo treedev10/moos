@@ -4,6 +4,7 @@ Build the example MOOS packages and serve them over HTTP, so MOOS can install
 them with apt.
 
     python packages/serve.py [port]        (default port 8000)
+    python packages/serve.py --build       only (re)build the .pkg files
 
 Each sub-folder here (hello/, desktop/, ...) becomes <name>.pkg containing all
 the files in it. Then, inside MOOS:
@@ -48,6 +49,16 @@ def build_packages():
 
 
 def main():
+    if "--build" in sys.argv[1:]:
+        build_packages()
+        # the demos package doubles as this repo's own GitHub package:
+        # "apt install /treedev10/moos" fetches moos.pkg at the top level
+        demos = os.path.join(HERE, "demos.pkg")
+        if os.path.exists(demos):
+            data = open(demos, "rb").read()
+            open(os.path.join(HERE, "..", "moos.pkg"), "wb").write(data)
+            print("copied demos.pkg -> moos.pkg (repository root)")
+        return
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     build_packages()
     os.chdir(HERE)

@@ -36,6 +36,16 @@ pkg_len         resd 1              ; bytes received into PKG_BUF
 http_status     resd 1
 http_date       resb 40
 tcp_pseudo      resb 12
+alignb 4
+tcp_dst         resd 1              ; where tcp_pump puts received bytes
+tcp_dst_len     resd 1              ; bytes there so far
+tcp_dst_cap     resd 1              ; room in that buffer
+tcp_origlen     resd 1
+tcp_closed      resb 1              ; peer sent FIN or RST
+tcp_fin_sent    resb 1
+alignb 4
+hc_hdr_end      resd 1              ; http_is_complete: end of headers (0 = not yet)
+hc_clen         resd 1              ; Content-Length, or -1
 
 section .text
 
@@ -211,6 +221,8 @@ tcp_connect:
     rdtsc                               ; our initial sequence number
     mov [tcp_snd_nxt], eax
     mov dword [tcp_rcv_nxt], 0
+    mov byte [tcp_closed], 0
+    mov byte [tcp_fin_sent], 0
     mov al, TCP_SYN                     ; send SYN
     xor ecx, ecx
     call tcp_send_seg
@@ -239,65 +251,213 @@ tcp_connect:
     stc
     ret
 
-; tcp_send_all: ESI = data, ECX = length. Sends it as one segment (requests
-; are small) and advances snd_nxt.
+; tcp_send_all: ESI = data, ECX = length. Sends it in segments of at most
+; 536 bytes (the smallest MSS every host accepts) and advances snd_nxt.
 tcp_send_all:
-    push eax
+    pushad
+.l: test ecx, ecx
+    jz .done
+    mov edx, ecx
+    cmp edx, 536
+    jbe .n
+    mov edx, 536
+.n: push ecx
+    mov ecx, edx
     mov al, TCP_PSH | TCP_ACK
     call tcp_send_seg
     add [tcp_snd_nxt], ecx
-    pop eax
+    pop ecx
+    add esi, edx
+    sub ecx, edx
+    jmp .l
+.done:
+    popad
     ret
 
-; tcp_recv_all: read the whole reply into PKG_BUF (up to PKG_BUF_SIZE-1),
-; ACKing as it arrives, until the server sends FIN. Sets pkg_len.
-tcp_recv_all:
+; tcp_set_dst: EDI = buffer, ECX = capacity. Received data goes there.
+tcp_set_dst:
+    mov [tcp_dst], edi
+    mov [tcp_dst_cap], ecx
+    mov dword [tcp_dst_len], 0
+    ret
+
+; tcp_pump: EAX = deadline (ticks). Wait for one segment of our connection
+; and handle it: in-order data is appended to the tcp_dst buffer and ACKed; a
+; FIN or RST sets tcp_closed. CF=1 if nothing arrived before the deadline.
+tcp_pump:
     pushad
-    mov dword [pkg_len], 0
-.loop:
-    mov eax, [ticks]
-    add eax, 500                        ; up to ~5 s with no data
     call tcp_wait
-    jc .done                            ; nothing more arriving
+    jc .timeout
     test byte [tcp_rx_flags], TCP_RST
-    jnz .done
+    jnz .rst
+    mov [tcp_origlen], ecx
     jecxz .check_fin
     mov eax, [tcp_rx_seq]               ; in-order data only
     cmp eax, [tcp_rcv_nxt]
     jne .reack
-    mov edi, [pkg_len]
-    mov ebx, PKG_BUF_SIZE - 1
+    mov edi, [tcp_dst_len]
+    mov ebx, [tcp_dst_cap]
     sub ebx, edi
-    cmp ecx, ebx                        ; clamp to the buffer
+    cmp ecx, ebx                        ; take what fits (rest is resent)
     jbe .fits
     mov ecx, ebx
 .fits:
     add [tcp_rcv_nxt], ecx
-    push ecx
-    lea edi, [PKG_BUF + edi]
+    add [tcp_dst_len], ecx
+    add edi, [tcp_dst]
     rep movsb
-    pop ecx
-    add [pkg_len], ecx
 .reack:
     mov al, TCP_ACK                     ; acknowledge up to tcp_rcv_nxt
     xor ecx, ecx
     call tcp_send_seg
 .check_fin:
     test byte [tcp_rx_flags], TCP_FIN
-    jz .loop
-    inc dword [tcp_rcv_nxt]             ; FIN takes one sequence
+    jz .ok
+    mov eax, [tcp_rx_seq]               ; only once all data before it is in
+    add eax, [tcp_origlen]
+    cmp eax, [tcp_rcv_nxt]
+    jne .ok
+    inc dword [tcp_rcv_nxt]             ; FIN takes one sequence number
     mov al, TCP_ACK
     xor ecx, ecx
     call tcp_send_seg
-    mov al, TCP_FIN | TCP_ACK           ; close our side
+    mov byte [tcp_closed], 1
+    call tcp_close
+.ok:
+    popad
+    clc
+    ret
+.rst:
+    mov byte [tcp_closed], 1
+    mov byte [tcp_fin_sent], 1          ; nothing more to say after a reset
+    popad
+    clc
+    ret
+.timeout:
+    popad
+    stc
+    ret
+
+; tcp_close: send our FIN (once)
+tcp_close:
+    cmp byte [tcp_fin_sent], 0
+    jne .r
+    pushad
+    mov byte [tcp_fin_sent], 1
+    mov al, TCP_FIN | TCP_ACK
     xor ecx, ecx
     call tcp_send_seg
     inc dword [tcp_snd_nxt]
+    popad
+.r: ret
+
+; tcp_recv_all: read the reply into PKG_BUF (up to PKG_BUF_SIZE-1) until the
+; server closes, ~5 s pass with nothing new, or the HTTP response is complete
+; (Content-Length reached). Sets pkg_len.
+tcp_recv_all:
+    pushad
+    mov edi, PKG_BUF
+    mov ecx, PKG_BUF_SIZE - 1
+    call tcp_set_dst
+    call http_complete_reset
+.loop:
+    mov eax, [ticks]
+    add eax, 500
+    call tcp_pump
+    jc .done
+    mov esi, PKG_BUF
+    mov ecx, [tcp_dst_len]
+    call http_is_complete
+    jnc .done
+    cmp byte [tcp_closed], 0
+    je .loop
 .done:
-    mov edi, [pkg_len]
+    call tcp_close
+    mov edi, [tcp_dst_len]
+    mov [pkg_len], edi
     mov byte [PKG_BUF + edi], 0
     popad
     ret
+
+; http_complete_reset: forget what http_is_complete learned
+http_complete_reset:
+    mov dword [hc_hdr_end], 0
+    mov dword [hc_clen], -1
+    ret
+
+; http_is_complete: ESI = response so far, ECX = its length -> CF=0 if the
+; headers are in and a Content-Length's worth of body has arrived.
+http_is_complete:
+    pushad
+    cmp dword [hc_hdr_end], 0
+    jne .have_hdr
+    xor ebx, ebx                        ; find the blank line
+.find:
+    lea eax, [ebx + 4]
+    cmp eax, ecx
+    ja .no
+    cmp dword [esi + ebx], 0x0A0D0A0D   ; CR LF CR LF
+    je .found
+    inc ebx
+    jmp .find
+.found:
+    add ebx, 4
+    mov [hc_hdr_end], ebx
+    mov edi, esi                        ; look for Content-Length in the headers
+    lea edx, [esi + ebx]
+.line:
+    cmp edi, edx
+    jae .have_hdr
+    push esi
+    mov esi, edi
+    push edi
+    mov edi, hc_cl_name
+    call line_prefix_ci
+    mov eax, esi                        ; (ESI now just past the name)
+    pop edi
+    pop esi
+    jc .next_line
+.num:                                   ; skip spaces, read the number
+    cmp byte [eax], ' '
+    jne .digits
+    inc eax
+    jmp .num
+.digits:
+    push esi
+    mov esi, eax
+    call parse_uint_partial
+    pop esi
+    jc .next_line
+    mov [hc_clen], eax
+    jmp .have_hdr
+.next_line:
+    cmp edi, edx
+    jae .have_hdr
+    cmp byte [edi], 10
+    je .nl
+    inc edi
+    jmp .next_line
+.nl:
+    inc edi
+    jmp .line
+.have_hdr:
+    mov eax, [hc_clen]
+    cmp eax, -1
+    je .no
+    add eax, [hc_hdr_end]
+    cmp ecx, eax
+    jb .no
+    popad
+    clc
+    ret
+.no:
+    popad
+    stc
+    ret
+
+section .data
+hc_cl_name  db "content-length:", 0
+section .text
 
 ; -------------------------------------------------------------------- HTTP
 ; http_get: EAX = server IP, BX = port, ESI = Host text, EDI = path.

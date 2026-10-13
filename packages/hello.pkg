@@ -1,0 +1,12 @@
+MOOSPKG 1
+name: hello
+@file hello.ms 72
+print "Hello from a MOOS package!"
+set x = 6 * 7
+print "6 times 7 is" x
+
+@file readme.txt 77
+This file was installed by apt over HTTP.
+Run the script with:  run hello.ms
+
+@end

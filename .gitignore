@@ -1,4 +1,3 @@
 build/
 *.png
 uefi-vars.fd
-packages/*.pkg

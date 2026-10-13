@@ -1,0 +1,43 @@
+NAME
+    get - download a web page or file (HTTP or HTTPS)
+
+SYNOPSIS
+    get <url>
+    get <url> <file>
+    get -k <url> [file]
+
+DESCRIPTION
+    get downloads a URL and shows it, or saves it to a file.
+
+    get https://raw.githubusercontent.com/treedev10/moos/HEAD/README.md
+        show a file from GitHub (over HTTPS)
+    get http://10.0.2.2:8000/hi.txt notes.txt
+        save a file from a plain-HTTP server to notes.txt
+
+    URLs may start with https:// (encrypted) or http:// (not encrypted).
+    Without either, http:// is assumed.
+
+HTTPS
+    MOOS speaks TLS 1.3 itself: X25519 key exchange, AES-128-GCM, and
+    SHA-256. Before trusting a server it checks the certificate the server
+    sends: the chain must lead to one of the root certificates built into
+    MOOS, every certificate must be in date, the name must match, and the
+    server must prove it holds the certificate's key (an RSA-PSS
+    signature). If any check fails, nothing is downloaded.
+
+    MOOS checks RSA certificates (used by Let's Encrypt's RSA chain and
+    many other sites, including raw.githubusercontent.com). Sites that only
+    offer ECDSA certificates (for example github.com itself) cannot be
+    verified yet and are refused.
+
+    -k  skip the certificate check. The connection is still encrypted, but
+        anyone in the middle could pretend to be the server. Use it only for
+        testing, never for software you will run.
+
+MESSAGES
+    certificate is not valid now
+        Either the certificate expired or the clock is wrong. Try
+        "clock sync", then try again.
+
+SEE ALSO
+    apt, net, clock

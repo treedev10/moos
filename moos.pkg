@@ -1,0 +1,59 @@
+MOOSPKG 1
+name: demos
+@file countdown.ms 116
+# countdown.ms - a launch countdown
+set t = 10
+while t > 0
+  print "T minus" t
+  set t = t - 1
+end
+print "Liftoff!"
+
+@file demos.txt 270
+MOOS demo scripts, installed from GitHub with:  apt install /treedev10/moos
+
+  run primes.ms      prime numbers below 60
+  run fizzbuzz.ms    FizzBuzz from 1 to 20
+  run countdown.ms   a launch countdown
+
+Open them in the Script IDE or with  edit  to see how they work.
+
+@file fizzbuzz.ms 269
+# fizzbuzz.ms - the classic, from 1 to 20
+set i = 1
+while i <= 20
+  if i % 15 == 0
+    print "FizzBuzz"
+  else
+    if i % 3 == 0
+      print "Fizz"
+    else
+      if i % 5 == 0
+        print "Buzz"
+      else
+        print i
+      end
+    end
+  end
+  set i = i + 1
+end
+
+@file primes.ms 236
+# primes.ms - print the prime numbers below 60
+set n = 2
+while n < 60
+  set d = 2
+  set prime = 1
+  while d * d <= n
+    if n % d == 0
+      set prime = 0
+    end
+    set d = d + 1
+  end
+  if prime
+    print n
+  end
+  set n = n + 1
+end
+
+@end

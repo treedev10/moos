@@ -33,8 +33,8 @@ RTL_TCR     equ 0x40
 RTL_RCR     equ 0x44
 RTL_CONFIG1 equ 0x52
 
-RX_BUF_LEN  equ 8192
-NET_RX      equ NET_BUF + 0x0000     ; receive ring (8K + slack)
+RX_BUF_LEN  equ 32768
+NET_RX      equ NET_RING             ; receive ring: 32K, +1516 bytes of wrap room
 NET_TX      equ NET_BUF + 0x2800     ; 4 transmit buffers of 2 KB
 NET_PKT     equ NET_BUF + 0x4800     ; build one outgoing packet here
 NET_RXP     equ NET_BUF + 0x5800     ; a received packet, copied out of the ring
@@ -255,8 +255,8 @@ nic_reset:
     mov cl, RTL_ISR
     mov ax, 0xFFFF
     call nic_out16
-    mov cl, RTL_RCR                 ; accept broadcast + physical match,
-    mov eax, 0x0000070A            ; wrap, 8K ring
+    mov cl, RTL_RCR                 ; broadcast + our MAC, unlimited DMA,
+    mov eax, 0x0000178A            ; 32K ring, WRAP (packets stay contiguous)
     call nic_out32
     mov cl, RTL_TCR
     mov eax, 0x03000600
@@ -366,7 +366,7 @@ net_rx_poll:
     add ecx, [rx_offset]
     add ecx, 3                      ; round up to 4 (dword align)
     and ecx, ~3
-    and ecx, RX_BUF_LEN - 1         ; wrap in the 8K ring
+    and ecx, RX_BUF_LEN - 1         ; wrap in the 32K ring
     mov [rx_offset], ecx
     lea eax, [ecx - 16]            ; tell the card where we are (CAPR)
     mov cl, RTL_CAPR

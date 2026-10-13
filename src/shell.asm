@@ -44,6 +44,7 @@ cmd_table:
     COMMAND "clock",    cmd_clock,    "clock settings, time sync",  man_clock
     COMMAND "net",      cmd_net,      "connect to the network",     man_net
     COMMAND "apt",      cmd_apt,      "install packages",           man_apt
+    COMMAND "get",      cmd_get,      "download a web page (https)", man_get
     COMMAND "uptime",   cmd_uptime,   "time since start-up",        man_uptime
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
     COMMAND "sysinfo",  cmd_sysinfo,  "system and CPU details",     man_sysinfo
@@ -54,6 +55,8 @@ cmd_table:
     COMMAND "reboot",   cmd_reboot,   "restart the computer",       man_reboot
     COMMAND "shutdown", cmd_shutdown, "power off the computer",     man_shutdown
     ALIAS "?",        cmd_help,     man_help
+    ALIAS "wget",     cmd_get,      man_get
+    ALIAS "curl",     cmd_get,      man_get
     ALIAS "nano",     cmd_edit,     man_edit
     ALIAS "notepad",  cmd_edit,     man_edit
     ALIAS "dir",      cmd_ls,       man_ls
