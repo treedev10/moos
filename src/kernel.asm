@@ -45,10 +45,11 @@ org KORG
 %define OUTBUF       KV(0x210000)
 %define NET_BUF      KV(0x220000)    ; NIC DMA buffers + network scratch (64K)
 %define PKG_BUF      KV(0x230000)    ; downloaded package (512K, under KMEM)
+%define GUI_BB       KV(0x2B0000)    ; GUI back buffer (up to 1280x1024x4 = 5M)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
 PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x2B0000 - 0x10000 ; everything above, from kbase
+KMEM_SIZE    equ 0x7B0000 - 0x10000 ; everything above, from kbase
 
 VGA_MEM      equ screen_buf         ; all drawing goes to this copy of the
 SCR_COLS     equ 80                 ; screen; screen_present shows it
@@ -158,6 +159,8 @@ zero_bss:
 %include "src/cmd_clock.asm"
 %include "src/cmd_apt.asm"
 %include "src/script.asm"
+%include "src/gfx.asm"
+%include "src/gui.asm"
 %include "src/calc.asm"
 %include "src/editor.asm"
 %include "src/installer.asm"

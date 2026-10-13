@@ -114,6 +114,82 @@ kbd_getkey_uefi:                    ; (EBX is already saved)
     pop ebx
     ret
 
+; kbd_poll: non-blocking. EAX = key (ASCII or KEY_*) or 0 if none waiting.
+; On BIOS, drains the scan-code buffer; on UEFI, one ReadKeyStroke.
+kbd_poll:
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    je .uefi
+    call kbd_getkey_try
+    ret
+.uefi:
+    push ebx
+    mov eax, efi_keypoll64
+    call efi64
+    test eax, eax
+    jz .none
+    mov ebx, eax
+    shr ebx, 16
+    and eax, 0xFFFF
+    jz .pscan
+    cmp eax, 13
+    je .penter
+    cmp eax, 127
+    je .pback
+    ja .none
+    jmp .pdone
+.penter:
+    mov eax, 10
+    jmp .pdone
+.pback:
+    mov eax, 8
+    jmp .pdone
+.pscan:
+    cmp ebx, 0x17
+    je .pesc
+    cmp ebx, 0x0A
+    ja .none
+    movzx eax, word [efi_scan_keys + ebx * 2]
+    test eax, eax
+    jz .none
+    jmp .pdone
+.pesc:
+    mov eax, 27
+.pdone:
+    pop ebx
+    ret
+.none:
+    xor eax, eax
+    pop ebx
+    ret
+
+; kbd_getkey_try: BIOS non-blocking read via the scan-code buffer -> EAX key/0
+kbd_getkey_try:
+    push ebx
+    call kbd_pop
+    jc .none
+    ; reuse the blocking translator by pushing the code back is awkward; do a
+    ; minimal translation for common keys (full set via kbd_getkey when blocking)
+    movzx eax, al
+    cmp al, 0x80
+    jae .none                           ; key release
+    ; translate using the normal keymap (no shift tracking here for simplicity)
+    mov bl, [kbd_shift]
+    movzx ebx, bl
+    test ebx, ebx
+    jz .noshift
+    mov al, [keymap_shift + eax]
+    jmp .have
+.noshift:
+    mov al, [keymap_normal + eax]
+.have:
+    movzx eax, al
+    pop ebx
+    ret
+.none:
+    xor eax, eax
+    pop ebx
+    ret
+
 section .data
 efi_scan_keys:                          ; UEFI scan codes 0x00-0x0A
     dw 0, KEY_UP, KEY_DOWN, KEY_RIGHT, KEY_LEFT, KEY_HOME, KEY_END

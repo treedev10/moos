@@ -59,6 +59,18 @@ cell_py     resd 1
 drawn_cursor resd 1
 alignb 16
 cell_buf    resd 16 * 32                ; one cell, for Blt-only screens
+alignb 8
+abs_ptr     resq 1              ; Absolute Pointer protocol
+ptr_state   resb 32            ; EFI_ABSOLUTE_POINTER_STATE
+alignb 4
+abs_minx    resd 1
+abs_maxx    resd 1
+abs_miny    resd 1
+abs_maxy    resd 1
+mouse_x     resd 1
+mouse_y     resd 1
+mouse_btn   resd 1
+mouse_ok    resb 1
 
 section .data
 guid_block_io   dd 0x964E5B21
@@ -67,6 +79,9 @@ guid_block_io   dd 0x964E5B21
 guid_dev_path   dd 0x09576E91
                 dw 0x6D3F, 0x11D2
                 db 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B
+guid_abs_ptr    dd 0x8D59D32B
+                dw 0xC655, 0x4AE9
+                db 0x9B, 0x15, 0xF2, 0x59, 0x04, 0x99, 0x2A, 0x43
 vga_rgb:        ; the classic 16 colours as R, G, B
     db 0x00,0x00,0x00, 0x00,0x00,0xAA, 0x00,0xAA,0x00, 0x00,0xAA,0xAA
     db 0xAA,0x00,0x00, 0xAA,0x00,0xAA, 0xAA,0x55,0x00, 0xAA,0xAA,0xAA
@@ -158,6 +173,28 @@ efi_list_disks:
     mov [disk_count], eax
     ret
 
+; efi_mouse_init: find the pointer device. AL (mouse_ok) = 1 if present.
+efi_mouse_init:
+    mov eax, efi_ptrinit64
+    call efi64
+    mov [mouse_ok], al
+    mov eax, [gfx_w]
+    shr eax, 1
+    mov [mouse_x], eax
+    mov eax, [gfx_h]
+    shr eax, 1
+    mov [mouse_y], eax
+    ret
+
+; efi_mouse_poll: refresh mouse_x / mouse_y / mouse_btn from the device
+efi_mouse_poll:
+    cmp byte [mouse_ok], 0
+    je .r
+    mov eax, efi_ptrget64
+    call efi64
+.r:
+    ret
+
 ; ============================================================================
 ;  64-bit routines (entered by efi64, left with a 32-bit far return)
 ; ============================================================================
@@ -211,6 +248,24 @@ efi_readkey64:
 .none:
     xor eax, eax
     ret
+
+; efi_keypoll64: non-blocking key read -> EAX = scan<<16 | char, 0 if none
+efi_keypoll64:
+    ENTER64
+    sub rsp, 8
+    mov rcx, [rel bootinfo + BI.conin]
+    lea rdx, [rel efi_key]
+    mov dword [rdx], 0
+    call [rcx + 8]                      ; ReadKeyStroke
+    add rsp, 8
+    test rax, rax
+    jnz .none
+    mov eax, [rel efi_key]
+    rol eax, 16
+    LEAVE64
+.none:
+    xor eax, eax
+    LEAVE64
 
 ; efi_disk64: EBX = 0 read / 1 write / 2 flush, ECX = sectors, EDX = LBA
 ; (high half in disk_lba_hi), ESI = buffer -> EAX = 0 if it worked
@@ -499,6 +554,85 @@ draw_cell64:
     pop rsi
     pop rbx
     ret
+
+; efi_ptrinit64: locate the Absolute Pointer protocol -> EAX = 1 if found
+efi_ptrinit64:
+    ENTER64
+    mov qword [rel abs_ptr], 0
+    mov rax, [rel bootinfo + BI.bs]
+    lea rcx, [rel guid_abs_ptr]
+    xor edx, edx
+    lea r8, [rel abs_ptr]
+    call [rax + 320]                    ; LocateProtocol
+    test rax, rax
+    jnz .none
+    mov rsi, [rel abs_ptr]
+    test rsi, rsi
+    jz .none
+    mov rcx, [rsi + 24]                 ; Mode
+    mov eax, [rcx + 0]
+    mov [rel abs_minx], eax
+    mov eax, [rcx + 24]
+    mov [rel abs_maxx], eax
+    mov eax, [rcx + 8]
+    mov [rel abs_miny], eax
+    mov eax, [rcx + 32]
+    mov [rel abs_maxy], eax
+    mov eax, 1
+    LEAVE64
+.none:
+    xor eax, eax
+    LEAVE64
+
+; efi_ptrget64: read the pointer and map it to screen pixels
+efi_ptrget64:
+    ENTER64
+    mov rsi, [rel abs_ptr]
+    test rsi, rsi
+    jz .done
+    sub rsp, 32
+    mov rcx, rsi
+    lea rdx, [rel ptr_state]
+    call [rsi + 8]                      ; GetState
+    add rsp, 32
+    test rax, rax
+    jnz .done                           ; EFI_NOT_READY: keep the last position
+    mov eax, [rel ptr_state + 0]        ; CurrentX
+    sub eax, [rel abs_minx]
+    imul eax, [rel gfx_w]
+    mov ecx, [rel abs_maxx]
+    sub ecx, [rel abs_minx]
+    test ecx, ecx
+    jz .done
+    xor edx, edx
+    div ecx
+    cmp eax, [rel gfx_w]
+    jb .x_ok
+    mov eax, [rel gfx_w]
+    dec eax
+.x_ok:
+    mov [rel mouse_x], eax
+    mov eax, [rel ptr_state + 8]        ; CurrentY
+    sub eax, [rel abs_miny]
+    imul eax, [rel gfx_h]
+    mov ecx, [rel abs_maxy]
+    sub ecx, [rel abs_miny]
+    test ecx, ecx
+    jz .done
+    xor edx, edx
+    div ecx
+    cmp eax, [rel gfx_h]
+    jb .y_ok
+    mov eax, [rel gfx_h]
+    dec eax
+.y_ok:
+    mov [rel mouse_y], eax
+    mov eax, [rel ptr_state + 24]       ; ActiveButtons (bit 0 = touch/click)
+    and eax, 1
+    mov [rel mouse_btn], eax
+.done:
+    xor eax, eax
+    LEAVE64
 
 ; efi_listdisks64: every whole disk with Block I/O -> disk_tab, EAX = count
 efi_listdisks64:

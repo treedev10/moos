@@ -1,0 +1,31 @@
+NAME
+    gui - the MOOS graphical desktop
+
+SYNOPSIS
+    gui
+
+DESCRIPTION
+    gui starts a simple graphical desktop with a mouse, a taskbar and
+    windows. It needs a UEFI PC (it draws on a graphics screen); on an
+    old BIOS PC only the text console is available.
+
+    The desktop has a low-poly moose wallpaper and a taskbar along the
+    bottom with a clock and buttons to open the built-in apps. Click a
+    button to open an app in a window; click the red x to close it.
+    Press Esc or click Quit to leave the desktop.
+
+APPS
+    Terminal     type commands and see their output, like the text
+                 console (screen-filling commands such as edit are not
+                 available here)
+    Text Editor  type into a text file; Ctrl+S saves it (notes.txt)
+    Script IDE   edit a MOOS script (script.ms); Ctrl+S saves, and the
+                 Run action runs it and shows the output in the Terminal
+    Browser      type an http:// address and press Enter to fetch a page
+                 and show its text (plain HTTP only - see man net)
+
+INSTALLING
+    The desktop is also offered as a package:  apt install desktop
+
+SEE ALSO
+    apt, net, script, edit

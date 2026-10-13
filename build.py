@@ -374,7 +374,8 @@ def make_vm_disks():
 def qemu_command(uefi, image=IMAGE, extra=()):
     cmd = [qemu_path(), "-drive", "file=%s,format=raw,index=0,media=disk" % image,
            "-m", "256" if uefi else "32", "-rtc", "base=localtime", "-name", "MOOS",
-           "-netdev", "user,id=n0", "-device", "rtl8139,netdev=n0"]
+           "-netdev", "user,id=n0", "-device", "rtl8139,netdev=n0",
+           "-device", "qemu-xhci", "-device", "usb-tablet"]
     if uefi:
         code, vars_copy = ovmf_paths()
         cmd += ["-drive", "if=pflash,format=raw,readonly=on,file=%s" % code,

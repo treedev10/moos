@@ -315,6 +315,8 @@ vga_fresh_line:
 ; the screen or into OUTBUF (later shown page by page by the pager).
 ; -----------------------------------------------------------------------------
 out_char:
+    cmp byte [gui_capture], 0
+    jne gui_log_char                ; GUI terminal: capture into its log
     cmp byte [out_mode], 0
     je vga_putc_raw
     push edi
@@ -335,6 +337,8 @@ out_begin:
 
 ; out_flush: stop collecting and show OUTBUF through the pager (BL = flags)
 out_flush:
+    cmp byte [gui_capture], 0
+    jne .gui                        ; GUI: text was already captured by out_char
     pushad
     mov edi, [out_ptr]
     mov byte [edi], 0
@@ -342,6 +346,9 @@ out_flush:
     mov esi, OUTBUF
     call pager
     popad
+    ret
+.gui:
+    mov byte [out_mode], 0
     ret
 
 ; colour_from_letter: AL = letter (r g y c w d b m, other = normal),
