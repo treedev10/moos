@@ -18,6 +18,7 @@ KEY_END     equ 0x106
 KEY_DEL     equ 0x107
 KEY_PGUP    equ 0x108
 KEY_PGDN    equ 0x109
+KEY_F1      equ 0x111
 
 %macro PRINTF 1-*
     [section .data]

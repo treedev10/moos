@@ -1,6 +1,10 @@
 The MOOS graphical desktop is installed.
 
-Start it any time with:  gui
+Start it any time with:  gui      (or: gui browser <address>)
 
-Apps: Terminal, Text Editor, Script IDE, Browser.
-Close a window with the red x; leave the desktop with Esc or Quit.
+Apps: Terminal, Text Editor, Script IDE, Browser, Settings.
+Windows: drag the title bar to move, an edge or corner to resize;
+the title-bar buttons minimize, maximize and close.
+Without a mouse: F1-F5 open the apps, F6 next window, F7 move,
+F8 resize, F9 minimize, F10 maximize. Esc closes a window.
+See  man gui  and  man browser .

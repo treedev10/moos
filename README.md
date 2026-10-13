@@ -3,8 +3,8 @@
 A small operating system written from scratch in x86 assembly. It is **not** Linux, DOS or
 anything else: the boot loader, UEFI loader, drivers, file system, networking stack, **HTTPS
 (TLS 1.3) and certificate checking**, shell, text editor, package manager, scripting
-language, graphical desktop and installer are all original code. The whole system, with a
-full manual for every command, is about **200 KB**.
+language, graphical desktop, **web browser** and installer are all original code. The whole
+system, with a full manual for every command, is about **220 KB**.
 
 It starts on **modern UEFI PCs**, without legacy/CSM mode, on graphics-only screens with USB
 keyboards and NVMe SSDs. It also starts on **old BIOS PCs**, and it can **install itself**
@@ -13,8 +13,9 @@ onto a computer's disk.
 **New since the first version:** wired networking (DHCP/DNS/TCP), **HTTPS**
 with MOOS's own TLS 1.3 and X.509 code, an `apt` package manager that installs **straight from
 GitHub** (`apt install /user/repo`), internet clock sync, a `run` scripting language, a
-graphical desktop (`gui`) with windowed apps, and an optional sign-in
-screen. See [handoff.md](handoff.md) for the full picture.
+graphical desktop (`gui`) whose windows can be moved, resized, maximized and minimized, a
+**web browser** with its own HTML engine, and an optional sign-in screen. See
+[handoff.md](handoff.md) for the full picture.
 
 ```
 moos> help
@@ -69,7 +70,8 @@ inside MOOS.
   - line editing and a 16-entry history (Up/Down)
   - Tab completion of commands, manuals and file names
   - "did you mean...?" suggestions for typos
-- **Manual for every command** (`man <command>`), plus guides: `man intro`, `man keys`, `man files`.
+- **Manual for every command** (`man <command>`), plus guides: `man intro`, `man keys`, `man files`,
+  `man browser`.
 - **Persistent file system** (MOOSFS): 32 files of up to 4 KB each, saved the moment you change
   something.
 - **Proper power-off** through the PC's ACPI tables, on real PCs and virtual machines.
@@ -111,9 +113,18 @@ Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, 
   over checked HTTPS. Publishing a package is just committing a `moos.pkg`; see
   [PACKAGES.md](PACKAGES.md).
 - **Scripting** (`run file.ms`): variables, `if/else`, `while`, `print`, and expressions.
-- **Desktop** (`apt install desktop`, then `gui`): a plain-colour desktop, a taskbar,
-  a mouse (USB or PS/2, through the firmware), and windowed apps — Terminal, Text Editor, Script IDE, an HTTPS Browser, and
-  Settings. UEFI only.
+- **Desktop** (`apt install desktop`, then `gui`): a plain-colour desktop, a taskbar, a mouse
+  (USB or PS/2, wheel included, through the firmware), and overlapping windows you can drag,
+  resize from any edge or corner, maximize (button or double-click) and minimize to the taskbar —
+  or do all that with F1–F10. Apps: Terminal, Text Editor, Script IDE, Browser and Settings.
+  UEFI only.
+- **Web browser** (`gui browser <address>`, `man browser`): MOOS's own HTML engine parses pages
+  (entities, UTF-8, scripts and hidden parts dropped) and lays them out to the window's width —
+  headings in larger type, bold/italic/underline, code, lists, tables with aligned columns,
+  quotes, preformatted text and links — re-flowing when the window is resized. Back/Forward
+  history, redirects, relative links and `#anchors`, a hand pointer over links, Tab to walk
+  links, scroll bar and wheel, GET forms (search boxes), plain-text files and `view-source:`,
+  over HTTP or checked HTTPS. No JavaScript, style sheets or pictures (their alt text is shown).
 
 ## How it works
 
@@ -145,6 +156,8 @@ One 32-bit kernel serves both kinds of firmware.
 | Commands | `src/cmd_*.asm`, `src/calc.asm`, `src/editor.asm` | the commands themselves |
 | Layout | `src/layout.inc`, `src/bootinfo.inc` | disk layout and boot information shared by all parts |
 | Font | `src/font8x16.bin` | the public-domain VGA font (`tools/makefont.py` extracts it from QEMU's VGA BIOS) |
+| Graphics, desktop | `src/gfx.asm`, `src/gui.asm`, `src/gui_win.asm`, `src/gui_apps.asm` | back buffer, clipping, sized/styled text; taskbar, cursor; window manager; the apps |
+| Web browser | `src/html.asm`, `src/browser.asm` | HTML parser, layout engine and painter; the browser app (address bar, history, forms) |
 | Manuals | `man/*.txt` | plain text, embedded into the kernel at build time |
 
 The disk layout has two parts:
@@ -166,7 +179,8 @@ The disk layout has two parts:
   3. Add a `MANPAGE` line in `src/manpages.asm` plus a `man/*.txt` file.
 - **Test without a window:** `python tools/screentest.py "help\n" @screen` boots a copy of the image
   in headless QEMU, types keys and prints MOOS's screen. Add `--uefi` for a UEFI PC and
-  `@png=shot.png` for a real screenshot.
+  `@png=shot.png` for a real screenshot. `@ptr=X,Y,BUTTON` moves MOOS's own mouse (QEMU's UEFI
+  firmware has no mouse driver), so clicks and drags on the desktop can be tested too.
 
 ## Limits (by design, to stay tiny)
 

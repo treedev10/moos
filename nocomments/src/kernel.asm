@@ -20,10 +20,11 @@ org KORG
 %define GUI_BB       KV(0x2B0000)
 %define NET_RING     KV(0x7B0000)
 %define TLS_BASE     KV(0x7C0000)
+%define BR_BASE      KV(0x7E0000)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
 PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x7E0000 - 0x10000
+KMEM_SIZE    equ 0x9E0000 - 0x10000
 
 VGA_MEM      equ screen_buf
 SCR_COLS     equ 80

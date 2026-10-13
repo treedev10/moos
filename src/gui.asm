@@ -18,8 +18,9 @@
 ;  leaves. So the desktop works without a mouse too.
 ; =============================================================================
 TASKBAR_H   equ 34
-CUR_W       equ 16                  ; the area the mouse cursor covers
+CUR_W       equ 24                  ; the area the mouse cursor covers
 CUR_H       equ 20
+CUR_DX      equ 6                   ; (it starts this far left of the tip)
 TB_N        equ 6                   ; taskbar buttons: 5 apps + Quit
 TB_QUIT     equ 5
 
@@ -102,6 +103,13 @@ dk_wine     db "Wine red", 0
 dk_slate    db "Slate grey", 0
 dk_black    db "Black", 0
 dk_steel    db "Steel blue", 0
+; the pointing hand (over links): outline, then inside (16 x 18)
+hand_black  dw 0x0600, 0x0900, 0x0900, 0x0900, 0x0900, 0x09C0, 0x0938, 0x6926
+            dw 0x9925, 0x8801, 0x4001, 0x2001, 0x2002, 0x1002, 0x1004, 0x0804
+            dw 0x0804, 0x0FFC
+hand_white  dw 0x0000, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x06C0, 0x06D8
+            dw 0x66DA, 0x77FE, 0x3FFE, 0x1FFE, 0x1FFC, 0x0FFC, 0x0FF8, 0x07F8
+            dw 0x07F8, 0x0000
 
 section .text
 
@@ -138,9 +146,27 @@ gui_wallpaper:
     ret
 
 ; ---------------------------------------------------------------- cursor
-; gui_cursor: draw the arrow at gc_mx / gc_my
+; gui_cursor: draw the arrow at gc_mx / gc_my - or a pointing hand when it
+; is over a link in the browser
 gui_cursor:
     pushad
+    cmp dword [pg_hover], 0
+    je .arrow
+    mov ecx, [gc_mx]                ; the hand: its fingertip at the point
+    sub ecx, 5
+    mov edx, [gc_my]
+    mov ebx, 18
+    mov eax, 0x000000
+    call gfx_rgb
+    mov esi, hand_black
+    call gfx_bitmap
+    mov eax, 0xFFFFFF
+    call gfx_rgb
+    mov esi, hand_white
+    call gfx_bitmap
+    popad
+    ret
+.arrow:
     mov esi, [gc_mx]
     mov edx, [gc_my]
     ; black outline arrow
@@ -181,6 +207,7 @@ gui_cursor:
 ; cur_rect: ECX/EDX/ESI/EDI = the area the cursor covers
 cur_rect:
     mov ecx, [gc_mx]
+    sub ecx, CUR_DX
     mov edx, [gc_my]
     mov esi, CUR_W
     mov edi, CUR_H

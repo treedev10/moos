@@ -7,7 +7,7 @@ url_port        resd 1
 url_ip          resd 1
 url_err         resd 1
 url_host        resb 128
-url_path        resb 384
+url_path        resb 1024
 get_url         resd 1
 get_file        resd 1
 
@@ -80,7 +80,7 @@ url_parse:
     mov byte [edi], '/'
     inc edi
 .copy:
-    mov ecx, 380
+    mov ecx, 1020
 .c: mov al, [esi]
     mov [edi], al
     test al, al

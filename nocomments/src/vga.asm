@@ -162,6 +162,10 @@ fb_setup:
     ret
 
 screen_present:
+    cmp byte [gui_active], 0
+    je .go
+    ret
+.go:
     pushad
     cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
     je .graphics

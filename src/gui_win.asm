@@ -1160,6 +1160,14 @@ gui_key:
     mov eax, [cur_app]
     cmp eax, APP_NONE
     je .leave
+    cmp eax, APP_BROWSER            ; typing an address or into a form:
+    jne .close                      ; Esc only stops the typing
+    cmp dword [br_typing], 0
+    je .close
+    mov eax, 27
+    call app_key
+    jmp .done
+.close:
     call gui_close
     jmp .done
 .leave:

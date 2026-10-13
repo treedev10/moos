@@ -7,14 +7,15 @@ exists, how it is put together, how to build and test it, and what is unfinished
 
 ## What MOOS is
 
-A ~200 KB operating system that boots on real PCs and virtual machines, on both **UEFI**
+A ~220 KB operating system that boots on real PCs and virtual machines, on both **UEFI**
 (modern) and **legacy BIOS** firmware, with a text shell, a persistent file system, a
 networking stack with **HTTPS (TLS 1.3)**, a package manager that installs from **GitHub**,
-a small scripting language, and a graphical desktop.
+a small scripting language, and a graphical desktop with movable, resizable windows and a
+web browser that renders HTML.
 
 Everything is original code: boot loader, UEFI loader, drivers (screen, keyboard, timer,
 disk, network card), file system, shell, editor, calculator, TCP/IP, cryptography and TLS,
-X.509 certificate checking, and GUI.
+X.509 certificate checking, GUI, window manager, and the browser's HTML engine.
 
 ## Current state (what works, all tested)
 
@@ -61,10 +62,24 @@ each step. The installer and disk persistence were verified across reboots.
 - **Scripting** (`run`): a small language (variables, `if/else`, `while`, `print`,
   expressions with comparisons), sharing the calculator's expression engine.
 - **Desktop** (`gui`, UEFI only): solid-colour background (8 choices in Settings, saved in
-  clock.cfg byte 2), taskbar buttons with hover + clock, mouse cursor, keys 1-5 / Esc,
-  and windowed apps — Terminal (runs real commands), Text Editor, Script IDE (edit + run),
-  Browser (fetches `https://` and `http://` pages) and Settings. Installed with
-  `apt install desktop`.
+  clock.cfg byte 2), taskbar (buttons show open/focused windows; clicking the focused app's
+  button minimizes it) + clock, mouse cursor (a hand over links), mouse wheel.
+  **Window manager** (`src/gui_win.asm`): one window per app, any number open, overlapping
+  in a z-order; drag the title bar to move, any edge/corner (or the dotted grip) to resize,
+  maximize (button or double-click title; dragging a maximized window restores it),
+  minimize to the taskbar, close (x or Esc). Keyboard: F1-F5 open apps, F6 next window,
+  F7/F8 move/resize with arrows, F9 minimize, F10 maximize. Apps: Terminal (runs real
+  commands), Text Editor and Script IDE (separate buffers; Run shows output in the Terminal),
+  Browser, Settings (lines clickable). Installed with `apt install desktop`.
+- **Browser** (`gui browser [url]`, `man browser`): its own HTML engine (`src/html.asm`) and
+  app (`src/browser.asm`) — see "Browser engine" below. Toolbar (Back/Forward/Reload/Home,
+  address bar with a lock for HTTPS, Go), status line (progress, size, security, hovered
+  link), scroll bar + wheel + keys, Tab/Enter link navigation, history (16), redirects (8),
+  `#anchors`, `<base href>`, chunked replies, plain text, `view-source:`, GET forms (text,
+  password, hidden, checkbox, radio, submit, `<button>`), `about:home` and `about:test`.
+  Tested against local servers (HTTP, HTTPS with a self-signed cert → refused with the
+  reason, and with the check disabled in a throwaway build → rendered with the lock) and a
+  real 306 KB GitHub page served locally.
 - **Sign-in** (`login`): optional password screen at start-up. Off by default.
 
 ## How to build
@@ -94,7 +109,13 @@ marker). It can also save real screenshots.
 python tools/screentest.py "help\n" @screen
 python tools/screentest.py --uefi "gui\n" @wait=3 @png=shot.png
 python tools/screentest.py --uefi --drive "-machine q35 ..." ...   # other disk types
+python tools/screentest.py --uefi "gui browser 10.0.2.2:8000/\n" @wait=10 @ptr=250,202,0 @ptr=250,202,1 @ptr=250,202,0 @png=b.png
 ```
+
+The desktop needs the `desktop.inst` marker that `apt install desktop` leaves; the image
+keeps your files across rebuilds, so install it once (or write the marker into a test copy
+of the image). For the browser, serve test pages from the host (`python -m http.server
+8000`) and open `10.0.2.2:8000/...`; `about:test` exercises the engine without a network.
 
 Networking tests use QEMU user-mode networking (added automatically), and QEMU runs with
 `-cpu max` so the guest has RDRAND. From the guest, the host is `10.0.2.2`. The card is an
@@ -134,7 +155,8 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Shell + commands | `src/shell.asm`, `src/readline.asm`, `src/pager.asm`, `src/cmd_files.asm`, `src/cmd_system.asm`, `src/cmd_clock.asm`, `src/cmd_apt.asm`, `src/cmd_login.asm` |
 | Calc + scripting | `src/calc.asm`, `src/script.asm` |
 | Editor | `src/editor.asm` |
-| Graphics + GUI | `src/gfx.asm`, `src/gui.asm`, `src/gui_win.asm`, `src/gui_apps.asm` |
+| Graphics + GUI | `src/gfx.asm` (back buffer, clip rectangle, sized/styled glyphs, icons), `src/gui.asm` (desktop, taskbar, cursor, main loop), `src/gui_win.asm` (window manager), `src/gui_apps.asm` (terminal, editor, IDE, settings) |
+| Browser | `src/html.asm` (parser, layout, painter, forms), `src/browser.asm` (the app: toolbar, navigation, history, URLs) |
 | Manuals | `man/*.txt` (embedded into the kernel at build time) |
 | Font | `src/font8x16.bin` (public-domain VGA font, extracted by `tools/makefont.py`) |
 
@@ -147,7 +169,32 @@ Key mechanisms to understand before changing things:
 - **Relocation**: the kernel uses `KV(addr)` (= `kbase + addr - 0x10000`) for absolute
   addresses so the UEFI loader can place it anywhere; `build.py` finds the fix-ups.
 - **Output capture**: the GUI terminal sets `gui_capture`, which reroutes `out_char` into a
-  log buffer so command output can be shown in a window.
+  log buffer so command output can be shown in a window. `gui_capture = 2` throws output
+  away (the browser sets it while fetching). While the desktop runs, `gui_active` makes
+  `screen_present` a no-op, so network code that refreshes the text console while waiting
+  cannot draw over the desktop.
+- **Window manager** (`gui_win.asm`): per-app arrays `wn_x/y/w/h/f` (+ the rectangle to
+  restore after maximizing), `z_list` (bottom first), `cur_app` = focused window. Each frame
+  `gui_windows` draws bottom to top; for each window `wm_draw` sets `cb_x/y/w/h` (content
+  box) and narrows the gfx clip rectangle to it before calling the app's draw. `wm_hit`
+  finds window + part (title, buttons, content, edges with `EDGE_*` bits) under the mouse;
+  `gui_handle` turns press/hold/release into raise, button actions, `DRAG_MOVE`,
+  `DRAG_SIZE` or `DRAG_APP` (the browser's scroll bar). Apps plug in through `app_init`,
+  `app_draw`, `app_title`, `app_click`, `app_key` (+ `brow_hover/wheel/drag`).
+- **Browser engine** (`html.asm`): three stages. `html_parse` turns HTML into a compact node
+  stream at `BR_NODES` (text already decoded to the CP437 font: entities, UTF-8, a
+  Windows-1252 fallback, collapsed spaces; element open/close with only the attributes MOOS
+  uses; script/style/svg/select/template and hidden parts — `hidden`, `display:none`,
+  well-known hiding classes — dropped). `html_layout` flows nodes into 32-byte display
+  items (`BR_ITEMS`: text runs in one style, rectangles, form fields) at a given width,
+  with a style stack (`BR_STACK`), margins, list markers, implicit closing (`<p>`, `<li>`,
+  `<td>`...), and a measuring pre-pass that lines up simple tables' columns. It reruns when
+  the window's width changes. `html_paint` draws visible items; `html_link_at` /
+  `html_field_at` hit-test. Fonts are the 8x16 VGA font stretched to 10/12/16-pixel widths
+  (h3/h2/h1), with bold/italic/underline/strike done by `gfx_glyph`.
+- **Browser memory**: `BR_BASE` = KV(0x7E0000), 2 MB (nodes 640K, items 768K, pool, anchors,
+  element stack, history, tables, form fields). `KMEM_SIZE` grew to 0x9E0000 - 0x10000, so
+  the UEFI loader allocates ~10 MB; BIOS never touches the browser area.
 - **Calling conventions**: most of the kernel passes arguments in registers. The crypto/TLS
   code uses C-style calls (`CCALL fn, a, b, c` + `CENTER`/`CLEAVE`, `ARG(n)`; EBX ESI EDI EBP
   preserved, EAX ECX EDX not) because those functions take many arguments.
@@ -194,25 +241,42 @@ The commented source is canonical.
   paths have not been run on real hardware; on such PCs the firmware driver is the safer
   route (enable "Network Stack" in the firmware setup).
 - **Networking** uses one card at a time, one ARP cache, no IP fragmentation, and a TCP client
-  that assumes in-order, lossless delivery and never retransmits (fine behind QEMU's SLIRP,
-  which does the real TCP; fragile on a real lossy network). Downloads are limited to the
+  that assumes in-order, lossless delivery and retransmits nothing but its SYN (3 tries) —
+  fine behind QEMU's SLIRP, which does the real TCP; fragile on a real lossy network. Downloads are limited to the
   512 KB package buffer; saved files to 4 KB (the MOOSFS limit).
 - **GUI apps are deliberately simple**: the editor is append/backspace/enter (no mid-line
-  cursor); the browser shows page text only (no HTML rendering); one window at a time.
+  cursor). One window per app.
+- **Browser limits**: no CSS (beyond a few inline properties: display/visibility, colour,
+  bold, italic, centring), no JavaScript, no images (alt text shown), no cookies, GET forms
+  only, no text selection/copy, HTTP/1.0 with `User-Agent: MOOS`. Pages are cut at the
+  512 KB download buffer, 24,576 display items and 512 open elements. Tables are lined up
+  only when simple (no nested tables/blocks in cells, at most 16 columns, fits the width);
+  otherwise cells flow one after another. Characters outside CP437 show as a small box.
+  Sites that need ECDSA certificates are refused (TLS limits above). Fetching blocks the
+  desktop (the status line says "Loading ..." first).
 - **The mouse comes from the firmware**: `efi_ptrinit64` connects all drivers, then polls
   every Absolute Pointer (tablets/touch) and Simple Pointer (USB/PS/2 mice) handle. The
   console handle's merged virtual device is polled but not counted (it exists even with no
   mouse). QEMU's OVMF has **no mouse driver at all** (no UsbMouseDxe/Ps2MouseDxe/tablet), so
   the relative-mouse path was tested with a temporary scripted fake Simple Pointer (moved
   to the Settings button and clicked it). Not yet confirmed with a real mouse on hardware.
-  `screentest.py` has `@mouse=DX,DY`, `@click` and `@mon=CMD` for firmware that has one.
-- **Drawing**: the desktop redraws fully only on keys, clicks and clock ticks; mouse moves
-  just restore/redraw the 16x20 cursor area (`gfx_copy_rect`, `gfx_present_rect`).
+  `screentest.py` has `@mouse=DX,DY`, `@click` and `@mon=CMD` for firmware that has one,
+  and **`@ptr=X,Y,B` / `@wheel=N`**, which write MOOS's own `mouse_x/y/btn/wheel` through
+  QEMU's gdbstub (addresses from a NASM map of the kernel), so the window manager and the
+  browser can be driven in QEMU: e.g. `@ptr=400,164,1 @ptr=800,330,1 @ptr=800,330,0` drags
+  a title bar. The wheel code (Z of both pointer kinds) is untested on hardware.
+- **Drawing**: the desktop redraws fully on keys, clicks, drags (every mouse step while
+  moving/resizing a window), hover changes over links, and clock ticks; plain mouse moves
+  just restore/redraw the cursor area (`gfx_copy_rect`, `gfx_present_rect`). Smooth in
+  QEMU at 1280x800; a dirty-rectangle scheme would make dragging cheaper.
 - **Sign-in is light protection**, not real security (simple password hash, no encryption).
 
 ## Good next steps
 
-- Confirm the mouse on real PCs; add window dragging and multiple windows.
+- Confirm the mouse (and wheel) on real PCs.
+- Browser: images (PNG/GIF/JPEG decoders + fetching them), a little CSS (at least
+  `display`, margins and colours from `<style>`), cookies, POST forms, text selection,
+  fetching without blocking the desktop, a page cache for Back.
 - A fuller GUI text editor (cursor movement, selection) reusing `src/editor.asm` logic.
 - BIOS graphics (VBE) so the desktop runs on old PCs too.
 - Confirm the RTL8168 driver on a real board; a virtio-net driver for BIOS-mode VMs.

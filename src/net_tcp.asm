@@ -152,6 +152,7 @@ tcp_send_seg:
 
 section .bss
 tcp_seg_len resd 1
+tcp_syn_try resd 1
 section .text
 
 ; tcp_wait: wait for a TCP segment for our connection. EAX = deadline (ticks).
@@ -226,13 +227,19 @@ tcp_connect:
     mov dword [tcp_rcv_nxt], 0
     mov byte [tcp_closed], 0
     mov byte [tcp_fin_sent], 0
+    mov dword [tcp_syn_try], 3          ; a lost SYN is sent again (3 tries)
+.syn:
     mov al, TCP_SYN                     ; send SYN
     xor ecx, ecx
     call tcp_send_seg
     mov eax, [ticks]
-    add eax, 200
+    add eax, 150
     call tcp_wait
-    jc .fail
+    jnc .answer
+    dec dword [tcp_syn_try]
+    jnz .syn
+    jmp .fail
+.answer:
     test byte [tcp_rx_flags], TCP_RST
     jnz .fail
     mov al, TCP_SYN | TCP_ACK

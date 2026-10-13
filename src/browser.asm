@@ -99,6 +99,11 @@ ct_xml      db "xml", 0
 st_loading  db "Loading ", 0
 st_dots     db " ...", 0
 st_noload   db "MOOS cannot open that kind of link (only http:// and https:// pages).", 0
+st_post     db "This form is sent with POST, which MOOS cannot do yet (only GET forms).", 0
+st_field    db "A form field - click it and type", 0
+st_send     db "Send the form", 0
+br_empty    db 0
+br_on       db "on", 0
 
 ; the start page (about:home)
 br_home_page:
@@ -652,18 +657,30 @@ brow_click:
     add ebx, [br_vw]
     cmp [mouse_x], ebx
     jge .scrollbar
-    ; the page: a link?
+    ; the page: a form field, or a link?
+    mov dword [pg_field], 0
     mov eax, [mouse_x]
     sub eax, [br_vx]
     sub eax, PAD_X
     mov edx, [mouse_y]
     sub edx, [br_vy]
     add edx, [br_scroll]
+    push eax
+    call html_field_at
+    test eax, eax
+    pop ecx
+    jnz .field
+    mov eax, ecx
     call html_link_at
     test eax, eax
     jz .done
+    call html_is_field              ; (the text of a <button>)
+    je .field
     mov esi, eax
     call brow_follow
+    jmp .done
+.field:
+    call brow_field_click
     jmp .done
 .scrollbar:
     call brow_thumb
@@ -815,6 +832,12 @@ brow_hover:
     mov edx, [mouse_y]
     sub edx, [br_vy]
     add edx, [br_scroll]
+    push eax
+    call html_field_at
+    test eax, eax
+    pop ecx
+    jnz .set
+    mov eax, ecx
     call html_link_at
 .set:
     cmp eax, [pg_hover]
@@ -823,6 +846,19 @@ brow_hover:
     or byte [gui_dirty], 1
     test eax, eax
     jz .done
+    call html_is_field              ; a form field: say what it is
+    jne .link
+    mov esi, st_field
+    cmp dword [eax + IN_TYPE], IT_TEXT
+    je .fs
+    cmp dword [eax + IN_TYPE], IT_PASSWORD
+    je .fs
+    mov esi, st_send
+.fs:
+    mov edi, br_hover_url
+    call str_copy
+    jmp .done
+.link:
     mov esi, eax                    ; the full address it leads to
     mov edi, br_hover_url
     call brow_resolve
@@ -862,6 +898,10 @@ brow_key:
     je .back
     cmp eax, 6                      ; Ctrl+F
     je .fwd
+    cmp eax, 27                     ; Esc: stop typing (the address bar
+    je .esc                         ; shows the page's address again)
+    cmp dword [br_typing], 2
+    je .field
     cmp dword [br_typing], 0
     jne .typing
 .page:
@@ -1036,9 +1076,320 @@ brow_key:
     jmp .done
 .go:
     call brow_go_typed
+    jmp .done
+.field:                             ; typing into a form field
+    mov edi, [pg_field]
+    test edi, edi
+    jz .unfield
+    cmp eax, 10
+    je .submit
+    cmp eax, 9
+    je .unfield
+    cmp eax, 8
+    je .fbs
+    cmp eax, KEY_UP
+    je .page
+    cmp eax, KEY_DOWN
+    je .page
+    cmp eax, KEY_PGUP
+    je .page
+    cmp eax, KEY_PGDN
+    je .page
+    cmp eax, ' '
+    jb .done
+    cmp eax, '~'
+    ja .done
+    mov ecx, [edi + IN_LEN]
+    cmp ecx, IN_MAXLEN
+    jae .done
+    mov [edi + IN_TEXT + ecx], al
+    inc dword [edi + IN_LEN]
+    jmp .done
+.fbs:
+    cmp dword [edi + IN_LEN], 0
+    je .done
+    dec dword [edi + IN_LEN]
+    jmp .done
+.submit:
+    mov eax, [edi + IN_FORM]
+    xor ebx, ebx                    ; (no button was pressed)
+    call brow_submit
+    jmp .done
+.unfield:
+    mov dword [br_typing], 0
+    mov dword [pg_field], 0
+    jmp .done
+.esc:
+    cmp dword [br_typing], 1
+    jne .unfield
+    call brow_addr_unfocus
+    mov esi, br_url
+    mov edi, br_tmp2
+    call str_copy
+    cmp byte [br_frag], 0
+    je .esc1
+    mov esi, br_frag_mark
+    call str_append
+    mov esi, br_frag
+    call str_append
+.esc1:
+    mov esi, br_tmp2
+    call brow_addr_set
 .done:
     popad
     ret
+
+; brow_field_click: EAX = a form field that was clicked
+brow_field_click:
+    pushad
+    mov edi, eax
+    mov ecx, [edi + IN_TYPE]
+    cmp ecx, IT_TEXT
+    je .type
+    cmp ecx, IT_PASSWORD
+    je .type
+    mov dword [br_typing], 0
+    cmp ecx, IT_CHECK
+    je .check
+    cmp ecx, IT_RADIO
+    je .radio
+    cmp ecx, IT_SUBMIT
+    jne .done
+    mov ebx, edi                    ; a submit button: send its form
+    mov eax, [edi + IN_FORM]
+    call brow_submit
+    jmp .done
+.type:
+    mov [pg_field], edi             ; type into it
+    mov dword [br_typing], 2
+    jmp .done
+.check:
+    xor dword [edi + IN_CHK], 1
+    jmp .done
+.radio:                             ; the others of its group go off
+    mov esi, BR_INPUTS
+    mov ecx, [ly_ni]
+.r: jecxz .on
+    cmp dword [esi + IN_TYPE], IT_RADIO
+    jne .rn
+    mov eax, [esi + IN_FORM]
+    cmp eax, [edi + IN_FORM]
+    jne .rn
+    push esi
+    push edi
+    mov esi, [esi + IN_NAME]
+    mov edi, [edi + IN_NAME]
+    test esi, esi
+    jz .rs
+    test edi, edi
+    jz .rs
+    call str_eq
+    jmp .rc
+.rs:
+    test esp, esp                   ; (no name: a group of its own; ZF=0)
+.rc:
+    pop edi
+    pop esi
+    jne .rn
+    mov dword [esi + IN_CHK], 0
+.rn:
+    add esi, IN_SIZE
+    dec ecx
+    jmp .r
+.on:
+    mov dword [edi + IN_CHK], 1
+.done:
+    or byte [gui_dirty], 1
+    popad
+    ret
+
+; brow_submit: EAX = a form's number, EBX = the submit button pressed (or
+; 0) -> its fields as name=value&... after the form's address, and go
+; there. Forms sent by POST are not supported.
+brow_submit:
+    pushad
+    mov dword [br_typing], 0
+    mov dword [pg_field], 0
+    test eax, eax
+    js .done                        ; a field outside any form
+    cmp eax, [ly_nf]
+    jae .done
+    lea ebp, [BR_FORMS + eax * 8]
+    mov [bs_form], eax
+    mov [bs_button], ebx
+    cmp dword [ebp + FM_POST], 0
+    je .get
+    mov esi, st_post
+    call brow_status_set
+    jmp .done
+.get:
+    mov esi, [ebp + FM_ACTION]      ; where it goes: action=, else this page
+    test esi, esi
+    jnz .act
+    mov esi, br_empty
+.act:
+    mov edi, br_tmp2
+    call brow_resolve
+    jc .done
+    mov esi, br_tmp2                ; without its own ?query or #part
+.q: mov al, [esi]
+    test al, al
+    jz .qe
+    cmp al, '?'
+    je .qe
+    cmp al, '#'
+    je .qe
+    inc esi
+    jmp .q
+.qe:
+    mov byte [esi], '?'
+    lea edi, [esi + 1]
+    mov dword [bs_first], 1
+    mov ebx, BR_INPUTS              ; every named field of the form
+    xor ecx, ecx
+.f: cmp ecx, [ly_ni]
+    jae .go
+    mov eax, [ebx + IN_FORM]
+    cmp eax, [bs_form]
+    jne .fn
+    cmp dword [ebx + IN_NAME], 0
+    je .fn
+    mov eax, [ebx + IN_TYPE]
+    cmp eax, IT_TEXT
+    je .typed
+    cmp eax, IT_PASSWORD
+    je .typed
+    cmp eax, IT_HIDDEN
+    je .value
+    cmp eax, IT_SUBMIT
+    je .button
+    cmp eax, IT_CHECK
+    je .ticked
+    cmp eax, IT_RADIO
+    jne .fn
+.ticked:
+    cmp dword [ebx + IN_CHK], 0
+    je .fn
+    mov esi, [ebx + IN_VALUE]
+    test esi, esi
+    jnz .pair_z
+    mov esi, br_on                  ; (value "on" if it has none)
+    jmp .pair_z
+.button:
+    cmp ebx, [bs_button]            ; only the button that was pressed
+    jne .fn
+.value:
+    mov esi, [ebx + IN_VALUE]
+    test esi, esi
+    jnz .pair_z
+    mov esi, br_empty
+.pair_z:
+    push esi
+    call str_len
+    pop esi
+    jmp .pair
+.typed:
+    lea esi, [ebx + IN_TEXT]
+    mov ecx, [ebx + IN_LEN]
+    push ecx
+    jmp .pair2
+.pair:                              ; name=value, ESI/ECX = the value
+    push ecx
+.pair2:
+    mov eax, edi                    ; (room left?)
+    sub eax, br_tmp2
+    cmp eax, URL_MAX - 200
+    pop eax
+    jae .go
+    push ecx
+    push esi
+    cmp dword [bs_first], 0
+    jne .nfirst
+    mov byte [edi], '&'
+    inc edi
+.nfirst:
+    mov dword [bs_first], 0
+    mov esi, [ebx + IN_NAME]
+    push esi
+    call str_len
+    pop esi
+    call url_encode
+    mov byte [edi], '='
+    inc edi
+    pop esi
+    pop ecx
+    mov ecx, eax
+    call url_encode
+    mov ecx, ebx                    ; (back to the field's number)
+    sub ecx, BR_INPUTS
+    shr ecx, 8
+.fn:
+    add ebx, IN_SIZE
+    inc ecx
+    jmp .f
+.go:
+    mov byte [edi], 0
+    mov esi, br_tmp2
+    call brow_navigate
+.done:
+    popad
+    ret
+
+; url_encode: ESI = text, ECX = its length -> at EDI, %-encoded the way
+; forms are sent (spaces as +). EDI moves on.
+url_encode:
+    push eax
+    push ecx
+    push esi
+.l: jecxz .e
+    lodsb
+    dec ecx
+    cmp al, ' '
+    je .plus
+    call is_alnum
+    jnc .keep
+    cmp al, '-'
+    je .keep
+    cmp al, '_'
+    je .keep
+    cmp al, '.'
+    je .keep
+    cmp al, '~'
+    je .keep
+    push eax
+    mov al, '%'
+    stosb
+    pop eax
+    push eax
+    shr al, 4
+    call .hex
+    pop eax
+    and al, 0x0F
+    call .hex
+    jmp .l
+.plus:
+    mov al, '+'
+.keep:
+    stosb
+    jmp .l
+.hex:
+    add al, '0'
+    cmp al, '9'
+    jbe .h
+    add al, 'A' - '9' - 1
+.h: stosb
+    ret
+.e: pop esi
+    pop ecx
+    pop eax
+    ret
+
+section .bss
+alignb 4
+bs_form     resd 1
+bs_button   resd 1
+bs_first    resd 1
+section .text
 
 ; brow_addr_focus: typing goes to the address bar, its text all selected
 brow_addr_focus:
@@ -1350,6 +1701,7 @@ brow_load:
 .fetch:
     mov edi, br_url
     call str_copy
+    call html_forms_reset
     mov dword [br_loaded], 0
     mov dword [br_secure], 0
     mov dword [br_redirs], 0
@@ -1542,6 +1894,7 @@ brow_split_frag:
 brow_addr_unfocus:
     mov dword [br_typing], 0
     mov dword [br_sel], 0
+    mov dword [pg_field], 0
     ret
 
 ; brow_status_outbuf: the status line from what PRINTF collected in OUTBUF

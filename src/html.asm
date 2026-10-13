@@ -45,6 +45,33 @@ TB_COLS     equ 16                  ; columns lined up (more: not lined up)
 TI_N        equ 0                   ; table info: columns,
 TI_LEFT     equ 4                   ; its left edge,
 TI_X        equ 8                   ; where each column starts
+%define BR_INPUTS   (BR_BASE + 0x1A8000)    ; form fields (256 x 256)
+BR_MAX_INPUTS equ 256
+%define BR_FORMS    (BR_BASE + 0x1B8000)    ; forms (64 x 8)
+BR_MAX_FORMS  equ 64
+; a form field (BR_INPUTS): made by the layout, in page order, so field k
+; is the same field each time the page is laid out; what was typed stays
+IN_TYPE     equ 0                   ; IT_*
+IN_FORM     equ 4                   ; its form's number, -1 if none
+IN_NAME     equ 8                   ; name=, value=, placeholder= (or 0)
+IN_VALUE    equ 12
+IN_PH       equ 16
+IN_W        equ 20                  ; box width in characters
+IN_LEN      equ 24                  ; characters typed
+IN_CHK      equ 28                  ; checkbox / radio: 1 = ticked
+IN_INIT     equ 32                  ; 1 = set up for this page
+IN_TEXT     equ 64                  ; what is typed (up to IN_MAXLEN)
+IN_SIZE     equ 256
+IN_MAXLEN   equ 180
+IT_TEXT     equ 1
+IT_HIDDEN   equ 2
+IT_SUBMIT   equ 3
+IT_CHECK    equ 4
+IT_RADIO    equ 5
+IT_PASSWORD equ 6
+IT_BUTTON   equ 7                   ; a button that does nothing here
+FM_ACTION   equ 0                   ; a form: action=, 1 = method="post"
+FM_POST     equ 4
 
 ; page nodes
 NT_END      equ 0                   ; end of the page
@@ -64,6 +91,10 @@ A_PLACEHOLDER equ 9
 A_BOLD      equ 10
 A_ITALIC    equ 11
 A_CHECKED   equ 12
+A_NAME      equ 13                  ; a field's name (a jump place on <a>)
+A_ACTION    equ 14
+A_METHOD    equ 15
+A_SIZE      equ 16
 
 ; tag flags
 TF_BLOCK    equ 1                   ; starts and ends a line
@@ -92,9 +123,10 @@ ST_COUNT    equ 32                  ; next <ol> number
 ST_DEPTH    equ 36                  ; how many lists deep
 ST_CELL     equ 40                  ; cells so far in this table row
 ST_TABLE    equ 44                  ; the table's column places (-1: none)
-ST_SIZE     equ 48
-SE_TAG      equ 48                  ; stack entry: the saved style, the tag,
-SE_RECT     equ 52                  ; its background item (or -1)
+ST_FORM     equ 48                  ; the form we are in (-1: none)
+ST_SIZE     equ 52
+SE_TAG      equ 52                  ; stack entry: the saved style, the tag,
+SE_RECT     equ 56                  ; its background item (or -1)
 SE_SIZE     equ 64
 SF_PRE      equ 0x100
 SF_CENTER   equ 0x200
@@ -116,6 +148,7 @@ DI_LINK     equ 28                  ; href, or 0
 DI_SIZE     equ 32
 DT_TEXT     equ 1
 DT_RECT     equ 2
+DT_INPUT    equ 3                   ; a form field (DI_LINK = its record)
 
 ; colours of the page
 C_PAGE_BG   equ 0xFFFFFF
@@ -263,7 +296,7 @@ attr_names:
     db "href", 0, A_HREF
     db "alt", 0, A_ALT
     db "id", 0, A_ID
-    db "name", 0, A_ID
+    db "name", 0, A_NAME
     db "type", 0, A_TYPE
     db "value", 0, A_VALUE
     db "color", 0, A_FG
@@ -271,6 +304,9 @@ attr_names:
     db "align", 0, A_ALIGN
     db "placeholder", 0, A_PLACEHOLDER
     db "checked", 0, A_CHECKED
+    db "action", 0, A_ACTION
+    db "method", 0, A_METHOD
+    db "size", 0, A_SIZE
     db 0
 
 ; named character references: name, 0, code point (word)
@@ -2130,6 +2166,7 @@ it_reset    db "reset", 0
 it_image    db "image", 0
 it_checkbox db "checkbox", 0
 it_radio    db "radio", 0
+it_password db "password", 0
 lbl_submit  db "Submit", 0
 lbl_reset   db "Reset", 0
 lbl_button  db "Button", 0
@@ -2192,8 +2229,11 @@ ly_h        resd 1                  ; height of the whole page
 ly_tag      resd 1
 ly_attrs    resd 1
 ly_num      resd 1
+ly_fld      resd 1                  ; the field ly_field made
 ly_next     resd 1
 ly_nt       resd 1                  ; tables measured
+ly_nf       resd 1                  ; forms
+ly_ni       resd 1                  ; form fields
 tm_col      resd 1                  ; (ly_table_measure)
 tm_cur      resd 1
 tm_n        resd 1
@@ -2232,8 +2272,11 @@ html_layout:
     mov dword [ly_st + ST_FG], C_TEXT
     mov dword [ly_st + ST_BG], -1
     mov dword [ly_st + ST_TABLE], -1
+    mov dword [ly_st + ST_FORM], -1
     mov [ly_st + ST_RIGHT], eax
     mov dword [ly_nt], 0
+    mov dword [ly_nf], 0
+    mov dword [ly_ni], 0
     mov esi, BR_NODES
 .node:
     movzx eax, byte [esi]
@@ -3003,6 +3046,34 @@ ly_open:
     je .q
     cmp eax, T_BUTTON
     je .button
+    cmp eax, T_FORM
+    je .form
+    jmp .done
+.form:
+    mov ecx, [ly_nf]                ; a form: where it is sent, and how
+    cmp ecx, BR_MAX_FORMS
+    jae .done
+    inc dword [ly_nf]
+    mov [ly_st + ST_FORM], ecx
+    lea edi, [BR_FORMS + ecx * 8]
+    xor edx, edx
+    mov eax, A_ACTION
+    call ly_find_attr
+    jc .fa
+    mov edx, esi
+.fa:
+    mov [edi + FM_ACTION], edx
+    xor edx, edx
+    mov eax, A_METHOD
+    call ly_find_attr
+    jc .fm
+    mov al, [esi]
+    or al, 0x20
+    cmp al, 'p'
+    jne .fm
+    inc edx
+.fm:
+    mov [edi + FM_POST], edx
     jmp .done
 .a:
     mov eax, A_HREF
@@ -3024,7 +3095,8 @@ ly_open:
     call ly_top
     mov [edi + SE_RECT], eax
     add dword [ly_y], 6
-    add dword [ly_st + ST_LEFT], 10
+    mov eax, 10
+    call ly_indent
     sub dword [ly_st + ST_RIGHT], 10
     jmp .done
 .quote:
@@ -3037,7 +3109,8 @@ ly_open:
     call ly_rect
     call ly_top
     mov [edi + SE_RECT], eax
-    add dword [ly_st + ST_LEFT], 32
+    mov eax, 32
+    call ly_indent
     sub dword [ly_st + ST_RIGHT], 16
     jmp .done
 .ul:
@@ -3054,17 +3127,20 @@ ly_open:
     mov [ly_st + ST_COUNT], eax
 .list:
     inc dword [ly_st + ST_DEPTH]
-    add dword [ly_st + ST_LEFT], 32
+    mov eax, 32
+    call ly_indent
     jmp .done
 .li:
     cmp dword [ly_st + ST_LIST], 0  ; (an item outside any list)
     jne .li2
-    add dword [ly_st + ST_LEFT], 32
+    mov eax, 32
+    call ly_indent
 .li2:
     call ly_marker
     jmp .done
 .dd:
-    add dword [ly_st + ST_LEFT], 32
+    mov eax, 32
+    call ly_indent
     jmp .done
 .center:
     or dword [ly_st + ST_FLAGS], SF_CENTER
@@ -3112,6 +3188,21 @@ ly_open:
 .button:
     mov dword [ly_st + ST_BG], C_BUTTON_BG
     mov dword [ly_st + ST_FG], C_TEXT
+    mov eax, IT_SUBMIT              ; <button>: clicking its text sends the
+    mov ecx, 0                      ; form (like a link to it)
+    call ly_field
+    jc .done
+    mov edi, [ly_fld]
+    mov eax, A_TYPE                 ; (type=button / reset: does nothing)
+    call ly_find_attr
+    jc .bt
+    cmp byte [esi], 's'
+    je .bt
+    cmp byte [esi], 'S'
+    je .bt
+    mov dword [edi + IN_TYPE], IT_BUTTON
+.bt:
+    mov [ly_st + ST_LINK], edi
     jmp .done
 .void:
     call ly_void
@@ -3268,6 +3359,22 @@ ly_table_measure:
     mov dword [tm_cur], 0
     ret
 
+; ly_indent: EAX = pixels -> the left edge moves right that much, but the
+; text keeps at least 100 pixels (deep lists in a narrow window)
+ly_indent:
+    push ecx
+    mov ecx, [ly_st + ST_RIGHT]
+    sub ecx, [ly_st + ST_LEFT]
+    sub ecx, 100
+    jle .r
+    cmp eax, ecx
+    jle .add
+    mov eax, ecx
+.add:
+    add [ly_st + ST_LEFT], eax
+.r: pop ecx
+    ret
+
 ; ly_attrs_apply: the current element's colour, bold, italic, centring,
 ; and its id (a place a link can jump to)
 ly_attrs_apply:
@@ -3286,6 +3393,10 @@ ly_attrs_apply:
     cmp eax, A_ALIGN
     je .align
     cmp eax, A_ID
+    je .id
+    cmp eax, A_NAME                 ; <a name="...">: a place to jump to
+    jne .skip
+    cmp dword [ly_tag], T_A
     je .id
     jmp .skip
 .fg:
@@ -3559,119 +3670,246 @@ ly_void:
     call ly_text
     call ly_style_load
     jmp .done
-.area:
-    mov ecx, 30
-    jmp .field
+.area:                              ; a text area: a wide text box
+    mov eax, IT_TEXT
+    mov ecx, 40
+    call ly_field
+    jc .done
+    call ly_field_box
+    jmp .done
 .input:
+    mov ebx, IT_TEXT                ; what kind of field
     mov eax, A_TYPE
     call ly_find_attr
-    jc .text_field
+    jc .itype
     mov edi, it_hidden
+    mov ebx, IT_HIDDEN
     call str_icmp
-    je .done
-    mov ebx, lbl_submit
+    je .itype
+    mov ebx, IT_SUBMIT
     mov edi, it_submit
     call str_icmp
-    je .button
+    je .itype
     mov edi, it_image
     call str_icmp
-    je .button
-    mov ebx, lbl_reset
+    je .itype
+    mov ebx, IT_BUTTON
     mov edi, it_reset
     call str_icmp
-    je .button
-    mov ebx, lbl_button
+    je .itype
     mov edi, it_button
     call str_icmp
-    je .button
+    je .itype
+    mov ebx, IT_CHECK
     mov edi, it_checkbox
     call str_icmp
-    je .check
+    je .itype
+    mov ebx, IT_RADIO
     mov edi, it_radio
     call str_icmp
-    je .radio
-.text_field:
-    mov ecx, 20
-.field:                             ; a text box, ECX characters wide, with
-    call ly_pool_begin              ; its placeholder or value in grey
-    mov edx, edi
-    mov eax, A_VALUE
+    je .itype
+    mov ebx, IT_PASSWORD
+    mov edi, it_password
+    call str_icmp
+    je .itype
+    mov ebx, IT_TEXT
+.itype:
+    mov ecx, 24                     ; width: size= (10 to 60), else 24
+    mov eax, A_SIZE
     call ly_find_attr
-    jnc .fv
-    mov eax, A_PLACEHOLDER
-    call ly_find_attr
-    jc .fpad
-.fv:
-    push ecx
-    call ly_pool_copy
-    pop ecx
-.fpad:
-    mov eax, edi                    ; pad with spaces to the box's width
-    sub eax, edx
-    sub ecx, eax
-    jle .fend
-    mov al, 0xFF
-    rep stosb
-.fend:
-    call ly_pool_end
+    jc .w
+    call parse_uint
+    jc .w
+    mov ecx, eax
+    cmp ecx, 10
+    jge .w1
+    mov ecx, 10
+.w1:
+    cmp ecx, 60
+    jle .w
+    mov ecx, 60
+.w:
+    mov eax, ebx
+    call ly_field
     jc .done
-    call ly_style_save
-    mov dword [ly_st + ST_BG], C_FIELD_BG
-    mov dword [ly_st + ST_FG], C_ALT
-    and dword [ly_st + ST_FLAGS], ~0x0F
-    or dword [ly_st + ST_FLAGS], GS_FRAME
-    jmp .put
-.button:                            ; a button: its label in a box
-    mov eax, A_VALUE
-    call ly_find_attr
-    jnc .bl
-    mov esi, ebx
-.bl:
-    call ly_pool_begin
-    mov al, 0xFF
-    stosb
-    mov ecx, 40
-    call ly_pool_copy
-    mov al, 0xFF
-    stosb
-    call ly_pool_end
-    jc .done
-    call ly_style_save
-    mov dword [ly_st + ST_BG], C_BUTTON_BG
-    mov dword [ly_st + ST_FG], C_TEXT
-    and dword [ly_st + ST_FLAGS], ~0x0F
-    or dword [ly_st + ST_FLAGS], GS_FRAME
-    jmp .put
-.check:
-    mov esi, cb_off
-    mov eax, A_CHECKED
-    push esi
-    call ly_find_attr
-    pop esi
-    jc .cput
-    mov esi, cb_on
-    jmp .cput
-.radio:
-    mov esi, rb_off
-    mov eax, A_CHECKED
-    push esi
-    call ly_find_attr
-    pop esi
-    jc .cput
-    mov esi, rb_on
-.cput:
-    mov ecx, 3
-    call ly_style_save
-    jmp .put
-.put:
-    call ly_content                 ; a little room on both sides
-    jz .p1
-    mov dword [ly_ps], 1
-.p1:
-    call ly_word
-    call ly_style_load
-    mov dword [ly_ps], 1
+    cmp ebx, IT_HIDDEN              ; (hidden: sent with the form, not shown)
+    je .done
+    call ly_field_box
 .done:
+    popad
+    ret
+
+; ly_field: EAX = IT_* type, ECX = width -> the next form field record
+; (ly_fld) filled in from the current element's attributes. What was typed
+; into it, or ticked, is kept if the page is only being laid out again.
+; CF=1 if there are too many fields.
+ly_field:
+    pushad
+    mov edi, [ly_ni]
+    cmp edi, BR_MAX_INPUTS
+    jae .full
+    inc dword [ly_ni]
+    shl edi, 8
+    add edi, BR_INPUTS
+    mov [ly_fld], edi
+    mov [edi + IN_TYPE], eax
+    mov [edi + IN_W], ecx
+    mov eax, [ly_st + ST_FORM]
+    mov [edi + IN_FORM], eax
+    mov eax, A_NAME
+    call .attr
+    mov [edi + IN_NAME], esi
+    mov eax, A_VALUE
+    call .attr
+    mov [edi + IN_VALUE], esi
+    mov eax, A_PLACEHOLDER
+    call .attr
+    mov [edi + IN_PH], esi
+    cmp dword [edi + IN_INIT], 0
+    jne .ok
+    mov dword [edi + IN_INIT], 1
+    mov eax, A_CHECKED
+    call .attr
+    xor eax, eax
+    test esi, esi
+    setnz al
+    mov [edi + IN_CHK], eax
+    mov dword [edi + IN_LEN], 0
+    mov eax, [edi + IN_TYPE]        ; a text box starts with its value=
+    cmp eax, IT_TEXT
+    je .text
+    cmp eax, IT_PASSWORD
+    jne .ok
+.text:
+    mov esi, [edi + IN_VALUE]
+    test esi, esi
+    jz .ok
+    xor ecx, ecx
+.c: mov al, [esi + ecx]
+    test al, al
+    jz .cend
+    mov [edi + IN_TEXT + ecx], al
+    inc ecx
+    cmp ecx, IN_MAXLEN
+    jb .c
+.cend:
+    mov [edi + IN_LEN], ecx
+.ok:
+    popad
+    clc
+    ret
+.full:
+    popad
+    stc
+    ret
+; .attr: EAX = attribute -> ESI = its value, 0 if none
+.attr:
+    call ly_find_attr
+    jnc .a
+    xor esi, esi
+.a: ret
+
+; ly_field_box: the box of field ly_fld onto the line, like a word
+ly_field_box:
+    pushad
+    mov edi, [ly_fld]
+    mov eax, [edi + IN_TYPE]
+    mov ecx, [edi + IN_W]           ; its width in characters
+    cmp eax, IT_TEXT
+    je .w
+    cmp eax, IT_PASSWORD
+    je .w
+    mov ecx, 3                      ; [x] / (*)
+    cmp eax, IT_CHECK
+    je .w
+    cmp eax, IT_RADIO
+    je .w
+    call field_label                ; a button: its label and some room
+    push esi
+    call str_len
+    pop esi
+    add ecx, 2
+.w:
+    imul ecx, [ly_st + ST_CW]       ; ECX = width in pixels
+    call ly_content                 ; a little room before it
+    jz .nsp
+    mov dword [ly_ps], 1
+.nsp:
+    call ly_begin
+    xor edx, edx                    ; EDX = space before it
+    cmp dword [ly_ps], 0
+    je .fit
+    call ly_content
+    jz .fit
+    mov edx, [ly_st + ST_CW]
+.fit:
+    mov eax, [ly_x]
+    add eax, edx
+    add eax, ecx
+    cmp eax, [ly_st + ST_RIGHT]
+    jle .put
+    call ly_content
+    jz .put
+    call ly_finish                  ; does not fit: on the next line
+    call ly_begin
+    xor edx, edx
+.put:
+    push edi
+    call ly_item
+    mov esi, edi
+    pop edi
+    jc .done
+    mov byte [esi + DI_TYPE], DT_INPUT
+    mov eax, [ly_st + ST_CW]
+    mov [esi + DI_CW], al
+    add eax, eax
+    mov [esi + DI_H], ax
+    mov eax, [ly_x]
+    add eax, edx
+    mov [esi + DI_X], eax
+    mov eax, [ly_y]
+    mov [esi + DI_Y], eax
+    mov [esi + DI_W], cx
+    mov [esi + DI_LINK], edi
+    add edx, ecx
+    add [ly_x], edx
+    mov eax, [ly_st + ST_CW]
+    call ly_lineh
+    cmp eax, [ly_lh]
+    jbe .lh
+    mov [ly_lh], eax
+.lh:
+    mov dword [ly_ps], 1
+    mov dword [ly_mark], 0
+.done:
+    popad
+    ret
+
+; field_label: EDI = a button field -> ESI = its label
+field_label:
+    mov esi, [edi + IN_VALUE]
+    test esi, esi
+    jz .def
+    cmp byte [esi], 0
+    jne .r
+.def:
+    mov esi, lbl_submit
+    cmp dword [edi + IN_TYPE], IT_SUBMIT
+    je .r
+    mov esi, lbl_button
+.r: ret
+
+; html_forms_reset: a new page: its fields start empty again
+html_forms_reset:
+    pushad
+    mov edi, BR_INPUTS
+    mov ecx, BR_MAX_INPUTS
+.l: mov dword [edi + IN_INIT], 0
+    add edi, IN_SIZE
+    loop .l
+    mov dword [pg_field], 0
+    mov dword [ly_ni], 0
+    mov dword [ly_nf], 0
     popad
     ret
 
@@ -3840,6 +4078,7 @@ pg_vt       resd 1                  ; the visible part: top and bottom
 pg_vb       resd 1
 pg_hover    resd 1                  ; the link under the mouse
 pg_focus    resd 1                  ; the link chosen with Tab
+pg_field    resd 1                  ; the form field being typed into
 pt_fg       resd 1
 section .text
 
@@ -3862,7 +4101,12 @@ html_paint:
     add ecx, [pg_x0]
     cmp byte [esi + DI_TYPE], DT_RECT
     je .rect
+    cmp byte [esi + DI_TYPE], DT_INPUT
+    je .input
     call pt_text
+    jmp .next
+.input:
+    call pt_input
     jmp .next
 .rect:
     push esi
@@ -3964,6 +4208,223 @@ pt_text:
     jmp .c
 .done:
     popad
+    ret
+
+; pt_input: ESI = a form field's item, ECX / EDX = where on the screen
+pt_input:
+    pushad
+    mov ebx, esi
+    mov ebp, [ebx + DI_LINK]        ; EBP = the field
+    movzx eax, byte [ebx + DI_CW]
+    mov [gfx_cw], eax
+    mov dword [gfx_style], 0
+    movzx esi, word [ebx + DI_W]
+    movzx edi, word [ebx + DI_H]
+    mov eax, [ebp + IN_TYPE]
+    cmp eax, IT_CHECK
+    je .check
+    cmp eax, IT_RADIO
+    je .check
+    cmp eax, IT_TEXT
+    je .text
+    cmp eax, IT_PASSWORD
+    je .text
+    ; a button: a grey box with its label
+    mov eax, C_BUTTON_BG
+    call pt_box
+    mov edi, ebp
+    call field_label                ; ESI = its label
+    add ecx, [gfx_cw]
+    mov eax, C_TEXT
+    call pt_str
+    jmp .done
+.check:                             ; [x] or ( )
+    mov eax, '[ ]'
+    cmp dword [ebp + IN_TYPE], IT_CHECK
+    je .ck
+    mov eax, '( )'
+.ck:
+    cmp dword [ebp + IN_CHK], 0
+    je .ck1
+    mov ah, 'x'
+    cmp dword [ebp + IN_TYPE], IT_CHECK
+    je .ck1
+    mov ah, '*'
+.ck1:
+    mov [pt_tmp], eax
+    mov byte [pt_tmp + 3], 0
+    mov esi, pt_tmp
+    mov eax, C_TEXT
+    call pt_str
+    jmp .done
+.text:                              ; a text box
+    mov eax, C_FIELD_BG
+    call pt_box
+    cmp ebp, [pg_field]             ; being typed into: a blue edge
+    jne .t1
+    pushad
+    mov eax, 0x2F7FD0
+    call gfx_rgb
+    dec ecx
+    dec edx
+    add esi, 2
+    add edi, 2
+    call gfx_frame
+    popad
+.t1:
+    call gfx_clip_save              ; the text stays inside the box
+    push ecx
+    push edx
+    call gfx_clip_and
+    pop edx
+    pop ecx
+    add ecx, 2
+    mov eax, [ebp + IN_LEN]
+    test eax, eax
+    jnz .typed
+    cmp ebp, [pg_field]
+    je .cursor
+    mov esi, [ebp + IN_PH]          ; empty: the placeholder, in grey
+    test esi, esi
+    jz .tdone
+    mov eax, C_ALT
+    call pt_str
+    jmp .tdone
+.typed:
+    mov esi, [ebp + IN_W]           ; too long for the box: show its end
+    sub esi, 1
+    sub eax, esi
+    jg .from
+    xor eax, eax
+.from:
+    lea esi, [ebp + IN_TEXT + eax]
+    mov edi, [ebp + IN_LEN]
+    sub edi, eax                    ; EDI = characters to draw
+    mov eax, C_TEXT
+    call gfx_rgb
+    push ebx
+    mov ebx, eax
+.ch:
+    test edi, edi
+    jz .chd
+    mov al, [esi]
+    cmp dword [ebp + IN_TYPE], IT_PASSWORD
+    jne .chp
+    mov al, '*'
+.chp:
+    push ebp
+    mov ebp, -1
+    call gfx_glyph
+    pop ebp
+    add ecx, [gfx_cw]
+    inc esi
+    dec edi
+    jmp .ch
+.chd:
+    pop ebx
+.cursor:
+    cmp ebp, [pg_field]
+    jne .tdone
+    mov eax, C_TEXT                 ; the text cursor
+    call gfx_rgb
+    mov esi, 2
+    movzx edi, word [ebx + DI_H]
+    call gfx_fillrect
+.tdone:
+    call gfx_clip_restore
+.done:
+    popad
+    ret
+
+; pt_box: a field's box at ECX, EDX, size ESI x EDI, filled with EAX
+pt_box:
+    pushad
+    call gfx_rgb
+    call gfx_fillrect
+    mov eax, C_FRAME
+    call gfx_rgb
+    dec ecx
+    dec edx
+    add esi, 2
+    add edi, 2
+    call gfx_frame
+    popad
+    ret
+
+; pt_str: ESI = string, ECX / EDX = where, EAX = colour (gfx_cw set)
+pt_str:
+    pushad
+    call gfx_rgb
+    mov ebx, eax
+    mov ebp, -1
+.l: mov al, [esi]
+    test al, al
+    jz .e
+    call gfx_glyph
+    add ecx, [gfx_cw]
+    inc esi
+    jmp .l
+.e: popad
+    ret
+
+section .bss
+pt_tmp      resd 1
+section .text
+
+; html_field_at: EAX / EDX = a point on the page -> EAX = the form field
+; there (0 if none)
+html_field_at:
+    push ebx
+    push ecx
+    push esi
+    mov esi, BR_ITEMS
+    xor ecx, ecx
+.l: cmp ecx, [ly_n]
+    jae .none
+    cmp byte [esi + DI_TYPE], DT_INPUT
+    jne .n
+    mov ebx, [esi + DI_X]
+    cmp eax, ebx
+    jl .n
+    push eax
+    movzx eax, word [esi + DI_W]
+    add ebx, eax
+    pop eax
+    cmp eax, ebx
+    jge .n
+    mov ebx, [esi + DI_Y]
+    cmp edx, ebx
+    jl .n
+    push eax
+    movzx eax, word [esi + DI_H]
+    add ebx, eax
+    pop eax
+    cmp edx, ebx
+    jge .n
+    mov eax, [esi + DI_LINK]
+    jmp .out
+.n: add esi, DI_SIZE
+    inc ecx
+    jmp .l
+.none:
+    xor eax, eax
+.out:
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+
+; html_is_field: EAX = a link's value -> ZF=1 if it is really a form field
+; (the text of a <button> links to its field)
+html_is_field:
+    cmp eax, BR_INPUTS
+    jb .no
+    cmp eax, BR_INPUTS + BR_MAX_INPUTS * IN_SIZE
+    jae .no
+    cmp eax, eax
+    ret
+.no:
+    test esp, esp                   ; ZF=0
     ret
 
 ; html_link_at: EAX / EDX = a point on the page -> EAX = the href of the

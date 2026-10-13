@@ -78,6 +78,7 @@ topic_table:
     TOPIC "intro",    man_intro
     TOPIC "keys",     man_keys
     TOPIC "files",    man_files
+    TOPIC "browser",  man_browser
     dd 0
 
 shell_run:

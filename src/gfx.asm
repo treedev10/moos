@@ -33,6 +33,10 @@ gfx_cx0     resd 1          ; clip rectangle: left, top (inclusive) ...
 gfx_cy0     resd 1
 gfx_cx1     resd 1          ; ... right, bottom (exclusive)
 gfx_cy1     resd 1
+gfx_sv0     resd 1          ; (a saved clip rectangle)
+gfx_sv1     resd 1
+gfx_sv2     resd 1
+gfx_sv3     resd 1
 gfx_ready   resb 1
 
 section .text
@@ -158,6 +162,61 @@ gfx_clip_set:
     mov [gfx_cx1], ecx
     mov [gfx_cy1], edx
     popad
+    ret
+
+; gfx_clip_save / gfx_clip_restore: keep the clip rectangle (one level)
+gfx_clip_save:
+    push eax
+    mov eax, [gfx_cx0]
+    mov [gfx_sv0], eax
+    mov eax, [gfx_cy0]
+    mov [gfx_sv1], eax
+    mov eax, [gfx_cx1]
+    mov [gfx_sv2], eax
+    mov eax, [gfx_cy1]
+    mov [gfx_sv3], eax
+    pop eax
+    ret
+gfx_clip_restore:
+    push eax
+    mov eax, [gfx_sv0]
+    mov [gfx_cx0], eax
+    mov eax, [gfx_sv1]
+    mov [gfx_cy0], eax
+    mov eax, [gfx_sv2]
+    mov [gfx_cx1], eax
+    mov eax, [gfx_sv3]
+    mov [gfx_cy1], eax
+    pop eax
+    ret
+
+; gfx_clip_and: narrow the clip rectangle to ECX = x, EDX = y, ESI = width,
+; EDI = height as well
+gfx_clip_and:
+    push eax
+    push esi
+    push edi
+    add esi, ecx                    ; (right, bottom)
+    add edi, edx
+    cmp ecx, [gfx_cx0]
+    jle .x0
+    mov [gfx_cx0], ecx
+.x0:
+    cmp edx, [gfx_cy0]
+    jle .y0
+    mov [gfx_cy0], edx
+.y0:
+    cmp esi, [gfx_cx1]
+    jge .x1
+    mov [gfx_cx1], esi
+.x1:
+    cmp edi, [gfx_cy1]
+    jge .y1
+    mov [gfx_cy1], edi
+.y1:
+    pop edi
+    pop esi
+    pop eax
     ret
 
 ; gfx_fillrect: ECX = x, EDX = y, ESI = width, EDI = height, EAX = pixel.
@@ -463,8 +522,15 @@ section .text
 ; gfx_icon: a 16x16 one-colour picture: ESI = 16 words (one per row, the
 ; top bit is the left pixel), ECX = x, EDX = y, EAX = pixel
 gfx_icon:
-    pushad
+    push ebx
     mov ebx, 16
+    call gfx_bitmap
+    pop ebx
+    ret
+
+; gfx_bitmap: the same, EBX rows high
+gfx_bitmap:
+    pushad
 .row:
     movzx edi, word [esi]
     add esi, 2
