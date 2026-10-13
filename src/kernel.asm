@@ -154,6 +154,7 @@ zero_bss:
 %include "src/fs.asm"
 %include "src/net.asm"
 %include "src/crypto.asm"
+%include "src/sha512.asm"
 %include "src/aes.asm"
 %include "src/x25519.asm"
 %include "src/rsa.asm"

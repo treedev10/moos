@@ -1,0 +1,510 @@
+BN_MAX      equ 130
+
+section .bss
+alignb 4
+mm_k        resd 1
+mm_n0inv    resd 1
+mm_np       resd 1
+mm_bi       resd 1
+mm_m        resd 1
+mm_i        resd 1
+mm_t        resd BN_MAX + 2
+bn_n        resd BN_MAX
+bn_s        resd BN_MAX
+bn_r2       resd BN_MAX
+bn_x        resd BN_MAX
+bn_acc      resd BN_MAX
+bn_one      resd BN_MAX
+bn_tmp      resd BN_MAX
+rsa_em      resb 4 * BN_MAX
+rsa_mask    resb 4 * BN_MAX
+rsa_nlen    resd 1
+rsa_mgfin   resb 36
+rsa_mprime  resb 72
+rsa_hash    resb 32
+rsa_pfx     resd 1
+
+section .data
+
+pkcs1_sha256 db 0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
+             db 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
+pkcs1_sha384 db 0x30, 0x41, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
+             db 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30
+pkcs1_sha512 db 0x30, 0x51, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
+             db 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40
+
+section .text
+
+bn_from_bytes:
+    CENTER
+    mov edi, ARG(0)
+    mov ecx, ARG(3)
+    xor eax, eax
+    rep stosd
+    mov edi, ARG(0)
+    mov esi, ARG(1)
+    mov ecx, ARG(2)
+    xor ebx, ebx
+.l: jecxz .done
+    dec ecx
+    mov al, [esi + ecx]
+    mov [edi + ebx], al
+    inc ebx
+    jmp .l
+.done:
+    CLEAVE
+
+bn_to_bytes:
+    CENTER
+    mov edi, ARG(0)
+    mov esi, ARG(1)
+    mov ecx, ARG(2)
+    shl ecx, 2
+    xor ebx, ebx
+.l: jecxz .done
+    dec ecx
+    mov al, [esi + ecx]
+    mov [edi + ebx], al
+    inc ebx
+    jmp .l
+.done:
+    CLEAVE
+
+bn_cmp:
+    CENTER
+    mov esi, ARG(0)
+    mov edi, ARG(1)
+    mov ecx, ARG(2)
+.l: dec ecx
+    js .equal
+    mov eax, [esi + ecx * 4]
+    cmp eax, [edi + ecx * 4]
+    ja .ge
+    jb .lt
+    jmp .l
+.equal:
+.ge:
+    mov eax, 1
+    CLEAVE
+.lt:
+    xor eax, eax
+    CLEAVE
+
+bn_sub:
+    CENTER
+    mov esi, ARG(0)
+    mov edi, ARG(1)
+    mov ecx, ARG(2)
+    xor ebx, ebx
+    clc
+.l: mov eax, [edi + ebx * 4]
+    sbb [esi + ebx * 4], eax
+    inc ebx
+    dec ecx
+    jnz .l
+    CLEAVE
+
+mont_setup:
+    CENTER
+    mov esi, ARG(0)
+    mov [mm_np], esi
+    mov eax, ARG(1)
+    mov [mm_k], eax
+    mov ebx, [esi]
+    mov ecx, ebx
+    mov edi, 5
+.newton:
+    mov eax, ebx
+    imul eax, ecx
+    neg eax
+    add eax, 2
+    imul ecx, eax
+    dec edi
+    jnz .newton
+    neg ecx
+    mov [mm_n0inv], ecx
+
+    CCALL c_memzero, bn_r2, 4 * BN_MAX
+    mov dword [bn_r2], 1
+    mov ebx, [mm_k]
+    shl ebx, 6
+.dbl:
+    mov ecx, [mm_k]
+    xor edx, edx
+    clc
+.shl:
+    rcl dword [bn_r2 + edx * 4], 1
+    inc edx
+    dec ecx
+    jnz .shl
+    jc .reduce
+    CCALL bn_cmp, bn_r2, dword [mm_np], dword [mm_k]
+    test eax, eax
+    jz .next
+.reduce:
+    CCALL bn_sub, bn_r2, dword [mm_np], dword [mm_k]
+.next:
+    dec ebx
+    jnz .dbl
+    CLEAVE
+
+mont_mul:
+    CENTER
+    mov ecx, [mm_k]
+    add ecx, 2
+    mov edi, mm_t
+    xor eax, eax
+    rep stosd
+    mov dword [mm_i], 0
+.outer:
+    mov eax, ARG(2)
+    mov edx, [mm_i]
+    mov eax, [eax + edx * 4]
+    mov [mm_bi], eax
+    mov esi, ARG(1)
+    xor ecx, ecx
+    xor ebx, ebx
+.l1:
+    mov eax, [esi + ebx * 4]
+    mul dword [mm_bi]
+    add eax, [mm_t + ebx * 4]
+    adc edx, 0
+    add eax, ecx
+    adc edx, 0
+    mov [mm_t + ebx * 4], eax
+    mov ecx, edx
+    inc ebx
+    cmp ebx, [mm_k]
+    jb .l1
+    mov eax, [mm_t + ebx * 4]
+    add eax, ecx
+    mov [mm_t + ebx * 4], eax
+    mov eax, 0
+    adc eax, 0
+    mov [mm_t + ebx * 4 + 4], eax
+    mov eax, [mm_t]
+    mul dword [mm_n0inv]
+    mov [mm_m], eax
+    mov edi, [mm_np]
+    mov eax, [edi]
+    mul dword [mm_m]
+    add eax, [mm_t]
+    adc edx, 0
+    mov ecx, edx
+    mov ebx, 1
+.l2:
+    cmp ebx, [mm_k]
+    jae .l2done
+    mov eax, [edi + ebx * 4]
+    mul dword [mm_m]
+    add eax, [mm_t + ebx * 4]
+    adc edx, 0
+    add eax, ecx
+    adc edx, 0
+    mov [mm_t + ebx * 4 - 4], eax
+    mov ecx, edx
+    inc ebx
+    jmp .l2
+.l2done:
+    mov eax, [mm_t + ebx * 4]
+    add eax, ecx
+    mov [mm_t + ebx * 4 - 4], eax
+    mov eax, [mm_t + ebx * 4 + 4]
+    adc eax, 0
+    mov [mm_t + ebx * 4], eax
+    mov dword [mm_t + ebx * 4 + 4], 0
+    inc dword [mm_i]
+    mov eax, [mm_i]
+    cmp eax, [mm_k]
+    jb .outer
+
+    mov ebx, [mm_k]
+    cmp dword [mm_t + ebx * 4], 0
+    jne .sub
+    CCALL bn_cmp, mm_t, dword [mm_np], dword [mm_k]
+    test eax, eax
+    jz .copy
+.sub:
+    CCALL bn_sub, mm_t, dword [mm_np], dword [mm_k]
+.copy:
+    mov ecx, [mm_k]
+    mov esi, mm_t
+    mov edi, ARG(0)
+    rep movsd
+    CLEAVE
+
+rsa_public:
+    CENTER
+    mov esi, ARG(3)
+    mov ecx, ARG(4)
+.strip:
+    test ecx, ecx
+    jz .bad
+    cmp byte [esi], 0
+    jne .stripped
+    inc esi
+    dec ecx
+    jmp .strip
+.stripped:
+    mov [rsa_nlen], ecx
+    mov ARG(3), esi
+    mov ARG(4), ecx
+    cmp ecx, 4 * (BN_MAX - 2)
+    ja .bad
+    cmp ecx, 64
+    jb .bad
+    mov eax, ARG(2)
+    cmp eax, ecx
+    jb .bad
+    sub eax, ecx
+    mov edi, ARG(1)
+.sigz:
+    test eax, eax
+    jz .sigok
+    cmp byte [edi], 0
+    jne .bad
+    inc edi
+    dec eax
+    jmp .sigz
+.sigok:
+    mov ARG(1), edi
+    mov ebx, ecx
+    add ebx, 3
+    shr ebx, 2
+    CCALL bn_from_bytes, bn_n, dword ARG(3), dword ARG(4), ebx
+    CCALL bn_from_bytes, bn_s, dword ARG(1), dword ARG(4), ebx
+    CCALL bn_cmp, bn_s, bn_n, ebx
+    test eax, eax
+    jnz .bad
+    CCALL mont_setup, bn_n, ebx
+    CCALL mont_mul, bn_x, bn_s, bn_r2
+    CCALL c_memcpy, bn_acc, bn_x, 4 * BN_MAX
+    mov edi, ARG(5)
+    bsr ecx, edi
+    jz .bad
+.exp:
+    dec ecx
+    js .expdone
+    push ecx
+    CCALL mont_mul, bn_acc, bn_acc, bn_acc
+    pop ecx
+    bt edi, ecx
+    jnc .exp
+    push ecx
+    CCALL mont_mul, bn_acc, bn_acc, bn_x
+    pop ecx
+    jmp .exp
+.expdone:
+    CCALL c_memzero, bn_one, 4 * BN_MAX
+    mov dword [bn_one], 1
+    CCALL mont_mul, bn_acc, bn_acc, bn_one
+    CCALL bn_to_bytes, rsa_mask, bn_acc, ebx
+    lea esi, [ebx * 4]
+    sub esi, ARG(4)
+    add esi, rsa_mask
+    CCALL c_memcpy, dword ARG(0), esi, dword ARG(4)
+    mov eax, 1
+    CLEAVE
+.bad:
+    xor eax, eax
+    CLEAVE
+
+rsa_pkcs1_verify:
+    CENTER
+    mov eax, ARG(6)
+    mov edi, pkcs1_sha256
+    cmp eax, 32
+    je .pfx
+    mov edi, pkcs1_sha384
+    cmp eax, 48
+    je .pfx
+    mov edi, pkcs1_sha512
+    cmp eax, 64
+    jne .bad
+.pfx:
+    mov [rsa_pfx], edi
+    CCALL rsa_public, rsa_em, dword ARG(3), dword ARG(4), dword ARG(0), dword ARG(1), dword ARG(2)
+    test eax, eax
+    jz .bad
+    mov ebx, [rsa_nlen]
+    sub ebx, 3 + 19
+    sub ebx, ARG(6)
+    cmp ebx, 8
+    jl .bad
+    cmp byte [rsa_em], 0
+    jne .bad
+    cmp byte [rsa_em + 1], 1
+    jne .bad
+    mov esi, rsa_em + 2
+.ff:
+    cmp byte [esi], 0xFF
+    jne .bad
+    inc esi
+    dec ebx
+    jnz .ff
+    cmp byte [esi], 0
+    jne .bad
+    inc esi
+    push esi
+    CCALL c_memeq, esi, dword [rsa_pfx], 19
+    pop esi
+    test eax, eax
+    jz .bad
+    add esi, 19
+    CCALL c_memeq, esi, dword ARG(5), dword ARG(6)
+    CLEAVE
+.bad:
+    xor eax, eax
+    CLEAVE
+
+mgf1:
+    CENTER
+    CCALL c_memcpy, rsa_mgfin, dword ARG(0), 32
+    mov edi, ARG(1)
+    mov ebx, ARG(2)
+    xor esi, esi
+.l: test ebx, ebx
+    jz .done
+    mov eax, esi
+    bswap eax
+    mov [rsa_mgfin + 32], eax
+    CCALL sha256, rsa_mgfin, 36, rsa_hash
+    mov ecx, 32
+    cmp ebx, ecx
+    jae .n
+    mov ecx, ebx
+.n: sub ebx, ecx
+    push esi
+    mov esi, rsa_hash
+    rep movsb
+    pop esi
+    inc esi
+    jmp .l
+.done:
+    CLEAVE
+
+rsa_pss_verify:
+    CENTER
+    CCALL rsa_public, rsa_em, dword ARG(3), dword ARG(4), dword ARG(0), dword ARG(1), dword ARG(2)
+    test eax, eax
+    jz .bad
+
+    mov esi, ARG(0)
+.nz:
+    cmp byte [esi], 0
+    jne .top
+    inc esi
+    jmp .nz
+.top:
+    movzx eax, byte [esi]
+    bsr eax, eax
+    mov ecx, [rsa_nlen]
+    dec ecx
+    shl ecx, 3
+    add ecx, eax
+    inc ecx
+    dec ecx
+    mov [pss_embits], ecx
+    add ecx, 7
+    shr ecx, 3
+    mov [pss_emlen], ecx
+    mov esi, rsa_em
+    mov eax, [rsa_nlen]
+    sub eax, ecx
+    jz .em_ok
+    cmp byte [esi], 0
+    jne .bad
+    inc esi
+.em_ok:
+    mov [pss_em], esi
+    cmp ecx, 32 + 32 + 2
+    jb .bad
+    cmp byte [esi + ecx - 1], 0xBC
+    jne .bad
+    mov ebx, ecx
+    sub ebx, 33
+    mov [pss_dblen], ebx
+    mov eax, [pss_emlen]
+    shl eax, 3
+    sub eax, [pss_embits]
+    mov [pss_zbits], eax
+    mov cl, 8
+    sub cl, al
+    movzx edx, byte [esi]
+    shr edx, cl
+    test edx, edx
+    jnz .bad
+    lea eax, [esi + ebx]
+    mov [pss_h], eax
+    CCALL mgf1, eax, rsa_mask, ebx
+    mov esi, [pss_em]
+    xor ecx, ecx
+.x: mov al, [esi + ecx]
+    xor [rsa_mask + ecx], al
+    inc ecx
+    cmp ecx, ebx
+    jb .x
+    mov ecx, [pss_zbits]
+    mov al, 0xFF
+    shr al, cl
+    and [rsa_mask], al
+    mov ecx, ebx
+    sub ecx, 32 + 1
+    xor edx, edx
+.z: cmp edx, ecx
+    jae .one
+    cmp byte [rsa_mask + edx], 0
+    jne .bad
+    inc edx
+    jmp .z
+.one:
+    cmp byte [rsa_mask + edx], 1
+    jne .bad
+    CCALL c_memzero, rsa_mprime, 8
+    CCALL c_memcpy, rsa_mprime + 8, dword ARG(5), 32
+    mov eax, rsa_mask
+    add eax, ebx
+    sub eax, 32
+    CCALL c_memcpy, rsa_mprime + 40, eax, 32
+    CCALL sha256, rsa_mprime, 72, rsa_hash
+    CCALL c_memeq, rsa_hash, dword [pss_h], 32
+    CLEAVE
+.bad:
+    xor eax, eax
+    CLEAVE
+
+section .bss
+alignb 4
+pss_embits  resd 1
+pss_emlen   resd 1
+pss_em      resd 1
+pss_dblen   resd 1
+pss_zbits   resd 1
+pss_h       resd 1
+st_rsabad   resb 32
+section .text
+
+section .data
+sn_rsa1     db "RSA s^e mod n", 0
+sn_rsa2     db "RSA PKCS#1 v1.5 verify", 0
+sn_rsa3     db "RSA-PSS verify", 0
+sn_rsa4     db "RSA-PSS rejects bad hash", 0
+sn_rsa5     db "RSA PKCS#1 + SHA-384", 0
+section .text
+
+rsa_selftest:
+    CENTER
+    CCALL rsa_public, st_out, tv_rsa_sig15, tv_rsa_sig15_len, tv_rsa_n, tv_rsa_n_len, 65537
+    CCALL st_report, sn_rsa1, st_out, tv_rsa_pow, tv_rsa_pow_len
+    CCALL rsa_pkcs1_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sig15, tv_rsa_sig15_len, tv_rsa_mhash, 32
+    CCALL st_flag, sn_rsa2, eax
+    CCALL rsa_pkcs1_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sig384, tv_rsa_sig384_len, tv_rsa_mhash384, 48
+    CCALL st_flag, sn_rsa5, eax
+    CCALL rsa_pss_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sigpss, tv_rsa_sigpss_len, tv_rsa_mhash
+    CCALL st_flag, sn_rsa3, eax
+    CCALL c_memcpy, st_rsabad, tv_rsa_mhash, 32
+    xor byte [st_rsabad + 7], 0x10
+    CCALL rsa_pss_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sigpss, tv_rsa_sigpss_len, st_rsabad
+    xor eax, 1
+    CCALL st_flag, sn_rsa4, eax
+    CLEAVE

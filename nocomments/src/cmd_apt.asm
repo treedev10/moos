@@ -1,26 +1,33 @@
 section .bss
 alignb 4
-apt_repo_host   resb 64
-apt_repo_ip     resd 1
-apt_repo_port   resw 1
-alignb 4
-apt_path        resb 128
+apt_repo_url    resb 192
+apt_url         resb 400
+apt_label       resb 24
 apt_pkg_name    resb 64
+apt_arg         resd 1
 pkg_parse_ptr   resd 1
 pkg_parse_end   resd 1
 apt_installed   resd 1
+apt_skipped     resd 1
 
 section .data
 apt_repo_file   db "apt.repo", 0
-apt_repo_def    db "10.0.2.2:8000", 0
+apt_repo_def    db "https://raw.githubusercontent.com/treedev10/moos/HEAD/packages", 0
+apt_gh_prefix   db "https://raw.githubusercontent.com/", 0
+apt_gh_suffix   db "/HEAD/moos.pkg", 0
 str_install     db "install", 0
 str_remove      db "remove", 0
 str_repo        db "repo", 0
 str_apt_list    db "list", 0
+str_github      db "github", 0
 pkg_magic       db "MOOSPKG", 0
 tag_file        db "@file", 0
-tag_end         db "@end", 0
+tag_name        db "name:", 0
 inst_suffix     db ".inst", 0
+pkg_suffix      db ".pkg", 0
+apt_slash       db "/", 0
+
+apt_protected   dd apt_repo_file, login_file, clk_cfg_name, 0
 
 section .text
 
@@ -30,15 +37,15 @@ apt_load_repo:
     call fs_find
     jc .default
     mov ecx, [edi + DE_SIZE]
-    cmp ecx, 63
+    cmp ecx, 190
     jbe .size_ok
-    mov ecx, 63
+    mov ecx, 190
 .size_ok:
     call fs_slot
-    mov edi, apt_repo_host
+    mov edi, apt_repo_url
     rep movsb
     mov byte [edi], 0
-    mov edi, apt_repo_host
+    mov edi, apt_repo_url
 .trim:
     mov al, [edi]
     cmp al, 13
@@ -54,30 +61,15 @@ apt_load_repo:
     jmp .parsed
 .default:
     mov esi, apt_repo_def
-    mov edi, apt_repo_host
+    mov edi, apt_repo_url
     call str_copy
 .parsed:
-    popad
-    ret
-
-apt_split_repo:
-    pushad
-    mov word [apt_repo_port], 80
-    mov esi, apt_repo_host
-.find:
-    mov al, [esi]
-    test al, al
-    jz .done
-    cmp al, ':'
-    je .port
-    inc esi
-    jmp .find
-.port:
-    mov byte [esi], 0
-    inc esi
-    call parse_uint
-    jc .done
-    mov [apt_repo_port], ax
+    mov esi, apt_repo_url
+    call str_len
+    jecxz .done
+    cmp byte [apt_repo_url + ecx - 1], '/'
+    jne .done
+    mov byte [apt_repo_url + ecx - 1], 0
 .done:
     popad
     ret
@@ -89,7 +81,7 @@ cmd_apt:
     mov esi, [argv + 4]
     mov edi, str_install
     call str_icmp
-    je .install
+    je apt_install
     mov edi, str_remove
     call str_icmp
     je .remove
@@ -101,33 +93,39 @@ cmd_apt:
     je .list
 .usage:
     PRINTF `\x01wapt\x01n - the MOOS package manager\n`
-    PRINTF `  apt install <name>     download and install a package\n`
-    PRINTF `  apt remove <name>      remove an installed package\n`
-    PRINTF `  apt list               list installed packages\n`
-    PRINTF `  apt repo [host]        show or set the package server\n`
-    PRINTF `\nThe package server is \x01w%s\x01n. See \x01wman apt\x01n to make your own packages.\n`, apt_repo_host
+    PRINTF `  apt install <name>       install a package from the package repository\n`
+    PRINTF `  apt install /user/repo   install the package in a GitHub repository\n`
+    PRINTF `  apt remove <name>        forget an installed package\n`
+    PRINTF `  apt list                 list installed packages\n`
+    PRINTF `  apt repo [url | github]  show or change the package repository\n`
+    PRINTF `\nRepository: \x01w%s\x01n\nSee \x01wman apt\x01n, and PACKAGES.md to publish your own.\n`, apt_repo_url
     ret
 
 .repo:
     cmp dword [argc], 3
     jb .repo_show
     mov esi, [argv + 8]
-    mov edi, apt_repo_host
+    mov edi, str_github
+    call str_icmp
+    jne .repo_set
+    mov esi, apt_repo_def
+.repo_set:
+    mov edi, apt_repo_url
     call str_copy
-    mov esi, apt_repo_host
-    mov edx, apt_repo_host
+    mov esi, apt_repo_url
     call str_len
     mov esi, apt_repo_file
-    mov edx, apt_repo_host
+    mov edx, apt_repo_url
     call fs_save
     jc .repo_err
-    PRINTF `Package server set to \x01w%s\x01n.\n`, apt_repo_host
+    call apt_load_repo
+    PRINTF `Package repository set to \x01w%s\x01n.\n`, apt_repo_url
     ret
 .repo_err:
     PRINTF `\x01rerror:\x01n %s\n`, esi
     ret
 .repo_show:
-    PRINTF `Package server: \x01w%s\x01n\n`, apt_repo_host
+    PRINTF `Package repository: \x01w%s\x01n\n`, apt_repo_url
     ret
 
 .list:
@@ -141,12 +139,27 @@ cmd_apt:
     mov esi, edi
     call ends_with_inst
     jc .list_n
+    push edi
     mov edi, apt_pkg_name
     call str_copy
+    pop edi
     mov esi, apt_pkg_name
     call str_len
     mov byte [apt_pkg_name + ecx - 5], 0
-    PRINTF `  \x01c%s\x01n\n`, apt_pkg_name
+    push ebx
+    call fs_slot
+    mov ecx, [edi + DE_SIZE]
+    cmp ecx, 300
+    jbe .src_n
+    mov ecx, 300
+.src_n:
+    push edi
+    mov edi, apt_url
+    rep movsb
+    mov byte [edi], 0
+    pop edi
+    pop ebx
+    PRINTF `  \x01c%14s\x01n %s\n`, apt_pkg_name, apt_url
     inc ebp
 .list_n:
     inc ebx
@@ -177,57 +190,130 @@ cmd_apt:
     PRINTF `%s is not installed.\n`, dword [argv + 8]
     ret
 
-.install:
+apt_install:
     cmp dword [argc], 3
-    jb .usage
-    cmp byte [net_up], 0
-    jne .have_net
-    PRINTF `Connecting to the network...\n`
-    call net_up_bring
-    jc .neterr
-.have_net:
-    call apt_split_repo
-    mov esi, apt_repo_host
-    call dns_resolve
-    jc .resolve_fail
-    mov [apt_repo_ip], eax
-    mov edi, apt_path
+    jb cmd_apt.usage
     mov esi, [argv + 8]
-    cmp byte [esi], '/'
-    je .path_abs
-    mov byte [edi], '/'
-    inc edi
-.path_abs:
-    call str_copy_noterm
+    mov [apt_arg], esi
+    mov byte [apt_label], 0
+    mov edi, apt_url
     mov byte [edi], 0
-    mov esi, pkg_suffix
-    mov edi, apt_path
+    push esi
+.slash:
+    mov al, [esi]
+    test al, al
+    jz .not_gh
+    cmp al, '/'
+    je .is_gh
+    inc esi
+    jmp .slash
+.is_gh:
+    pop esi
+    cmp byte [esi], '/'
+    jne .gh_noslash
+    inc esi
+.gh_noslash:
+    push esi
+    mov esi, apt_gh_prefix
     call str_append
-    PRINTF `Downloading \x01w%s\x01n from %s ...\n`, dword [argv + 8], apt_repo_host
-    mov eax, [apt_repo_ip]
-    mov bx, [apt_repo_port]
-    mov esi, apt_repo_host
-    mov edi, apt_path
-    call http_get
-    jc .dl_fail
+    pop esi
+    call str_append
+    mov esi, apt_gh_suffix
+    call str_append
+    jmp .fetch
+.not_gh:
+    pop esi
+    mov esi, apt_repo_url
+    call str_append
+    mov esi, apt_slash
+    call str_append
+    mov esi, [apt_arg]
+    call str_append
+    mov esi, pkg_suffix
+    call str_append
+.fetch:
+    PRINTF `Downloading \x01w%s\x01n\n  from %s\n`, dword [apt_arg], apt_url
+    mov esi, apt_url
+    call url_fetch
+    jc .fail
     cmp dword [http_status], 200
     je .got
-    cmp dword [http_status], 0
-    jne .http_err
+    cmp dword [http_status], 404
+    je .missing
+    PRINTF `\x01rerror:\x01n the server answered HTTP %d.\n`, dword [http_status]
+    ret
+.missing:
+    PRINTF `\x01rerror:\x01n there is no package called '%s' there (HTTP 404).\n`, dword [apt_arg]
+    ret
 .got:
+    mov esi, str_secure_tls
+    cmp byte [url_scheme], 1
+    je .sec
+    mov esi, str_secure_http
+.sec:
+    PRINTF `  (%s)\n`, esi
     call pkg_install
     ret
-.neterr:
-    PRINTF `\x01rCould not connect:\x01n %s\n`, esi
+.fail:
+    PRINTF `\x01rerror:\x01n %s\n`, dword [url_err]
     ret
-.resolve_fail:
-    PRINTF `\x01rerror:\x01n could not find the server '\x01w%s\x01n'.\n`, apt_repo_host
+
+apt_protected_name:
+    pushad
+    mov ebx, apt_protected
+.l: mov edi, [ebx]
+    test edi, edi
+    jz .check_inst
+    call str_icmp
+    je .yes
+    add ebx, 4
+    jmp .l
+.check_inst:
+    call ends_with_inst
+    jnc .yes
+    popad
+    clc
     ret
-.dl_fail:
-    PRINTF `\x01rerror:\x01n could not reach the package server.\n`
+.yes:
+    popad
+    stc
     ret
-.http_err:
-    PRINTF `\x01rerror:\x01n the server answered HTTP %d (is the package name right?).\n`, dword [http_status]
+
+apt_set_label:
+    pushad
+    mov edi, apt_label
+    xor ecx, ecx
+.l: mov al, [esi]
+    test al, al
+    jz .done
+    cmp al, ' '
+    je .done
+    cmp ecx, 14
+    jae .done
+    call to_lower
+    cmp al, 'a'
+    jb .not_letter
+    cmp al, 'z'
+    jbe .ok
+.not_letter:
+    cmp al, '0'
+    jb .other
+    cmp al, '9'
+    jbe .ok
+.other:
+    cmp al, '.'
+    je .ok
+    cmp al, '-'
+    je .ok
+    mov al, '_'
+.ok:
+    mov [edi + ecx], al
+    inc ecx
+    inc esi
+    jmp .l
+.done:
+    mov byte [edi + ecx], 0
+    popad
     ret
 
 pkg_install:
@@ -236,14 +322,25 @@ pkg_install:
     call str_iprefix
     jne .bad
     mov dword [apt_installed], 0
+    mov dword [apt_skipped], 0
     mov eax, PKG_BUF
     mov [pkg_parse_ptr], eax
-    mov eax, PKG_BUF
     add eax, [pkg_len]
     mov [pkg_parse_end], eax
 .lines:
     call pkg_next_line
     jc .finish
+    push esi
+    mov edi, esi
+    mov esi, tag_name
+    call str_iprefix
+    pop esi
+    jne .not_name
+    add esi, 5
+    call skip_spaces
+    call apt_set_label
+    jmp .lines
+.not_name:
     push esi
     mov edi, esi
     mov esi, tag_file
@@ -263,7 +360,16 @@ pkg_install:
     mov edx, [pkg_parse_ptr]
     add eax, [pkg_parse_ptr]
     inc eax
+    cmp eax, [pkg_parse_end]
+    ja .bad
     mov [pkg_parse_ptr], eax
+    mov esi, apt_pkg_name
+    call apt_protected_name
+    jnc .write
+    inc dword [apt_skipped]
+    PRINTF `  \x01yskipped\x01n %s (packages may not replace MOOS settings)\n`, apt_pkg_name
+    jmp .lines
+.write:
     push ecx
     push edx
     mov esi, apt_pkg_name
@@ -275,17 +381,35 @@ pkg_install:
     PRINTF `  installed \x01c%s\x01n (%d bytes)\n`, apt_pkg_name, ecx
     jmp .lines
 .finish:
-    mov esi, [argv + 8]
+    cmp byte [apt_label], 0
+    jne .have_label
+    mov esi, [apt_arg]
+    mov eax, esi
+.last:
+    mov dl, [esi]
+    test dl, dl
+    jz .last_done
+    inc esi
+    cmp dl, '/'
+    jne .last
+    mov eax, esi
+    jmp .last
+.last_done:
+    mov esi, eax
+    call apt_set_label
+.have_label:
+    mov esi, apt_label
     mov edi, apt_pkg_name
     call str_copy
     mov esi, inst_suffix
     mov edi, apt_pkg_name
     call str_append
+    mov esi, apt_url
+    call str_len
     mov esi, apt_pkg_name
-    mov edx, apt_repo_host
-    mov ecx, 1
+    mov edx, apt_url
     call fs_save
-    PRINTF `\x01gDone.\x01n Installed %d file(s).\n`, dword [apt_installed]
+    PRINTF `\x01gDone.\x01n Installed \x01w%s\x01n: %d file(s).\n`, apt_label, dword [apt_installed]
     ret
 .bad:
     PRINTF `\x01rerror:\x01n that does not look like a MOOS package.\n`
@@ -332,21 +456,29 @@ pkg_next_line:
 
 pkg_copy_word:
     push edi
+    push ecx
+    xor ecx, ecx
 .l: mov al, [esi]
     test al, al
     jz .e
     cmp al, ' '
     je .e
+    cmp ecx, 60
+    jae .skip
     mov [edi], al
     inc edi
+    inc ecx
+.skip:
     inc esi
     jmp .l
 .e: mov byte [edi], 0
+    pop ecx
     pop edi
     ret
 
 ends_with_inst:
     push esi
+    push edi
     push ecx
     call str_len
     cmp ecx, 5
@@ -357,15 +489,13 @@ ends_with_inst:
     call str_icmp
     jne .no
     pop ecx
+    pop edi
     pop esi
     clc
     ret
 .no:
     pop ecx
+    pop edi
     pop esi
     stc
     ret
-
-section .data
-pkg_suffix  db ".pkg", 0
-section .text

@@ -5,6 +5,7 @@ str_status  db "status", 0
 str_test    db "test", 0
 str_dns     db "dns", 0
 str_http    db "http", 0
+str_selftest db "selftest", 0
 
 section .text
 
@@ -47,6 +48,9 @@ cmd_net:
     mov edi, str_http
     call str_icmp
     je .http
+    mov edi, str_selftest
+    call str_icmp
+    je .selftest
 .status:
     cmp byte [net_up], 0
     je .not_up
@@ -169,6 +173,9 @@ cmd_net:
     ret
 .http_fail:
     PRINTF `\x01rCould not connect to the server.\x01n\n`
+    ret
+.selftest:
+    call crypto_selftest
     ret
 .http_usage:
     PRINTF `Usage: net http <ip> <port> <path>   (example: net http 10.0.2.2 8000 /hi.txt)\n`

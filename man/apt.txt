@@ -1,45 +1,63 @@
 NAME
-    apt - the MOOS package manager
+    apt - the MOOS package manager (installs from GitHub over HTTPS)
 
 SYNOPSIS
     apt install <name>
+    apt install /user/repo
     apt remove <name>
     apt list
-    apt repo [host]
+    apt repo [url | github]
 
 DESCRIPTION
-    apt downloads a package over the network and installs the files inside
-    it onto the disk. A package is a single file, <name>.pkg, on an HTTP
-    server (the "package server" or "repo").
+    apt downloads a package and installs the files inside it onto the disk.
+    A package is a single file, <name>.pkg.
 
-    apt install <name>   download <name>.pkg from the server and install it
-    apt remove <name>    forget an installed package (its files stay)
-    apt list             show which packages are installed
-    apt repo [host]      show the package server, or set it
+    apt install <name>
+        Install a package from the package repository. By default that is
+        the packages/ folder of the MOOS repository on GitHub:
+          https://raw.githubusercontent.com/treedev10/moos/HEAD/packages
+        so  apt install desktop  fetches .../packages/desktop.pkg.
 
-    The GUI desktop is a package:  apt install desktop
+    apt install /user/repo
+        Install the package published in the GitHub repository user/repo:
+        apt fetches the file moos.pkg at the top of that repository.
+        Example:  apt install /treedev10/moos   (some demo scripts)
 
-THE PACKAGE SERVER
-    By default the server is 10.0.2.2:8000 (the computer that hosts QEMU,
-    handy during development). Point it at your own HTTP server with:
+    apt remove <name>     forget an installed package (its files stay)
+    apt list              show installed packages and where they came from
+    apt repo              show the package repository
+    apt repo <url>        use another repository (http:// or https://)
+    apt repo github       go back to the default GitHub repository
 
-        apt repo myserver.example.com
-        apt repo 192.168.1.10:8080
+    Available from the default repository: desktop (the graphical desktop,
+    see man gui), hello (a tiny example) and demos (example scripts).
 
-    GitHub itself cannot be used directly because it serves over HTTPS,
-    which MOOS does not do. Host the .pkg files on a plain-HTTP server, or
-    an HTTP mirror of your GitHub repo. "apt install /user/repo" fetches
-    /user/repo.pkg, so a GitHub-style path layout works behind a mirror.
+SECURITY
+    Downloads from GitHub use HTTPS (TLS 1.3). MOOS checks GitHub's
+    certificate before it trusts anything it receives: the chain must lead to
+    a root certificate built into MOOS, the name must match, the dates must
+    be valid, and the server must prove it holds the key. If any check
+    fails, nothing is installed. (See man get for the details.)
+
+    A package can only write ordinary files. It cannot replace MOOS's own
+    settings (apt.repo, login.cfg, clock.cfg) or the .inst marker files -
+    such entries are skipped with a warning. Packages contain scripts and
+    data; nothing in a package runs until you run it yourself.
+
+    Plain http:// repositories are not encrypted or checked. Use them only
+    on a network you trust (for example a test server on your own PC).
 
 MESSAGES
-    the server answered HTTP 404
-        There is no package with that name on the server.
+    there is no package called 'X' there (HTTP 404)
+        The repository has no X.pkg (or the GitHub repo has no moos.pkg).
 
-    could not find the server
-        The repo host name could not be looked up. Check  apt repo  and
-        that the network is up ( net status ).
+    a certificate is not valid now
+        Check the clock (clock sync), then try again.
 
-MAKING A PACKAGE
+    could not find that server
+        The name could not be looked up. Check net status.
+
+MAKING AND PUBLISHING A PACKAGE
     A package is plain text:
 
         MOOSPKG 1
@@ -49,16 +67,14 @@ MAKING A PACKAGE
         print "hello, world"
         @end
 
-    After "MOOSPKG 1" come any "name:" / "desc:" lines, then one or more
-    file sections. Each "@file <name> <size>" line is followed by exactly
-    <size> bytes of that file, then a newline. "@end" finishes.
+    "MOOSPKG 1" first, then optional "name:" and "desc:" lines, then one
+    "@file <name> <size>" line per file followed by exactly <size> bytes and
+    a newline, then "@end". Files follow the MOOS limits: names of 1-19
+    characters, at most 4096 bytes each.
 
-    The helper  tools/mkpkg.py  builds a .pkg from a folder of files:
-
-        python tools/mkpkg.py hello hello.ms > hello.pkg
-
-    Put the .pkg on your HTTP server and it can be installed. See
-    PACKAGES.md in the MOOS source for the full guide.
+    Build one with  tools/mkpkg.py , commit it to a GitHub repository as
+    moos.pkg, and anyone can install it with  apt install /you/yourrepo .
+    PACKAGES.md in the MOOS source has the full step-by-step guide.
 
 SEE ALSO
-    net, run, script, ls
+    get, net, gui, script, run

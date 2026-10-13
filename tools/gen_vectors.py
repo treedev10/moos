@@ -44,6 +44,8 @@ def main():
     pat = bytes(i * 7 & 0xFF for i in range(200))
     v.append(("tv_pat", pat))
     v.append(("tv_sha_pat", hashlib.sha256(pat).digest()))
+    v.append(("tv_sha384_abc", hashlib.sha384(b"abc").digest()))
+    v.append(("tv_sha512_pat", hashlib.sha512(pat).digest()))
     v.append(("tv_hmac_key", b"\x0b" * 20))
     v.append(("tv_hmac_msg", b"Hi There"))
     v.append(("tv_hmac_out", hmac.new(b"\x0b" * 20, b"Hi There", hashlib.sha256).digest()))
@@ -87,6 +89,8 @@ def main():
     sig15 = key.sign(msg, padding.PKCS1v15(), hashes.SHA256())
     sigpss = key.sign(msg, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
                       hashes.SHA256())
+    sig384 = key.sign(msg, padding.PKCS1v15(), hashes.SHA384())
+    v += [("tv_rsa_sig384", sig384), ("tv_rsa_mhash384", hashlib.sha384(msg).digest())]
     v += [("tv_rsa_n", pub_n), ("tv_rsa_msg", msg), ("tv_rsa_sig15", sig15),
           ("tv_rsa_sigpss", sigpss), ("tv_rsa_mhash", hashlib.sha256(msg).digest())]
     # raw modular exponentiation check: s^65537 mod n

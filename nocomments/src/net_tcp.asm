@@ -23,6 +23,16 @@ pkg_len         resd 1
 http_status     resd 1
 http_date       resb 40
 tcp_pseudo      resb 12
+alignb 4
+tcp_dst         resd 1
+tcp_dst_len     resd 1
+tcp_dst_cap     resd 1
+tcp_origlen     resd 1
+tcp_closed      resb 1
+tcp_fin_sent    resb 1
+alignb 4
+hc_hdr_end      resd 1
+hc_clen         resd 1
 
 section .text
 
@@ -187,6 +197,8 @@ tcp_connect:
     rdtsc
     mov [tcp_snd_nxt], eax
     mov dword [tcp_rcv_nxt], 0
+    mov byte [tcp_closed], 0
+    mov byte [tcp_fin_sent], 0
     mov al, TCP_SYN
     xor ecx, ecx
     call tcp_send_seg
@@ -216,60 +228,199 @@ tcp_connect:
     ret
 
 tcp_send_all:
-    push eax
+    pushad
+.l: test ecx, ecx
+    jz .done
+    mov edx, ecx
+    cmp edx, 536
+    jbe .n
+    mov edx, 536
+.n: push ecx
+    mov ecx, edx
     mov al, TCP_PSH | TCP_ACK
     call tcp_send_seg
     add [tcp_snd_nxt], ecx
-    pop eax
+    pop ecx
+    add esi, edx
+    sub ecx, edx
+    jmp .l
+.done:
+    popad
     ret
 
-tcp_recv_all:
+tcp_set_dst:
+    mov [tcp_dst], edi
+    mov [tcp_dst_cap], ecx
+    mov dword [tcp_dst_len], 0
+    ret
+
+tcp_pump:
     pushad
-    mov dword [pkg_len], 0
-.loop:
-    mov eax, [ticks]
-    add eax, 500
     call tcp_wait
-    jc .done
+    jc .timeout
     test byte [tcp_rx_flags], TCP_RST
-    jnz .done
+    jnz .rst
+    mov [tcp_origlen], ecx
     jecxz .check_fin
     mov eax, [tcp_rx_seq]
     cmp eax, [tcp_rcv_nxt]
     jne .reack
-    mov edi, [pkg_len]
-    mov ebx, PKG_BUF_SIZE - 1
+    mov edi, [tcp_dst_len]
+    mov ebx, [tcp_dst_cap]
     sub ebx, edi
     cmp ecx, ebx
     jbe .fits
     mov ecx, ebx
 .fits:
     add [tcp_rcv_nxt], ecx
-    push ecx
-    lea edi, [PKG_BUF + edi]
+    add [tcp_dst_len], ecx
+    add edi, [tcp_dst]
     rep movsb
-    pop ecx
-    add [pkg_len], ecx
 .reack:
     mov al, TCP_ACK
     xor ecx, ecx
     call tcp_send_seg
 .check_fin:
     test byte [tcp_rx_flags], TCP_FIN
-    jz .loop
+    jz .ok
+    mov eax, [tcp_rx_seq]
+    add eax, [tcp_origlen]
+    cmp eax, [tcp_rcv_nxt]
+    jne .ok
     inc dword [tcp_rcv_nxt]
     mov al, TCP_ACK
     xor ecx, ecx
     call tcp_send_seg
+    mov byte [tcp_closed], 1
+    call tcp_close
+.ok:
+    popad
+    clc
+    ret
+.rst:
+    mov byte [tcp_closed], 1
+    mov byte [tcp_fin_sent], 1
+    popad
+    clc
+    ret
+.timeout:
+    popad
+    stc
+    ret
+
+tcp_close:
+    cmp byte [tcp_fin_sent], 0
+    jne .r
+    pushad
+    mov byte [tcp_fin_sent], 1
     mov al, TCP_FIN | TCP_ACK
     xor ecx, ecx
     call tcp_send_seg
     inc dword [tcp_snd_nxt]
+    popad
+.r: ret
+
+tcp_recv_all:
+    pushad
+    mov edi, PKG_BUF
+    mov ecx, PKG_BUF_SIZE - 1
+    call tcp_set_dst
+    call http_complete_reset
+.loop:
+    mov eax, [ticks]
+    add eax, 500
+    call tcp_pump
+    jc .done
+    mov esi, PKG_BUF
+    mov ecx, [tcp_dst_len]
+    call http_is_complete
+    jnc .done
+    cmp byte [tcp_closed], 0
+    je .loop
 .done:
-    mov edi, [pkg_len]
+    call tcp_close
+    mov edi, [tcp_dst_len]
+    mov [pkg_len], edi
     mov byte [PKG_BUF + edi], 0
     popad
     ret
+
+http_complete_reset:
+    mov dword [hc_hdr_end], 0
+    mov dword [hc_clen], -1
+    ret
+
+http_is_complete:
+    pushad
+    cmp dword [hc_hdr_end], 0
+    jne .have_hdr
+    xor ebx, ebx
+.find:
+    lea eax, [ebx + 4]
+    cmp eax, ecx
+    ja .no
+    cmp dword [esi + ebx], 0x0A0D0A0D
+    je .found
+    inc ebx
+    jmp .find
+.found:
+    add ebx, 4
+    mov [hc_hdr_end], ebx
+    mov edi, esi
+    lea edx, [esi + ebx]
+.line:
+    cmp edi, edx
+    jae .have_hdr
+    push esi
+    mov esi, edi
+    push edi
+    mov edi, hc_cl_name
+    call line_prefix_ci
+    mov eax, esi
+    pop edi
+    pop esi
+    jc .next_line
+.num:
+    cmp byte [eax], ' '
+    jne .digits
+    inc eax
+    jmp .num
+.digits:
+    push esi
+    mov esi, eax
+    call parse_uint_partial
+    pop esi
+    jc .next_line
+    mov [hc_clen], eax
+    jmp .have_hdr
+.next_line:
+    cmp edi, edx
+    jae .have_hdr
+    cmp byte [edi], 10
+    je .nl
+    inc edi
+    jmp .next_line
+.nl:
+    inc edi
+    jmp .line
+.have_hdr:
+    mov eax, [hc_clen]
+    cmp eax, -1
+    je .no
+    add eax, [hc_hdr_end]
+    cmp ecx, eax
+    jb .no
+    popad
+    clc
+    ret
+.no:
+    popad
+    stc
+    ret
+
+section .data
+hc_cl_name  db "content-length:", 0
+section .text
 
 http_get:
     pushad

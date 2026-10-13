@@ -34,11 +34,16 @@ rsa_nlen    resd 1
 rsa_mgfin   resb 36
 rsa_mprime  resb 72
 rsa_hash    resb 32
+rsa_pfx     resd 1
 
 section .data
 ; DER DigestInfo prefix for SHA-256 (PKCS#1 v1.5)
 pkcs1_sha256 db 0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
              db 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
+pkcs1_sha384 db 0x30, 0x41, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
+             db 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30
+pkcs1_sha512 db 0x30, 0x51, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01
+             db 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40
 
 section .text
 
@@ -325,21 +330,34 @@ rsa_public:
     xor eax, eax
     CLEAVE
 
-; rsa_pkcs1_verify(n, nlen, e, sig, siglen, hash32) -> EAX = 1 if valid
+; rsa_pkcs1_verify(n, nlen, e, sig, siglen, hash, hashlen) -> EAX = 1 if
+; valid. hashlen 32 / 48 / 64 = SHA-256 / SHA-384 / SHA-512.
 rsa_pkcs1_verify:
     CENTER
+    mov eax, ARG(6)                 ; the DigestInfo prefix for this hash
+    mov edi, pkcs1_sha256
+    cmp eax, 32
+    je .pfx
+    mov edi, pkcs1_sha384
+    cmp eax, 48
+    je .pfx
+    mov edi, pkcs1_sha512
+    cmp eax, 64
+    jne .bad
+.pfx:
+    mov [rsa_pfx], edi
     CCALL rsa_public, rsa_em, dword ARG(3), dword ARG(4), dword ARG(0), dword ARG(1), dword ARG(2)
     test eax, eax
     jz .bad
-    mov ecx, [rsa_nlen]
-    cmp ecx, 3 + 8 + 19 + 32
-    jb .bad
+    mov ebx, [rsa_nlen]             ; 00 01 FF..FF 00 DigestInfo hash
+    sub ebx, 3 + 19
+    sub ebx, ARG(6)                 ; EBX = number of FF bytes
+    cmp ebx, 8
+    jl .bad
     cmp byte [rsa_em], 0
     jne .bad
     cmp byte [rsa_em + 1], 1
     jne .bad
-    mov ebx, ecx                    ; padding runs from 2 to k-53
-    sub ebx, 3 + 19 + 32
     mov esi, rsa_em + 2
 .ff:
     cmp byte [esi], 0xFF
@@ -351,12 +369,12 @@ rsa_pkcs1_verify:
     jne .bad
     inc esi
     push esi
-    CCALL c_memeq, esi, pkcs1_sha256, 19
+    CCALL c_memeq, esi, dword [rsa_pfx], 19
     pop esi
     test eax, eax
     jz .bad
     add esi, 19
-    CCALL c_memeq, esi, dword ARG(5), 32
+    CCALL c_memeq, esi, dword ARG(5), dword ARG(6)
     CLEAVE
 .bad:
     xor eax, eax
@@ -497,6 +515,7 @@ sn_rsa1     db "RSA s^e mod n", 0
 sn_rsa2     db "RSA PKCS#1 v1.5 verify", 0
 sn_rsa3     db "RSA-PSS verify", 0
 sn_rsa4     db "RSA-PSS rejects bad hash", 0
+sn_rsa5     db "RSA PKCS#1 + SHA-384", 0
 section .text
 
 ; rsa_selftest: part of "net selftest"
@@ -504,8 +523,10 @@ rsa_selftest:
     CENTER
     CCALL rsa_public, st_out, tv_rsa_sig15, tv_rsa_sig15_len, tv_rsa_n, tv_rsa_n_len, 65537
     CCALL st_report, sn_rsa1, st_out, tv_rsa_pow, tv_rsa_pow_len
-    CCALL rsa_pkcs1_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sig15, tv_rsa_sig15_len, tv_rsa_mhash
+    CCALL rsa_pkcs1_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sig15, tv_rsa_sig15_len, tv_rsa_mhash, 32
     CCALL st_flag, sn_rsa2, eax
+    CCALL rsa_pkcs1_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sig384, tv_rsa_sig384_len, tv_rsa_mhash384, 48
+    CCALL st_flag, sn_rsa5, eax
     CCALL rsa_pss_verify, tv_rsa_n, tv_rsa_n_len, 65537, tv_rsa_sigpss, tv_rsa_sigpss_len, tv_rsa_mhash
     CCALL st_flag, sn_rsa3, eax
     CCALL c_memcpy, st_rsabad, tv_rsa_mhash, 32

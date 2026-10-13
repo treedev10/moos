@@ -1,18 +1,20 @@
 # MOOS — Mightily Optimized Operating System
 
 A small operating system written from scratch in x86 assembly. It is **not** Linux, DOS or
-anything else: the boot loader, UEFI loader, drivers, file system, networking stack, shell,
-text editor, package manager, scripting language, graphical desktop and installer are all
-original code. The whole system, with a full manual for every command, is about **130 KB**.
+anything else: the boot loader, UEFI loader, drivers, file system, networking stack, **HTTPS
+(TLS 1.3) and certificate checking**, shell, text editor, package manager, scripting
+language, graphical desktop and installer are all original code. The whole system, with a
+full manual for every command, is about **200 KB**.
 
 It starts on **modern UEFI PCs**, without legacy/CSM mode, on graphics-only screens with USB
 keyboards and NVMe SSDs. It also starts on **old BIOS PCs**, and it can **install itself**
 onto a computer's disk.
 
-**New since the first version:** networking (DHCP/DNS/TCP/HTTP over an RTL8139 card),
-internet clock sync, an `apt` package manager (HTTP), a `run` scripting language, a graphical
-desktop (`gui`) with a moose wallpaper and apps, and an optional sign-in screen. See
-[handoff.md](handoff.md) for the full picture.
+**New since the first version:** networking (DHCP/DNS/TCP over an RTL8139 card), **HTTPS**
+with MOOS's own TLS 1.3 and X.509 code, an `apt` package manager that installs **straight from
+GitHub** (`apt install /user/repo`), internet clock sync, a `run` scripting language, a
+graphical desktop (`gui`) with a low-poly stag wallpaper and apps, and an optional sign-in
+screen. See [handoff.md](handoff.md) for the full picture.
 
 ```
 moos> help
@@ -80,11 +82,11 @@ inside MOOS.
 | Files | Tools | Net & system |
 |---|---|---|
 | `ls` list files | `edit` full-screen editor | `net` connect to the network |
-| `cat` show a file | `calc` integer calculator | `apt` install packages (HTTP) |
-| `write`, `append` | `run` run a MOOS script | `clock` 12/24h, colour, internet sync |
+| `cat` show a file | `calc` integer calculator | `apt` install packages (GitHub) |
+| `write`, `append` | `run` run a MOOS script | `get` download (HTTPS) |
 | `rm` delete (asks first) | `echo` print / save a line | `gui` graphical desktop (UEFI) |
 | `rename`, `copy` | `color` colours and themes | `login` optional sign-in |
-| `find` search in files | `help`, `man` | `time`, `uptime`, `mem`, `sysinfo` |
+| `find` search in files | `help`, `man` | `time`, `clock`, `uptime`, `mem`, `sysinfo` |
 | `wc`, `hexdump` | `clear` | `install`, `format`, `reboot`, `shutdown` |
 
 Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, `grep`, `cls`,
@@ -94,12 +96,18 @@ Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, 
 
 - **Networking** (`net up`): an RTL8139 driver with DHCP, DNS, UDP and a small TCP/HTTP
   client — all written from scratch. `clock sync` sets the time from the internet.
-- **Packages** (`apt install <name>`): downloads a `.pkg` over plain HTTP and installs its
-  files. Host your own repo with any HTTP server; `tools/mkpkg.py` builds packages. (No
-  HTTPS, so not directly from github.com — see [handoff.md](handoff.md).)
+- **HTTPS** (`get https://...`): a TLS 1.3 client (X25519, AES-128-GCM, SHA-256/384/512)
+  that checks the server's certificate chain against built-in root certificates, the site
+  name, the dates, and the server's signature — and refuses the connection if anything is
+  wrong. `net selftest` checks the crypto against known answers.
+- **Packages from GitHub**: `apt install desktop` installs from this repo's `packages/`
+  folder, and `apt install /user/repo` installs the `moos.pkg` from any GitHub repository —
+  over checked HTTPS. Publishing a package is just committing a `moos.pkg`; see
+  [PACKAGES.md](PACKAGES.md).
 - **Scripting** (`run file.ms`): variables, `if/else`, `while`, `print`, and expressions.
 - **Desktop** (`apt install desktop`, then `gui`): a low-poly moose wallpaper, a taskbar,
-  a mouse, and windowed apps — Terminal, Text Editor, Script IDE, and a Browser. UEFI only.
+  a mouse, and windowed apps — Terminal, Text Editor, Script IDE, an HTTPS Browser, and
+  Settings. UEFI only.
 
 ## How it works
 

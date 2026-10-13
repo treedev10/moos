@@ -18,6 +18,7 @@ st_ehash    resb 32
 st_rk       resb 176
 st_gcm      resb GCM_CTX
 st_ctx      resb SHA_CTX
+st_ctx5     resb S5_CTX
 st_r1       resb 32
 st_r2       resb 32
 
@@ -93,6 +94,8 @@ sn_gcm4     db "AES-GCM rejects tampering", 0
 sn_x1       db "X25519 (RFC 7748)", 0
 sn_x2       db "X25519 public key", 0
 sn_rng      db "random numbers differ", 0
+sn_sha384   db "SHA-384 (abc)", 0
+sn_sha512   db "SHA-512 (multi-part)", 0
 section .text
 
 ; crypto_selftest: run everything, print a summary
@@ -108,6 +111,13 @@ crypto_selftest:
     CCALL sha256_update, st_ctx, tv_pat + 70, tv_pat_len - 70
     CCALL sha256_final, st_ctx, st_out
     CCALL st_report, sn_sha2, st_out, tv_sha_pat, 32
+    CCALL sha384, tv_abc, tv_abc_len, st_out
+    CCALL st_report, sn_sha384, st_out, tv_sha384_abc, 48
+    CCALL sha512_init, st_ctx5, 64
+    CCALL sha512_update, st_ctx5, tv_pat, 150
+    CCALL sha512_update, st_ctx5, tv_pat + 150, tv_pat_len - 150
+    CCALL sha512_final, st_ctx5, st_out
+    CCALL st_report, sn_sha512, st_out, tv_sha512_pat, 64
     ; HMAC
     CCALL hmac_sha256, tv_hmac_key, tv_hmac_key_len, tv_hmac_msg, tv_hmac_msg_len, st_out
     CCALL st_report, sn_hmac1, st_out, tv_hmac_out, 32

@@ -31,7 +31,7 @@ ide_file     db "script.ms", 0
 edit_file    db "notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
 edit_hint    db "Ctrl+S = Save", 0
-brow_hint    db "Type a URL and press Enter:  http://10.0.2.2:8000/hi.txt", 0
+brow_hint    db "Type a URL, then Enter:  https://raw.githubusercontent.com/treedev10/moos/HEAD/README.md", 0
 bl_edit      db "edit", 0
 bl_write     db "write", 0
 bl_append    db "append", 0
@@ -453,142 +453,52 @@ brow_key:
 
 brow_go:
     pushad
-    cmp byte [net_up], 0
-    jne .have_net
-    call net_up_bring
-    jc .neterr
-.have_net:
-    call brow_parse
-    jc .badurl
     mov dword [term_log_len], 0
-    mov eax, [brow_ip]
-    mov bx, [brow_port]
-    mov esi, brow_host
-    mov edi, brow_path
-    call http_get
+    mov byte [url_insecure], 0
+    mov esi, brow_url
+    call url_fetch
     jc .failed
-
-    mov esi, PKG_BUF
-    mov ecx, [pkg_len]
-    cmp ecx, GUI_LOG - 1
-    jb .cok
-    mov ecx, GUI_LOG - 1
-.cok:
-    mov edi, term_log
-    call mem_copy
-    mov [term_log_len], ecx
-    popad
-    ret
-.neterr:
-    mov esi, brow_e_net
-    jmp .msg
-.badurl:
-    mov esi, brow_e_url
-    jmp .msg
-.failed:
-    mov esi, brow_e_fail
-.msg:
+    mov esi, brow_s_https
+    cmp byte [url_scheme], 1
+    je .st
+    mov esi, brow_s_http
+.st:
     mov edi, term_log
     call str_copy
+    call str_len
+    mov edi, term_log
+    add edi, ecx
+    mov ebx, ecx
+    mov esi, PKG_BUF
+    mov ecx, [pkg_len]
+    mov eax, GUI_LOG - 2
+    sub eax, ebx
+    cmp ecx, eax
+    jbe .cok
+    mov ecx, eax
+.cok:
+    call mem_copy
+    add ebx, ecx
+    mov [term_log_len], ebx
+    popad
+    ret
+.failed:
+    mov edi, term_log
+    mov esi, brow_e_fail
+    call str_copy
+    mov esi, [url_err]
+    mov edi, term_log
+    call str_append
+    mov esi, term_log
     call str_len
     mov [term_log_len], ecx
     popad
     ret
 
-brow_parse:
-    pushad
-    mov esi, http_scheme
-    mov edi, brow_url
-    call str_iprefix
-    mov esi, brow_url
-    jne .no_scheme
-    add esi, 7
-.no_scheme:
-    mov edi, brow_host
-.h: mov al, [esi]
-    test al, al
-    jz .host_done
-    cmp al, ':'
-    je .port
-    cmp al, '/'
-    je .host_done
-    mov [edi], al
-    inc edi
-    inc esi
-    jmp .h
-.port:
-    mov byte [edi], 0
-    inc esi
-    push esi
-    call parse_uint_from
-    mov [brow_port], ax
-    pop esi
-.skipport:
-    mov al, [esi]
-    cmp al, '/'
-    je .path
-    test al, al
-    jz .host_done2
-    inc esi
-    jmp .skipport
-.host_done:
-    mov byte [edi], 0
-    mov word [brow_port], 80
-.path:
-    mov edi, brow_path
-    cmp byte [esi], 0
-    jne .copypath
-    mov byte [edi], '/'
-    mov byte [edi + 1], 0
-    jmp .resolve
-.copypath:
-    call str_copy
-    jmp .resolve
-.host_done2:
-    mov byte [edi], 0
-    mov edi, brow_path
-    mov byte [edi], '/'
-    mov byte [edi + 1], 0
-.resolve:
-    cmp byte [brow_host], 0
-    je .bad
-    mov esi, brow_host
-    call dns_resolve
-    jc .bad
-    mov [brow_ip], eax
-    popad
-    clc
-    ret
-.bad:
-    popad
-    stc
-    ret
-
-parse_uint_from:
-    push ebx
-    xor eax, eax
-.l: movzx ebx, byte [esi]
-    sub bl, '0'
-    cmp bl, 9
-    ja .e
-    imul eax, 10
-    add eax, ebx
-    inc esi
-    jmp .l
-.e: pop ebx
-    ret
-
 section .data
-http_scheme db "http://", 0
-brow_e_net  db "Could not connect to the network.", 0
-brow_e_url  db "Bad URL. Use  http://host[:port]/path", 0
-brow_e_fail db "Could not load that page.", 0
-section .bss
-alignb 4
-brow_ip     resd 1
-brow_port   resw 1
-brow_host   resb 64
-brow_path   resb 128
+brow_s_https db "[ HTTPS - TLS 1.3, certificate checked ]", 10, 10, 0
+brow_s_http  db "[ plain HTTP - not encrypted ]", 10, 10, 0
+brow_e_fail  db "Could not load that page: ", 0
 section .text
 
 section .bss

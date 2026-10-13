@@ -18,10 +18,12 @@ org KORG
 %define NET_BUF      KV(0x220000)
 %define PKG_BUF      KV(0x230000)
 %define GUI_BB       KV(0x2B0000)
+%define NET_RING     KV(0x7B0000)
+%define TLS_BASE     KV(0x7C0000)
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
 PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x7B0000 - 0x10000
+KMEM_SIZE    equ 0x7E0000 - 0x10000
 
 VGA_MEM      equ screen_buf
 SCR_COLS     equ 80
@@ -118,6 +120,15 @@ zero_bss:
 %include "src/ata.asm"
 %include "src/fs.asm"
 %include "src/net.asm"
+%include "src/crypto.asm"
+%include "src/sha512.asm"
+%include "src/aes.asm"
+%include "src/x25519.asm"
+%include "src/rsa.asm"
+%include "src/selftest.asm"
+%include "src/tls.asm"
+%include "src/x509.asm"
+%include "src/url.asm"
 %include "src/readline.asm"
 %include "src/pager.asm"
 %include "src/shell.asm"

@@ -1,43 +1,60 @@
 NAME
-    get - download a web page or file (HTTP or HTTPS)
+    get - download a web page or file (HTTPS or HTTP)
 
 SYNOPSIS
     get <url>
     get <url> <file>
-    get -k <url> [file]
+    get [-k] [-v] <url> [file]
 
 DESCRIPTION
-    get downloads a URL and shows it, or saves it to a file.
+    get downloads a URL and shows it (through the pager), or saves it to a
+    file. Aliases: wget, curl.
 
     get https://raw.githubusercontent.com/treedev10/moos/HEAD/README.md
-        show a file from GitHub (over HTTPS)
+        show a file from GitHub (HTTPS)
     get http://10.0.2.2:8000/hi.txt notes.txt
         save a file from a plain-HTTP server to notes.txt
 
-    URLs may start with https:// (encrypted) or http:// (not encrypted).
-    Without either, http:// is assumed.
+    URLs may start with https:// (encrypted, checked) or http:// (neither).
+    Without either, http:// is assumed. Saved files are limited to 4096
+    bytes, like every MOOS file.
 
-HTTPS
-    MOOS speaks TLS 1.3 itself: X25519 key exchange, AES-128-GCM, and
-    SHA-256. Before trusting a server it checks the certificate the server
-    sends: the chain must lead to one of the root certificates built into
-    MOOS, every certificate must be in date, the name must match, and the
-    server must prove it holds the certificate's key (an RSA-PSS
-    signature). If any check fails, nothing is downloaded.
+    -k  do not check the server's certificate (see below)
+    -v  show each TLS record and handshake message (for debugging)
 
-    MOOS checks RSA certificates (used by Let's Encrypt's RSA chain and
-    many other sites, including raw.githubusercontent.com). Sites that only
-    offer ECDSA certificates (for example github.com itself) cannot be
-    verified yet and are refused.
+HTTPS IN MOOS
+    MOOS speaks TLS 1.3 itself, written from scratch:
+      key exchange    X25519
+      cipher          AES-128-GCM
+      hashes          SHA-256 (and SHA-384 / SHA-512 for certificates)
 
-    -k  skip the certificate check. The connection is still encrypted, but
-        anyone in the middle could pretend to be the server. Use it only for
-        testing, never for software you will run.
+    Before trusting a server, MOOS checks the certificate it sends:
+      - the chain must lead to one of the root certificates built into
+        MOOS (Let's Encrypt, DigiCert, Sectigo, Google, Amazon, GlobalSign,
+        Microsoft, GoDaddy and a few more - RSA roots only)
+      - every certificate that signs another must be marked as a CA
+      - every certificate must be in date (so the clock matters)
+      - the name must match the site (wildcards like *.github.com count)
+      - the server must sign the handshake with the certificate's key
+    If any check fails, the connection is closed and nothing is shown.
+
+    Sites whose certificates use ECDSA keys only (for example Wikipedia)
+    cannot be checked yet and are refused with TLS alert 40.
+
+    -k skips the checks. The data is still encrypted, but anyone in the
+    middle could pretend to be the server - use it only for testing.
+
+    "net selftest" checks the crypto code against known answers.
 
 MESSAGES
-    certificate is not valid now
-        Either the certificate expired or the clock is wrong. Try
-        "clock sync", then try again.
+    a certificate is not valid now (expired, or the clock is wrong)
+        Run "clock sync" (it works without HTTPS), then try again.
+    the certificate is for a different site name
+    the certificate is not from an authority MOOS trusts
+    the server could not prove it owns the certificate
+        Something is wrong with the server - or someone is in the middle.
+    the server sent a TLS alert (alert 40)
+        Usually: the site offers only ECDSA certificates.
 
 SEE ALSO
     apt, net, clock

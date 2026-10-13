@@ -19,7 +19,7 @@
 ; =============================================================================
 X_TBS       equ 0                   ; TBSCertificate (whole TLV)
 X_TBSLEN    equ 4
-X_SIGALG    equ 8                   ; 1 = sha256WithRSAEncryption
+X_SIGALG    equ 8                   ; 1/2/3 = sha256/384/512WithRSAEncryption
 X_SIG       equ 12                  ; signature bytes
 X_SIGLEN    equ 16
 X_ISS       equ 20                  ; issuer Name (whole TLV)
@@ -51,7 +51,7 @@ xc_tbs_end  resd 1
 xc_cert_end resd 1
 xc_ext_end  resd 1
 xc_x        resd 1                      ; struct being filled
-xc_hash     resb 32
+xc_hash     resb 64
 xc_now      resb 16
 xc_cvbuf    resb 64 + 34 + 32
 xc_found    resd 1
@@ -62,6 +62,8 @@ xr_roots:   incbin "src/roots.bin"
 ; OIDs: length byte, then the encoded OID
 oid_rsa         db 9, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01
 oid_sha256rsa   db 9, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B
+oid_sha384rsa   db 9, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C
+oid_sha512rsa   db 9, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D
 oid_ecpub       db 7, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01
 oid_basic       db 3, 0x55, 0x1D, 0x13
 oid_san         db 3, 0x55, 0x1D, 0x11
@@ -489,8 +491,22 @@ x509_parse:
     mov edi, oid_sha256rsa
     call oid_is
     pop edi
-    jne .sigalg_other
+    jne .not256
     mov dword [edi + X_SIGALG], 1
+.not256:
+    push edi
+    mov edi, oid_sha384rsa
+    call oid_is
+    pop edi
+    jne .not384
+    mov dword [edi + X_SIGALG], 2
+.not384:
+    push edi
+    mov edi, oid_sha512rsa
+    call oid_is
+    pop edi
+    jne .sigalg_other
+    mov dword [edi + X_SIGALG], 3
 .sigalg_other:
     mov esi, ebx
     mov ah, 0x03                    ; signatureValue BIT STRING
@@ -725,13 +741,18 @@ x_check_sig:
     mov ebx, ARG(0)
     mov esi, ARG(1)
     xor eax, eax
-    cmp dword [ebx + X_SIGALG], 1
-    jne .alg
+    mov edi, [ebx + X_SIGALG]       ; 1/2/3 -> hash of 32/48/64 bytes
+    cmp edi, 1
+    jb .alg
+    cmp edi, 3
+    ja .alg
     cmp dword [esi + X_KEYT], 1
     jne .alg
-    CCALL sha256, dword [ebx + X_TBS], dword [ebx + X_TBSLEN], xc_hash
+    shl edi, 4
+    add edi, 16
+    CCALL hash_by_len, dword [ebx + X_TBS], dword [ebx + X_TBSLEN], xc_hash, edi
     mov esi, ARG(1)
-    CCALL rsa_pkcs1_verify, dword [esi + X_N], dword [esi + X_NLEN], dword [esi + X_E], dword [ebx + X_SIG], dword [ebx + X_SIGLEN], xc_hash
+    CCALL rsa_pkcs1_verify, dword [esi + X_N], dword [esi + X_NLEN], dword [esi + X_E], dword [ebx + X_SIG], dword [ebx + X_SIGLEN], xc_hash, edi
     test eax, eax
     jnz .r
     mov dword [tls_err], xe_sig

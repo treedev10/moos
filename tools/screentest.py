@@ -157,7 +157,7 @@ def main():
     port = 45454
     cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
-         '-netdev', 'user,id=n0', '-device', 'rtl8139,netdev=n0',
+         '-cpu', 'max', '-netdev', 'user,id=n0', '-device', 'rtl8139,netdev=n0',
          '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
     if uefi:
         code, vars_file = ovmf_paths()

@@ -41,6 +41,34 @@ def iroot(x, n):
 SHA_K = [iroot(p << 96, 3) & 0xFFFFFFFF for p in primes(64)]
 SHA_IV = [iroot(p << 64, 2) & 0xFFFFFFFF for p in primes(8)]
 
+# SHA-512 family: 64-bit versions (80 constants); SHA-384 uses primes 9..16
+M64 = (1 << 64) - 1
+SHA512_K = [iroot(p << 192, 3) & M64 for p in primes(80)]
+SHA512_IV = [iroot(p << 128, 2) & M64 for p in primes(8)]
+SHA384_IV = [iroot(p << 128, 2) & M64 for p in primes(16)[8:]]
+
+
+def py_sha512(msg, iv, outlen):
+    def ror(x, n):
+        return ((x >> n) | (x << (64 - n))) & M64
+    h = list(iv)
+    ml = len(msg) * 8
+    msg = msg + b"\x80" + b"\0" * ((111 - len(msg)) % 128) + ml.to_bytes(16, "big")
+    for off in range(0, len(msg), 128):
+        w = [int.from_bytes(msg[off + 8 * i: off + 8 * i + 8], "big") for i in range(16)]
+        for i in range(16, 80):
+            s0 = ror(w[i - 15], 1) ^ ror(w[i - 15], 8) ^ (w[i - 15] >> 7)
+            s1 = ror(w[i - 2], 19) ^ ror(w[i - 2], 61) ^ (w[i - 2] >> 6)
+            w.append((w[i - 16] + s0 + w[i - 7] + s1) & M64)
+        a, b, c, d, e, f, g, hh = h
+        for i in range(80):
+            t1 = (hh + (ror(e, 14) ^ ror(e, 18) ^ ror(e, 41)) + ((e & f) ^ (~e & g))
+                  + SHA512_K[i] + w[i]) & M64
+            t2 = ((ror(a, 28) ^ ror(a, 34) ^ ror(a, 39)) + ((a & b) ^ (a & c) ^ (b & c))) & M64
+            a, b, c, d, e, f, g, hh = (t1 + t2) & M64, a, b, c, (d + t1) & M64, e, f, g
+        h = [(x + y) & M64 for x, y in zip(h, [a, b, c, d, e, f, g, hh])]
+    return b"".join(x.to_bytes(8, "big") for x in h)[:outlen]
+
 
 def py_sha256(msg):
     def ror(x, n):
@@ -90,6 +118,8 @@ def aes_sbox():
 def main():
     for m in (b"", b"abc", b"x" * 1000):
         assert py_sha256(m) == hashlib.sha256(m).digest(), "SHA-256 constants wrong"
+        assert py_sha512(m, SHA512_IV, 64) == hashlib.sha512(m).digest(), "SHA-512 constants wrong"
+        assert py_sha512(m, SHA384_IV, 48) == hashlib.sha384(m).digest(), "SHA-384 constants wrong"
     sbox = aes_sbox()
     assert sbox[0x00] == 0x63 and sbox[0x01] == 0x7C and sbox[0x53] == 0xED and sbox[0xFF] == 0x16
 
@@ -100,6 +130,16 @@ def main():
         lines.append("    dd " + ", ".join("0x%08X" % v for v in SHA_K[i:i + 8]))
     lines.append("sha256_iv:")
     lines.append("    dd " + ", ".join("0x%08X" % v for v in SHA_IV))
+    lines.append("align 8")
+    lines.append("sha512_k:")
+    for i in range(0, 80, 4):
+        lines.append("    dq " + ", ".join("0x%016X" % v for v in SHA512_K[i:i + 4]))
+    lines.append("sha512_iv:")
+    for i in range(0, 8, 4):
+        lines.append("    dq " + ", ".join("0x%016X" % v for v in SHA512_IV[i:i + 4]))
+    lines.append("sha384_iv:")
+    for i in range(0, 8, 4):
+        lines.append("    dq " + ", ".join("0x%016X" % v for v in SHA384_IV[i:i + 4]))
     lines.append("aes_sbox:")
     for i in range(0, 256, 16):
         lines.append("    db " + ", ".join("0x%02X" % v for v in sbox[i:i + 16]))
