@@ -34,8 +34,16 @@ each step. The installer and disk persistence were verified across reboots.
   wc, hexdump, echo, calc, run, clear, color, time, clock, net, apt, get, uptime, mem,
   sysinfo, history, login, format, reboot, shutdown, help, man, gui, install. Plus aliases
   (dir, del, nano, grep, wget, curl, …). Every command has a `man` page.
-- **Networking** (`net`): RTL8139 NIC driver (PCI, polled, 32 KB receive ring), Ethernet/ARP,
-  IPv4, UDP, DHCP, DNS, a small TCP client, HTTP GET. `net up/status/test/selftest/http`.
+- **Networking** (`net`): Ethernet/ARP, IPv4, UDP, DHCP, DNS, a small TCP client, HTTP GET.
+  `net up [firmware|native]/status/cards/test/selftest/http`. Network cards, all polled:
+  - **UEFI firmware driver** (`src/nic_snp.asm`): the Simple Network Protocol, so on a UEFI
+    PC any wired card the firmware can network-boot from works. Tried first on UEFI.
+  - **Intel e1000 / e1000e** (`src/nic_e1000.asm`): 8254x, 8257x, I217/I218/I219.
+  - **Realtek RTL8111/8168/8169/810x** (`src/nic_rtl8168.asm`): the common onboard chip.
+    **Untested on real hardware** (no emulator models it).
+  - **Realtek RTL8139** (in `src/net.asm`): QEMU's default.
+  `net cards` scans every PCI bus, lists network devices with IDs and driver status, and
+  on UEFI says whether the firmware offers SNP (and how to enable it if not).
 - **HTTPS** (`get`, and used by `apt` and the Browser): a TLS 1.3 client written from
   scratch — X25519, AES-128-GCM, SHA-256 (+ SHA-384/512 for certificates), HKDF key
   schedule, record layer — plus **X.509 certificate checking**: chain to built-in RSA roots,
@@ -88,7 +96,12 @@ python tools/screentest.py --uefi --drive "-machine q35 ..." ...   # other disk 
 ```
 
 Networking tests use QEMU user-mode networking (added automatically), and QEMU runs with
-`-cpu max` so the guest has RDRAND. From the guest, the host is `10.0.2.2`.
+`-cpu max` so the guest has RDRAND. From the guest, the host is `10.0.2.2`. The card is an
+RTL8139 unless you pick another: `screentest.py --nic e1000` (or `e1000e`, `virtio-net-pci`,
+`none`), or `MOOS_NIC=e1000` for `build.py run/uefi`. Under `--uefi`, QEMU's iPXE option
+ROMs give the firmware SNP driver, so `net up` uses it; `net up native` forces MOOS's own.
+QEMU's e1000 ignores received frames for about a second after RCTL is written — DHCP waits
+3 s per step and ignores stray/late replies (`dhcp_wait_type`) partly because of this.
 
 ```
 python tools/screentest.py "net selftest\n" @wait=8 @screen        # crypto known answers
@@ -114,7 +127,7 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Firmware bridge | `src/efi.asm` (64-bit calls into UEFI: keyboard, disk, clock, reset, mouse, graphics) |
 | Drivers | `src/vga.asm`, `src/idt.asm`, `src/kbd.asm`, `src/rtc.asm`, `src/ata.asm`, `src/bios.asm`, `src/acpi.asm` |
 | File system | `src/fs.asm`; installer `src/installer.asm` |
-| Networking | `src/net.asm`, `src/net_arp.asm`, `src/net_ip.asm`, `src/net_dhcp.asm`, `src/net_dns.asm`, `src/net_tcp.asm`, `src/cmd_net.asm` |
+| Networking | `src/net.asm` (PCI scan, card table, dispatch, RTL8139), `src/nic_e1000.asm`, `src/nic_rtl8168.asm`, `src/nic_snp.asm`, `src/net_arp.asm`, `src/net_ip.asm`, `src/net_dhcp.asm`, `src/net_dns.asm`, `src/net_tcp.asm`, `src/cmd_net.asm` |
 | Crypto | `src/crypto.asm` (SHA-256, HMAC, HKDF, RNG), `src/sha512.asm`, `src/aes.asm` (AES-128, GCM), `src/x25519.asm`, `src/rsa.asm`, `src/selftest.asm`; tables `src/crypto_tables.inc` (tools/gen_tables.py), test vectors `src/selftest_vectors.inc` (tools/gen_vectors.py) |
 | HTTPS | `src/tls.asm` (TLS 1.3 client, https_get), `src/x509.asm` (certificate checks), `src/roots.bin` (tools/gen_roots.py), `src/url.asm` (url_fetch, `get`) |
 | Shell + commands | `src/shell.asm`, `src/readline.asm`, `src/pager.asm`, `src/cmd_files.asm`, `src/cmd_system.asm`, `src/cmd_clock.asm`, `src/cmd_apt.asm`, `src/cmd_login.asm` |
@@ -175,7 +188,11 @@ The commented source is canonical.
   timer jitter, the MAC address and the time — fine for a hobby OS, weaker than a real OS.
 - **NTP (UDP 123)** works on normal networks but is blocked in some environments (it was in
   the dev sandbox); `clock sync` falls back to HTTP there.
-- **Networking** has one NIC (RTL8139), one ARP cache, no IP fragmentation, and a TCP client
+- **No Wi-Fi** (it would need a USB stack, chip firmware, 802.11 and WPA2) and no USB
+  network adapters except through the UEFI firmware driver. The RTL8168 and I217/I219
+  paths have not been run on real hardware; on such PCs the firmware driver is the safer
+  route (enable "Network Stack" in the firmware setup).
+- **Networking** uses one card at a time, one ARP cache, no IP fragmentation, and a TCP client
   that assumes in-order, lossless delivery and never retransmits (fine behind QEMU's SLIRP,
   which does the real TCP; fragile on a real lossy network). Downloads are limited to the
   512 KB package buffer; saved files to 4 KB (the MOOSFS limit).
@@ -191,7 +208,7 @@ The commented source is canonical.
 - Click-through test of the GUI with a real mouse; add window dragging and multiple windows.
 - A fuller GUI text editor (cursor movement, selection) reusing `src/editor.asm` logic.
 - BIOS graphics (VBE) so the desktop runs on old PCs too.
-- A second NIC driver (e1000/virtio) and a more robust TCP.
+- Confirm the RTL8168 driver on a real board; a virtio-net driver for BIOS-mode VMs.
 - ECDSA (P-256/P-384) certificate verification, to reach ECDSA-only sites.
 - TCP retransmission and a receive window that tracks free buffer space.
 - A larger file system (MOOSFS files are 4 KB), so bigger packages and downloads fit.

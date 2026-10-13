@@ -10,7 +10,7 @@ It starts on **modern UEFI PCs**, without legacy/CSM mode, on graphics-only scre
 keyboards and NVMe SSDs. It also starts on **old BIOS PCs**, and it can **install itself**
 onto a computer's disk.
 
-**New since the first version:** networking (DHCP/DNS/TCP over an RTL8139 card), **HTTPS**
+**New since the first version:** wired networking (DHCP/DNS/TCP), **HTTPS**
 with MOOS's own TLS 1.3 and X.509 code, an `apt` package manager that installs **straight from
 GitHub** (`apt install /user/repo`), internet clock sync, a `run` scripting language, a
 graphical desktop (`gui`) with a low-poly stag wallpaper and apps, and an optional sign-in
@@ -94,8 +94,14 @@ Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, 
 
 ## Networking, packages, scripting, and the desktop
 
-- **Networking** (`net up`): an RTL8139 driver with DHCP, DNS, UDP and a small TCP/HTTP
+- **Networking** (`net up`): wired Ethernet with DHCP, DNS, UDP and a small TCP/HTTP
   client — all written from scratch. `clock sync` sets the time from the internet.
+  - Network cards: on UEFI PCs, the firmware's own network driver, which covers most
+    onboard Ethernet. MOOS also has its own drivers for Realtek RTL8111/8168/8169 and
+    RTL8139, and Intel PRO/1000 / I217–I219.
+  - `net cards` shows what MOOS can see. If no card is found, see `man net`. You may need
+    to turn on "Network Stack" in the PC's firmware setup.
+  - Wi-Fi is not supported.
 - **HTTPS** (`get https://...`): a TLS 1.3 client (X25519, AES-128-GCM, SHA-256/384/512)
   that checks the server's certificate chain against built-in root certificates, the site
   name, the dates, and the server's signature — and refuses the connection if anything is

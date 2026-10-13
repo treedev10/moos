@@ -7,16 +7,19 @@
 ; =============================================================================
 RL_HISTORY  equ 1                   ; flag: enable history and Tab completion
 HIST_N      equ 16                  ; remembered commands (power of two)
-HIST_LEN    equ 80
+HIST_LEN    equ 256
+LINE_MAX    equ 250                 ; longest line (it scrolls sideways)
 MAX_CANDS   equ 64
 
 section .bss
-line_buf    resb 128
+line_buf    resb 256
 alignb 4
 line_len    resd 1
 line_pos    resd 1
 line_x0     resd 1                  ; screen column where the input starts
-line_max    resd 1                  ; longest line that fits on this row
+line_max    resd 1                  ; longest line accepted
+line_w      resd 1                  ; columns visible after the prompt
+line_view   resd 1                  ; first character shown (scrolling)
 rl_prompt   resd 1
 rl_status   resd 1
 rl_flags    resb 1
@@ -29,7 +32,7 @@ hist_nav    resd 1
 cand_count  resd 1
 cand_wlen   resd 1
 cand_ptrs   resd MAX_CANDS
-cand_prefix resb 128
+cand_prefix resb 256
 
 section .data
 str_man_sp  db "man ", 0
@@ -236,18 +239,40 @@ rl_show_prompt:
     mov [line_x0], eax
     mov ecx, SCR_COLS - 1
     sub ecx, eax
-    mov [line_max], ecx
+    mov [line_w], ecx
+    mov dword [line_max], LINE_MAX
+    mov dword [line_view], 0
     popad
     ret
 
 ; rl_redraw: paint line_buf after the prompt and place the cursor
 rl_redraw:
     pushad
+    mov eax, [line_pos]             ; scroll so the cursor stays visible
+    cmp eax, [line_view]
+    jae .not_left
+    mov [line_view], eax
+.not_left:
+    mov edx, [line_view]
+    add edx, [line_w]
+    cmp eax, edx
+    jb .in_view
+    sub eax, [line_w]
+    inc eax
+    mov [line_view], eax
+.in_view:
+    mov eax, [line_view]            ; (never scrolled past the text's end)
+    cmp eax, [line_len]
+    jbe .view_ok
+    mov eax, [line_len]
+    mov [line_view], eax
+.view_ok:
     mov edi, [cur_y]
     imul edi, SCR_COLS
     add edi, [line_x0]
     lea edi, [VGA_MEM + edi * 2]
     mov esi, line_buf
+    add esi, [line_view]
     mov ecx, SCR_COLS
     sub ecx, [line_x0]
     mov ah, [text_attr]
@@ -261,8 +286,9 @@ rl_redraw:
     mov al, ' '
     rep stosw
 .cursor:
-    mov eax, [line_x0]
-    add eax, [line_pos]
+    mov eax, [line_pos]
+    sub eax, [line_view]
+    add eax, [line_x0]
     mov [cur_x], eax
     call vga_update_cursor
     popad
@@ -271,8 +297,13 @@ rl_redraw:
 ; rl_cursor_end: move the text cursor behind the last typed character
 rl_cursor_end:
     push eax
-    mov eax, [line_x0]
-    add eax, [line_len]
+    mov eax, [line_len]
+    sub eax, [line_view]
+    cmp eax, [line_w]
+    jbe .fits
+    mov eax, [line_w]
+.fits:
+    add eax, [line_x0]
     mov [cur_x], eax
     pop eax
     ret

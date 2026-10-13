@@ -6,6 +6,8 @@ section .bss
 alignb 4
 dhcp_offered    resd 1
 dhcp_msglen     resd 1
+dhcp_deadline   resd 1
+dhcp_want       resb 1
 
 section .text
 
@@ -126,6 +128,27 @@ dhcp_msgtype:
     stc
     ret
 
+dhcp_wait_type:
+    mov [dhcp_want], al
+.l: mov eax, [dhcp_deadline]
+    mov dx, DHCP_SPORT
+    call udp_wait
+    jc .no
+    mov eax, [dhcp_xid]
+    cmp [esi + 4], eax
+    jne .l
+    call dhcp_msgtype
+    jc .l
+    cmp al, 6
+    je .no
+    cmp al, [dhcp_want]
+    jne .l
+    clc
+    ret
+.no:
+    stc
+    ret
+
 dhcp_configure:
     pushad
     mov dword [my_ip], 0
@@ -142,16 +165,11 @@ dhcp_configure:
     mov esi, NET_DHCP
     call udp_send
     mov eax, [ticks]
-    add eax, 100
-    mov dx, DHCP_SPORT
-    call udp_wait
+    add eax, 300
+    mov [dhcp_deadline], eax
+    mov al, 2
+    call dhcp_wait_type
     jc .retry
-    mov eax, [dhcp_xid]
-    cmp [esi + 4], eax
-    jne .retry
-    call dhcp_msgtype
-    cmp al, 2
-    jne .retry
     mov eax, [esi + 16]
     mov [dhcp_offered], eax
     push esi
@@ -171,16 +189,11 @@ dhcp_configure:
     mov esi, NET_DHCP
     call udp_send
     mov eax, [ticks]
-    add eax, 100
-    mov dx, DHCP_SPORT
-    call udp_wait
+    add eax, 300
+    mov [dhcp_deadline], eax
+    mov al, 5
+    call dhcp_wait_type
     jc .retry
-    mov eax, [dhcp_xid]
-    cmp [esi + 4], eax
-    jne .retry
-    call dhcp_msgtype
-    cmp al, 5
-    jne .retry
     mov eax, [esi + 16]
     mov [my_ip], eax
     mov [dhcp_msglen], ecx

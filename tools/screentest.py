@@ -11,6 +11,8 @@ Options
     --drive ARGS    replace the QEMU disk arguments; {disk} stands for the
                     copied image, e.g. "-machine q35 -drive file={disk},format=raw"
     --extra ARGS    more QEMU arguments (a second disk, a USB keyboard, ...)
+    --nic MODEL     the emulated network card: rtl8139 (default), e1000,
+                    e1000e, virtio-net-pci, ...; "none" for no card
     --mem MB        memory size
 
 STEP is either text to type (use \\n for Enter) or a command:
@@ -134,7 +136,7 @@ class Screen:
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     args = sys.argv[1:]
-    image, drive, extra, uefi, mem = IMAGE, None, '', False, None
+    image, drive, extra, uefi, mem, nic = IMAGE, None, '', False, None, 'rtl8139'
     while args and args[0].startswith('--'):
         opt = args.pop(0)
         if opt == '--uefi':
@@ -147,6 +149,8 @@ def main():
             extra = args.pop(0)
         elif opt == '--mem':
             mem = int(args.pop(0))
+        elif opt == '--nic':
+            nic = args.pop(0)
         else:
             sys.exit('unknown option ' + opt)
     mem = mem or (256 if uefi else 32)
@@ -157,8 +161,11 @@ def main():
     port = 45454
     cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
-         '-cpu', 'max', '-netdev', 'user,id=n0', '-device', 'rtl8139,netdev=n0',
-         '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
+         '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
+    if nic == 'none':
+        cmd += ['-nic', 'none']         # (else QEMU adds an e1000 by itself)
+    else:
+        cmd += ['-netdev', 'user,id=n0', '-device', nic + ',netdev=n0']
     if uefi:
         code, vars_file = ovmf_paths()
         vars_copy = os.path.join(tmpdir, 'vars.fd')

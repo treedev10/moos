@@ -9,6 +9,17 @@ str_test    db "test", 0
 str_dns     db "dns", 0
 str_http    db "http", 0
 str_selftest db "selftest", 0
+str_cards   db "cards", 0
+str_native  db "native", 0
+str_firmware db "firmware", 0
+drv_names   dd drv_none, drv_rtl8139, drv_e1000, drv_rtl8168, drv_snp
+drv_none    db "no MOOS driver", 0
+drv_rtl8139 db "MOOS driver: rtl8139", 0
+drv_e1000   db "MOOS driver: e1000", 0
+drv_rtl8168 db "MOOS driver: rtl8168", 0
+drv_snp     db "the UEFI firmware's driver", 0
+link_up     db "link up", 0
+link_down   db "no link (cable?)", 0
 
 section .text
 
@@ -55,6 +66,9 @@ cmd_net:
     mov edi, str_selftest
     call str_icmp
     je .selftest
+    mov edi, str_cards
+    call str_icmp
+    je net_cards
 .status:
     cmp byte [net_up], 0
     je .not_up
@@ -71,22 +85,35 @@ cmd_net:
     PRINTF `\n  DNS server ..... `
     mov eax, [dns_ip]
     call ip_print
-    PRINTF `\n  Card ........... RTL8139 at I/O 0x%x, MAC `, dword [nic_io]
-    call mac_print
     PRINTF `\n`
+    call nic_describe
     ret
 .not_up:
     PRINTF `The network is not connected. Type \x01wnet up\x01n to connect.\n`
     cmp byte [net_present], 0
     je .no_card
-    PRINTF `  Card ........... RTL8139 at I/O 0x%x, MAC `, dword [nic_io]
-    call mac_print
-    PRINTF `\n`
+    call nic_describe
     ret
 .no_card:
-    PRINTF `(No network card has been detected yet.)\n`
+    PRINTF `(No network card is in use yet. \x01wnet cards\x01n lists what is there.)\n`
     ret
 .up:
+    mov byte [nic_prefer], NET_AUTO ; "net up native" / "net up firmware"
+    cmp dword [argc], 3
+    jb .up_go
+    mov byte [net_present], 0       ; (a choice was given: detect again)
+    mov esi, [argv + 8]
+    mov edi, str_native
+    call str_icmp
+    jne .up_fw
+    mov byte [nic_prefer], NET_NATIVE
+    jmp .up_go
+.up_fw:
+    mov edi, str_firmware
+    call str_icmp
+    jne .up_go
+    mov byte [nic_prefer], NET_FIRMWARE
+.up_go:
     PRINTF `Connecting to the network...\n`
     call net_up_bring
     jc .failed
@@ -97,9 +124,14 @@ cmd_net:
     mov eax, [gw_ip]
     call ip_print
     PRINTF `\n`
+    call nic_describe
     ret
 .failed:
     PRINTF `\x01rCould not connect:\x01n %s\n`, esi
+    cmp byte [net_present], 0
+    je .r_failed
+    call nic_describe
+.r_failed:
     ret
 .down:
     mov byte [net_up], 0
@@ -210,3 +242,118 @@ mac_print:
     pop ecx
     pop eax
     ret
+
+; nic_describe: one line about the card in use
+nic_describe:
+    pushad
+    cmp byte [nic_kind], NIC_SNP
+    jne .native
+    PRINTF `  Card ........... the UEFI firmware's network driver`
+    jmp .mac
+.native:
+    mov ebx, [nic_pci]
+    call pci_loc_print_prep
+    PRINTF `  Card ........... %s (PCI %02x:%02x.%d, %04x:%04x)`, dword [nic_name], eax, ecx, edx, esi, edi
+.mac:
+    PRINTF `\n  MAC address .... `
+    call mac_print
+    mov esi, link_up
+    cmp byte [net_link], 0
+    jne .lk
+    mov esi, link_down
+.lk:
+    PRINTF `\n  Link ........... %s\n`, esi
+    popad
+    ret
+
+; pci_loc_print_prep: EBX = PCI address -> EAX bus, ECX device, EDX function,
+; ESI vendor, EDI device id (of nic_vendev, for the card in use)
+pci_loc_print_prep:
+    mov eax, ebx
+    shr eax, 16
+    and eax, 0xFF
+    mov ecx, ebx
+    shr ecx, 11
+    and ecx, 0x1F
+    mov edx, ebx
+    shr edx, 8
+    and edx, 7
+    movzx esi, word [nic_vendev]
+    movzx edi, word [nic_vendev + 2]
+    ret
+
+; net_cards: list every network controller on the PCI buses, and whether the
+; UEFI firmware offers a network driver
+net_cards:
+    PRINTF `\x01wNetwork cards\x01n (PCI):\n`
+    mov ebx, -1
+    xor ebp, ebp
+.next:
+    call pci_next
+    jc .done
+    mov [nc_vendev], eax
+    mov al, 0x08                    ; class code
+    call pci_read32
+    shr eax, 16
+    cmp ah, 0x02                    ; network controller
+    jne .next
+    mov [nc_sub], al
+    inc ebp
+    mov eax, [nc_vendev]            ; name and driver from the table
+    call nic_lookup
+    jc .unknown
+    mov eax, [esi + NT_NAME]
+    mov [nc_name], eax
+    movzx eax, byte [esi + NT_DRIVER]
+    mov eax, [drv_names + eax * 4]
+    mov [nc_drv], eax
+    jmp .print
+.unknown:
+    mov dword [nc_name], nm_other
+    cmp byte [nc_sub], 0x80         ; "other network": almost always Wi-Fi
+    jne .unk_drv
+    mov dword [nc_name], nm_wireless
+.unk_drv:
+    mov dword [nc_drv], drv_none
+.print:
+    mov eax, ebx
+    shr eax, 16
+    and eax, 0xFF
+    mov ecx, ebx
+    shr ecx, 11
+    and ecx, 0x1F
+    mov edx, ebx
+    shr edx, 8
+    and edx, 7
+    movzx esi, word [nc_vendev]
+    movzx edi, word [nc_vendev + 2]
+    PRINTF `  %02x:%02x.%d  %04x:%04x  %s\n             - %s\n`, eax, ecx, edx, esi, edi, dword [nc_name], dword [nc_drv]
+    jmp .next
+.done:
+    test ebp, ebp
+    jnz .counted
+    PRINTF `  (none found on PCI)\n`
+.counted:
+    PRINTF `  USB network adapters (Wi-Fi or Ethernet) are not listed: MOOS has no USB\n  network drivers.\n`
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    jne .bios
+    mov eax, efi_snp_probe64
+    call efi64
+    test eax, eax
+    jz .no_fw
+    PRINTF `\x01gThe UEFI firmware offers a network driver\x01n (%d interface(s)) - "net up" uses it.\n`, eax
+    ret
+.no_fw:
+    PRINTF `The UEFI firmware offers \x01wno\x01n network driver. To let MOOS use it, turn on\n"Network Stack" (or PXE / LAN Option ROM) in your PC's firmware setup.\n`
+    ret
+.bios:
+    PRINTF `(Started from BIOS: only MOOS's own drivers can be used.)\n`
+    ret
+
+section .bss
+alignb 4
+nc_vendev   resd 1
+nc_name     resd 1
+nc_drv      resd 1
+nc_sub      resb 1
+section .text

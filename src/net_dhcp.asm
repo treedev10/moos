@@ -12,6 +12,8 @@ section .bss
 alignb 4
 dhcp_offered    resd 1
 dhcp_msglen     resd 1
+dhcp_deadline   resd 1
+dhcp_want       resb 1
 
 section .text
 
@@ -138,6 +140,32 @@ dhcp_msgtype:
     stc
     ret
 
+; dhcp_wait_type: AL = DHCP message type wanted (2 OFFER, 5 ACK). Listens
+; until dhcp_deadline for one carrying our transaction id.
+; -> ESI = message, ECX = its length, CF=0; CF=1 on timeout or a NAK.
+; Anything else - other ids, other types, late duplicates - is ignored, so a
+; stray or delayed reply cannot derail the exchange.
+dhcp_wait_type:
+    mov [dhcp_want], al
+.l: mov eax, [dhcp_deadline]
+    mov dx, DHCP_SPORT
+    call udp_wait
+    jc .no
+    mov eax, [dhcp_xid]
+    cmp [esi + 4], eax
+    jne .l
+    call dhcp_msgtype
+    jc .l
+    cmp al, 6                       ; NAK: the server said no
+    je .no
+    cmp al, [dhcp_want]
+    jne .l
+    clc
+    ret
+.no:
+    stc
+    ret
+
 ; dhcp_configure: run the exchange. CF=0 and my_ip/... set; CF=1 (ESI = msg)
 ; on failure.
 dhcp_configure:
@@ -155,17 +183,12 @@ dhcp_configure:
     mov dx, DHCP_SPORT
     mov esi, NET_DHCP
     call udp_send
-    mov eax, [ticks]
-    add eax, 100                    ; wait ~1 s for an OFFER
-    mov dx, DHCP_SPORT
-    call udp_wait
+    mov eax, [ticks]                ; wait up to 3 s for an OFFER
+    add eax, 300
+    mov [dhcp_deadline], eax
+    mov al, 2
+    call dhcp_wait_type
     jc .retry
-    mov eax, [dhcp_xid]             ; xid must match ours
-    cmp [esi + 4], eax
-    jne .retry
-    call dhcp_msgtype
-    cmp al, 2                       ; OFFER?
-    jne .retry
     mov eax, [esi + 16]             ; yiaddr
     mov [dhcp_offered], eax
     push esi
@@ -184,17 +207,12 @@ dhcp_configure:
     mov dx, DHCP_SPORT
     mov esi, NET_DHCP
     call udp_send
-    mov eax, [ticks]
-    add eax, 100
-    mov dx, DHCP_SPORT
-    call udp_wait
+    mov eax, [ticks]                ; and up to 3 s for the ACK
+    add eax, 300
+    mov [dhcp_deadline], eax
+    mov al, 5
+    call dhcp_wait_type
     jc .retry
-    mov eax, [dhcp_xid]
-    cmp [esi + 4], eax
-    jne .retry
-    call dhcp_msgtype
-    cmp al, 5                       ; ACK?
-    jne .retry
     mov eax, [esi + 16]             ; our address
     mov [my_ip], eax
     mov [dhcp_msglen], ecx
