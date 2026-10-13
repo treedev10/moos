@@ -44,6 +44,15 @@ TASKBAR_H   equ 34
     call gfx_fillrect
 %endmacro
 
+DEER_CX equ 220                     ; centre line of the stag within its box
+
+; DTM x0,y0,x1,y1,x2,y2,rgb - a triangle and its mirror about DEER_CX, so the
+; stag is drawn once on the right and comes out symmetric.
+%macro DTM 7
+    TRI %1, %2, %3, %4, %5, %6, %7
+    TRI (2*DEER_CX-%1), %2, (2*DEER_CX-%3), %4, (2*DEER_CX-%5), %6, %7
+%endmacro
+
 ; RECT_OFF x,y,w,h,rgb  - a rectangle offset by wp_ox/wp_oy (for the moose)
 %macro RECT_OFF 5
     mov ecx, %1
@@ -83,7 +92,8 @@ ga_term     db "term", 0
 ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
-tb_apps     db "Terminal   Editor   Script IDE   Browser              Quit", 0
+ga_settings db "settings", 0
+tb_apps     db "Terminal  Editor  Script IDE  Browser  Settings       Quit", 0
 
 section .text
 
@@ -93,58 +103,49 @@ gui_wallpaper:
     mov eax, [gfx_h]
     sub eax, TASKBAR_H
     mov [gw_usable], eax
-    shr eax, 2                      ; band height = usable / 4
+    xor edx, edx                    ; coloured background: six teal/blue bands
+    mov esi, [gw_usable]
+    mov edi, 6
+    push edi
+    mov eax, esi
+    xor edx, edx
+    mov ecx, 6
+    div ecx
     mov [gw_band], eax
-    imul eax, 3
-    mov [gw_horizon], eax           ; sky is the top 3/4
-    ; sky: three bands, dark at the top
-    mov edx, 0
-    RECT 0, edx, [gfx_w], [gw_band], 0x101830
+    pop edi
+    xor edx, edx
+    RECT 0, edx, [gfx_w], [gw_band], 0x0B1E2A
     mov edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x1B2A55
-    mov edx, [gw_band]
+    RECT 0, edx, [gfx_w], [gw_band], 0x0F2838
     add edx, [gw_band]
-    RECT 0, edx, [gfx_w], [gw_band], 0x2E4C86
-    ; ground
-    mov edx, [gw_horizon]
+    RECT 0, edx, [gfx_w], [gw_band], 0x133448
+    add edx, [gw_band]
+    RECT 0, edx, [gfx_w], [gw_band], 0x184258
+    add edx, [gw_band]
+    RECT 0, edx, [gfx_w], [gw_band], 0x1E5266
+    add edx, [gw_band]
     mov edi, [gw_usable]
     sub edi, edx
-    RECT 0, edx, [gfx_w], edi, 0x24401E
-    ; sun / moon
-    mov ecx, [gfx_w]
-    sub ecx, 180
-    RECT ecx, 70, 70, 70, 0xF0E6B0
-    ; distant mountains (triangles rising from the horizon)
-    mov dword [wp_ox], 0
-    mov dword [wp_oy], 0
-    mov esi, [gw_horizon]
-    mov ebx, esi
-    sub ebx, 150
-    TRI 0, esi, 300, ebx, 560, esi, 0x3A5540
-    mov esi, [gw_horizon]
+    RECT 0, edx, [gfx_w], edi, 0x236074
+    ; the stag, centred
     mov eax, [gfx_w]
     shr eax, 1
-    add eax, 120
-    mov ecx, eax
-    add ecx, 180
-    mov ebx, esi
-    sub ebx, 210
-    mov edx, [gfx_w]
-    TRI eax, esi, ecx, ebx, edx, esi, 0x33503A
-    ; the moose, standing on the horizon, centred
-    mov eax, [gfx_w]
-    shr eax, 1
-    sub eax, 150
+    sub eax, DEER_CX
     mov [wp_ox], eax
-    mov eax, [gw_horizon]
-    sub eax, 180
+    mov eax, [gw_usable]
+    sub eax, 450
+    sar eax, 1
+    cmp eax, 20
+    jge .oy_ok
+    mov eax, 20
+.oy_ok:
     mov [wp_oy], eax
-    call gui_moose
+    call gui_deer
     ; title
     mov dword [gfx_scale], 3
-    TEXT 40, 30, gui_title, 0xFFFFFF, -1
+    TEXT 40, 26, gui_title, 0xF4F0E6, -1
     mov dword [gfx_scale], 1
-    TEXT 40, 78, gui_sub, 0xC8D0E0, -1
+    TEXT 40, 74, gui_sub, 0xBFE0DF, -1
     popad
     ret
 
@@ -155,36 +156,52 @@ gw_usable  resd 1
 gw_horizon resd 1
 section .text
 
-; gui_moose: a low-poly moose in a 300x190 box at wp_ox/wp_oy
-gui_moose:
+; ------------------------------------------------------- the stag wallpaper
+; A front-facing low-poly stag head, built from triangles. The right half is
+; drawn and mirrored to the left about the centre line (DEER_CX) by DTM, so it
+; stays symmetric. Box ~380 wide x 460 tall at wp_ox/wp_oy. Coloured facets.
+;
+; palette
+%define C_ANTLER1 0x202E3A
+%define C_ANTLER2 0x3A5262
+%define C_ANTLER3 0x6E4A2C
+%define C_DARK    0x111C28
+%define C_NAVY    0x1B3346
+%define C_TEAL    0x2E6E7A
+%define C_BROWN   0x6E4A2C
+%define C_TAN     0x9A6A3A
+%define C_CREAM   0xD8C4A0
+gui_deer:
     push eax
-    ; body (two triangles make a slab)
-    TRI 70,70, 210,60, 200,120, 0x4A3220
-    TRI 70,70, 200,120, 80,120, 0x543922
-    ; hindquarter
-    TRI 60,72, 95,118, 60,120, 0x3E2A1B
-    ; chest / front
-    TRI 200,70, 230,70, 210,120, 0x4A3220
-    ; neck
-    TRI 205,72, 250,40, 232,86, 0x543922
-    ; head
-    TRI 238,30, 272,44, 236,70, 0x5C4026
-    ; snout
-    TRI 236,56, 272,58, 244,74, 0x6B4A2C
-    ; ear
-    TRI 236,30, 250,18, 248,40, 0x4A3220
-    ; antlers (branching)
-    TRI 240,30, 232,2, 250,22, 0xC8A878
-    TRI 232,2, 214,10, 240,20, 0xC8A878
-    TRI 250,30, 266,4, 256,24, 0xC8A878
-    TRI 266,4, 282,14, 258,20, 0xC8A878
-    ; legs (front pair, back pair)
-    RECT_OFF 196,116, 12,70, 0x3E2A1B
-    RECT_OFF 214,116, 12,70, 0x3E2A1B
-    RECT_OFF 78,116, 12,70, 0x3E2A1B
-    RECT_OFF 96,116, 12,70, 0x3E2A1B
-    ; eye
-    RECT_OFF 250,46, 5,5, 0x101010
+    ; ---- antlers: bold spreading tines (right side; DTM mirrors to the left)
+    DTM 258,164, 300,150, 250,30,  C_ANTLER1
+    DTM 270,156, 314,150, 340,26,  C_ANTLER2
+    DTM 282,160, 324,152, 412,54,  C_ANTLER1
+    DTM 294,168, 332,158, 436,114, C_ANTLER2
+    DTM 302,178, 338,170, 416,182, C_ANTLER1
+    DTM 258,166, 300,150, 300,108, C_ANTLER1
+    DTM 254,172, 294,150, 306,186, C_ANTLER2
+    ; ---- ears (wide) ----
+    DTM 150,204, 110,190, 150,256, C_BROWN
+    DTM 150,210, 150,256, 186,236, C_TAN
+    ; ---- forehead (dark, broad) ----
+    DTM 220,116, 150,176, 220,214, C_DARK
+    DTM 220,116, 220,214, 284,166, C_NAVY
+    ; ---- cheeks (wide) ----
+    DTM 150,176, 220,214, 138,252, C_NAVY
+    DTM 138,252, 220,214, 210,330, C_BROWN
+    DTM 220,214, 266,244, 210,330, C_TEAL
+    DTM 138,252, 210,330, 170,372, C_TAN
+    ; ---- jaw narrowing to a short chin point ----
+    DTM 170,372, 210,330, 220,432, C_NAVY
+    DTM 170,372, 220,432, 206,392, C_DARK
+    ; ---- eyes (small, dark, angled) ----
+    DTM 162,250, 186,262, 166,280, C_DARK
+    ; ---- muzzle centre: cream highlight stripe ----
+    DTM 220,258, 198,330, 220,326, C_TAN
+    DTM 220,326, 202,352, 220,398, C_CREAM
+    DTM 220,326, 220,398, 238,352, C_TAN
+    DTM 220,352, 208,370, 220,392, C_DARK
     pop eax
     ret
 
@@ -343,6 +360,13 @@ cmd_gui:
     mov edi, ga_browser
     call str_icmp
     je .o_brow
+    mov edi, ga_settings
+    call str_icmp
+    je .o_set
+    jmp .loop
+.o_set:
+    mov eax, APP_SETTINGS
+    call gui_open
     jmp .loop
 .o_term:
     mov eax, APP_TERM

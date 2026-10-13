@@ -610,6 +610,214 @@ brow_host   resb 64
 brow_path   resb 128
 section .text
 
+; ---------------------------------------------------------------- Settings
+section .bss
+alignb 4
+settings_color_idx resd 1
+settings_msg       resb 80
+section .data
+set_bg_nibbles db 1, 2, 4, 5, 6, 8, 0      ; status-bar background colours
+SET_NCOLORS    equ 7
+set_fmt24      db "24-hour (military)", 0
+set_fmt12      db "12-hour", 0
+set_welcome    db "Use the number keys and + / - to change settings.", 0
+set_syncing    db "Syncing the clock from the internet...", 0
+set_synced     db "Clock synced from the internet.", 0
+set_syncfail   db "Could not sync - is the network connected?", 0
+set_connected  db "Connected to the network.", 0
+set_connfail   db "Could not connect to the network.", 0
+set_notconn    db "not connected", 0
+section .text
+
+settings_init:
+    mov esi, set_welcome
+    call set_msg
+    ret
+
+set_msg:
+    mov edi, settings_msg
+    call str_copy
+    ret
+
+; gui_draw_outbuf: render the text collected in OUTBUF at ECX=x, EDX=y.
+; Caller sets gfx_scale. (Uses out_begin/PRINTF with out_mode = 1.)
+gui_draw_outbuf:
+    push eax
+    push ebx
+    push esi
+    push ebp
+    mov esi, [out_ptr]
+    mov byte [esi], 0
+    mov byte [out_mode], 0
+    mov esi, OUTBUF
+    mov eax, 0xE6ECF2
+    call gfx_rgb
+    mov ebx, eax
+    mov ebp, -1
+    call gfx_text
+    pop ebp
+    pop esi
+    pop ebx
+    pop eax
+    ret
+
+settings_draw:
+    pushad
+    call gui_content_box
+    mov dword [gfx_scale], 2        ; title
+    call out_begin
+    PRINTF `MOOS Settings`
+    mov ecx, [ta_x]
+    mov edx, [ta_y]
+    call gui_draw_outbuf
+    mov dword [gfx_scale], 1
+    mov eax, [ta_y]
+    add eax, 44
+    mov [set_y], eax
+    ; line: hint
+    call out_begin
+    PRINTF `Press a number key to change a setting:`
+    call .line
+    add dword [set_y], 10
+    ; 1  clock format
+    mov esi, set_fmt12
+    cmp byte [clk_24h], 0
+    je .f12
+    mov esi, set_fmt24
+.f12:
+    call out_begin
+    PRINTF `1  Clock format .......... %s`, esi
+    call .line
+    ; 2  status bar colour
+    movzx eax, byte [clk_color]
+    shr eax, 4
+    mov esi, [colour_names + eax * 4]
+    call out_begin
+    PRINTF `2  Status bar colour ..... %s`, esi
+    call .line
+    ; 3  timezone
+    mov eax, [clk_tz_min]
+    cdq
+    mov ecx, 60
+    idiv ecx
+    call out_begin
+    PRINTF `3  Timezone .............. UTC %i hour(s)   (+ / - to change)`, eax
+    call .line
+    ; 4, 5
+    call out_begin
+    PRINTF `4  Sync the clock from the internet`
+    call .line
+    call out_begin
+    PRINTF `5  Connect to the network`
+    call .line
+    add dword [set_y], 12
+    ; time now
+    call rtc_read
+    call out_begin
+    movzx eax, word [rtc_year]
+    movzx ebx, byte [rtc_month]
+    movzx ecx, byte [rtc_day]
+    PRINTF `Time now: ... %d-%02d-%02d`, eax, ebx, ecx
+    movzx eax, byte [rtc_hour]
+    movzx ebx, byte [rtc_min]
+    movzx ecx, byte [rtc_sec]
+    PRINTF `  %02d:%02d:%02d`, eax, ebx, ecx
+    call .line
+    ; network
+    call out_begin
+    PRINTF `Network: .... `
+    cmp byte [net_up], 0
+    je .noip
+    mov eax, [my_ip]
+    call ip_print                   ; appends to OUTBUF (out_mode = 1)
+    jmp .netshown
+.noip:
+    PRINTF `%s`, set_notconn
+.netshown:
+    call .line
+    add dword [set_y], 10
+    ; message line
+    call out_begin
+    PRINTF `%s`, settings_msg
+    call .line
+    popad
+    ret
+.line:
+    mov ecx, [ta_x]
+    mov edx, [set_y]
+    call gui_draw_outbuf
+    add dword [set_y], 18
+    ret
+
+section .bss
+alignb 4
+set_y resd 1
+section .text
+
+settings_key:
+    cmp al, '1'
+    je .fmt
+    cmp al, '2'
+    je .color
+    cmp al, '4'
+    je .sync
+    cmp al, '5'
+    je .net
+    cmp al, '+'
+    je .tzup
+    cmp al, '='
+    je .tzup
+    cmp al, '-'
+    je .tzdn
+    ret
+.fmt:
+    xor byte [clk_24h], 1
+    call clk_save
+    ret
+.color:
+    mov eax, [settings_color_idx]
+    inc eax
+    cmp eax, SET_NCOLORS
+    jb .ci_ok
+    xor eax, eax
+.ci_ok:
+    mov [settings_color_idx], eax
+    movzx ebx, byte [set_bg_nibbles + eax]
+    shl ebx, 4
+    or ebx, 0x0F                    ; white text on the chosen background
+    mov [clk_color], bl
+    call status_draw
+    call clk_save
+    ret
+.tzup:
+    add dword [clk_tz_min], 60
+    call clk_apply_tz
+    call clk_save
+    ret
+.tzdn:
+    sub dword [clk_tz_min], 60
+    call clk_apply_tz
+    call clk_save
+    ret
+.sync:
+    mov esi, set_syncing
+    call set_msg
+    call clock_do_sync
+    mov esi, set_synced
+    jnc .msg
+    mov esi, set_syncfail
+.msg:
+    call set_msg
+    ret
+.net:
+    call net_up_bring
+    mov esi, set_connected
+    jnc .nmsg
+    mov esi, set_connfail
+.nmsg:
+    call set_msg
+    ret
+
 ; ---------------------------------------------------- shared text helpers
 ; gui_content_box: set ta_x/ta_y/ta_cols/ta_rows to the window's content area
 gui_content_box:

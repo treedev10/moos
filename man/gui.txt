@@ -23,6 +23,10 @@ APPS
                  Run action runs it and shows the output in the Terminal
     Browser      type an http:// address and press Enter to fetch a page
                  and show its text (plain HTTP only - see man net)
+    Settings     change the clock format (12/24-hour), the status-bar
+                 colour and the timezone, sync the clock from the
+                 internet, or connect to the network - press the number
+                 keys and + / - shown in the window
 
 INSTALLING
     The desktop is also offered as a package:  apt install desktop

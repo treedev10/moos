@@ -26,6 +26,9 @@ section .data
 clk_cfg_name    db "clock.cfg", 0
 str_sync        db "sync", 0
 sync_http_host  db "example.com", 0
+sync_host_2     db "www.bing.com", 0
+sync_host_3     db "www.msftconnecttest.com", 0
+sync_hosts      dd sync_http_host, sync_host_2, sync_host_3, 0
 str_local       db "local", 0
 str_12          db "12", 0
 str_24          db "24", 0
@@ -270,6 +273,59 @@ datetime_to_epoch:
     pop ebx
     ret
 
+; clock_do_sync: bring the network up if needed, then set the time from the
+; internet (NTP, falling back to HTTP). CF=0 on success.
+clock_do_sync:
+    push ebx
+    push esi
+    cmp byte [net_up], 0
+    jne .go
+    call net_up_bring
+    jc .fail
+.go:
+    call ntp_query
+    jnc .got
+    call http_time_any
+    jc .fail
+.got:
+    mov [net_epoch_base], eax
+    mov ebx, [ticks]
+    mov [net_tick_base], ebx
+    mov byte [clk_source], 1
+    call clk_apply_tz
+    pop esi
+    pop ebx
+    clc
+    ret
+.fail:
+    pop esi
+    pop ebx
+    stc
+    ret
+
+; http_time_any: try several web servers' Date headers -> EAX epoch, CF=1
+http_time_any:
+    push ebx
+    push esi
+    mov ebx, sync_hosts
+.l: mov esi, [ebx]
+    test esi, esi
+    jz .fail
+    call http_time
+    jnc .ok
+    add ebx, 4
+    jmp .l
+.ok:
+    pop esi
+    pop ebx
+    clc
+    ret
+.fail:
+    pop esi
+    pop ebx
+    stc
+    ret
+
 ; clk_now_epoch: EAX = the current time as Unix seconds (internet source)
 clk_now_epoch:
     mov eax, [ticks]
@@ -377,8 +433,7 @@ cmd_clock:
     call ntp_query                  ; first choice: NTP (UDP 123)
     jnc .got_time
     PRINTF `(NTP did not answer - trying the web instead)\n`
-    mov esi, sync_http_host         ; fallback: a web server's Date header
-    call http_time
+    call http_time_any              ; fallback: a web server's Date header
     jnc .got_time
     jmp .sync_fail
 .got_time:

@@ -14,6 +14,7 @@ APP_TERM    equ 1
 APP_EDITOR  equ 2
 APP_IDE     equ 3
 APP_BROWSER equ 4
+APP_SETTINGS equ 5
 
 WIN_X       equ 60
 WIN_Y       equ 70
@@ -26,11 +27,12 @@ win_h       resd 1
 prev_btn    resd 1
 
 section .data
-win_titles  dd 0, t_term, t_edit, t_ide, t_brow
+win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set
 t_term      db "Terminal", 0
 t_edit      db "Text Editor", 0
 t_ide       db "Script IDE", 0
 t_brow      db "MOOS Browser", 0
+t_set       db "Settings", 0
 
 section .text
 
@@ -71,6 +73,8 @@ gui_windows:
     je .term
     cmp eax, APP_BROWSER
     je .brow
+    cmp eax, APP_SETTINGS
+    je .settings
     ; editor / IDE share the text-area view
     call app_text_draw
     jmp .done
@@ -79,6 +83,9 @@ gui_windows:
     jmp .done
 .brow:
     call app_brow_draw
+    jmp .done
+.settings:
+    call settings_draw
 .done:
     popad
     ret
@@ -101,6 +108,8 @@ gui_open:
     je .edit
     cmp eax, APP_BROWSER
     je brow_init
+    cmp eax, APP_SETTINGS
+    je settings_init
     ret
 .edit:
     jmp editor_app_init
@@ -151,20 +160,25 @@ gui_handle:
 ; out left to right; approximate hit zones by pixel ranges)
 gui_taskbar_click:
     mov eax, [mouse_x]
-    ; "Terminal Editor Script IDE Browser ... Quit" starting at x=14, 8px/char
-    cmp eax, 14 + 8 * 10
-    jb .term
-    cmp eax, 14 + 8 * 20
-    jb .editor
-    cmp eax, 14 + 8 * 34
-    jb .ide
-    cmp eax, 14 + 8 * 45
-    jb .browser
-    mov ecx, [gfx_w]
-    sub ecx, 120
+    mov ecx, [gfx_w]                ; Quit is on the right
+    sub ecx, 110
     cmp eax, ecx
     jae .quit
+    ; buttons from the left at x=14, 8px/char
+    cmp eax, 14 + 8 * 9
+    jb .term
+    cmp eax, 14 + 8 * 17
+    jb .editor
+    cmp eax, 14 + 8 * 29
+    jb .ide
+    cmp eax, 14 + 8 * 38
+    jb .browser
+    cmp eax, 14 + 8 * 48
+    jb .settings
     ret
+.settings:
+    mov eax, APP_SETTINGS
+    jmp gui_open
 .term:
     mov eax, APP_TERM
     jmp gui_open
@@ -189,6 +203,8 @@ gui_key:
     je term_key
     cmp dword [cur_app], APP_BROWSER
     je brow_key
+    cmp dword [cur_app], APP_SETTINGS
+    je settings_key
     jmp editor_app_key
 .r:
     ret
