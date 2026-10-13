@@ -1,0 +1,64 @@
+NAME
+    apt - the MOOS package manager
+
+SYNOPSIS
+    apt install <name>
+    apt remove <name>
+    apt list
+    apt repo [host]
+
+DESCRIPTION
+    apt downloads a package over the network and installs the files inside
+    it onto the disk. A package is a single file, <name>.pkg, on an HTTP
+    server (the "package server" or "repo").
+
+    apt install <name>   download <name>.pkg from the server and install it
+    apt remove <name>    forget an installed package (its files stay)
+    apt list             show which packages are installed
+    apt repo [host]      show the package server, or set it
+
+    The GUI desktop is a package:  apt install desktop
+
+THE PACKAGE SERVER
+    By default the server is 10.0.2.2:8000 (the computer that hosts QEMU,
+    handy during development). Point it at your own HTTP server with:
+
+        apt repo myserver.example.com
+        apt repo 192.168.1.10:8080
+
+    GitHub itself cannot be used directly because it serves over HTTPS,
+    which MOOS does not do. Host the .pkg files on a plain-HTTP server, or
+    an HTTP mirror of your GitHub repo. "apt install /user/repo" fetches
+    /user/repo.pkg, so a GitHub-style path layout works behind a mirror.
+
+MESSAGES
+    the server answered HTTP 404
+        There is no package with that name on the server.
+
+    could not find the server
+        The repo host name could not be looked up. Check  apt repo  and
+        that the network is up ( net status ).
+
+MAKING A PACKAGE
+    A package is plain text:
+
+        MOOSPKG 1
+        name: hello
+        desc: a friendly greeting
+        @file hello.ms 21
+        print "hello, world"
+        @end
+
+    After "MOOSPKG 1" come any "name:" / "desc:" lines, then one or more
+    file sections. Each "@file <name> <size>" line is followed by exactly
+    <size> bytes of that file, then a newline. "@end" finishes.
+
+    The helper  tools/mkpkg.py  builds a .pkg from a folder of files:
+
+        python tools/mkpkg.py hello hello.ms > hello.pkg
+
+    Put the .pkg on your HTTP server and it can be installed. See
+    PACKAGES.md in the MOOS source for the full guide.
+
+SEE ALSO
+    net, run, script, ls

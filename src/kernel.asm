@@ -156,6 +156,8 @@ zero_bss:
 %include "src/cmd_system.asm"
 %include "src/cmd_net.asm"
 %include "src/cmd_clock.asm"
+%include "src/cmd_apt.asm"
+%include "src/script.asm"
 %include "src/calc.asm"
 %include "src/editor.asm"
 %include "src/installer.asm"

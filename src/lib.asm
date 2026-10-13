@@ -90,6 +90,30 @@ str_copy:
     pop eax
     ret
 
+; str_append: append the string ESI to the end of the string at EDI
+str_append:
+    push eax
+    push esi
+    push edi
+.find:
+    cmp byte [edi], 0
+    je .copy
+    inc edi
+    jmp .find
+.copy:
+    mov al, [esi]
+    mov [edi], al
+    test al, al
+    jz .done
+    inc esi
+    inc edi
+    jmp .copy
+.done:
+    pop edi
+    pop esi
+    pop eax
+    ret
+
 ; str_lower: lower-case the string at ESI in place
 str_lower:
     push eax
