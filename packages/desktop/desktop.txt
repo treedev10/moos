@@ -1,0 +1,6 @@
+The MOOS graphical desktop is installed.
+
+Start it any time with:  gui
+
+Apps: Terminal, Text Editor, Script IDE, Browser.
+Close a window with the red x; leave the desktop with Esc or Quit.
