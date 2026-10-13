@@ -1,12 +1,18 @@
 # MOOS — Mightily Optimized Operating System
 
-A tiny operating system written from scratch in x86 assembly. It is **not** Linux, DOS or
-anything else: the boot loader, UEFI loader, drivers, file system, shell, text editor, installer and
-all commands are original code. The whole system, including a full manual for every command, is about
-**100 KB**.
+A small operating system written from scratch in x86 assembly. It is **not** Linux, DOS or
+anything else: the boot loader, UEFI loader, drivers, file system, networking stack, shell,
+text editor, package manager, scripting language, graphical desktop and installer are all
+original code. The whole system, with a full manual for every command, is about **130 KB**.
 
-It starts on **modern UEFI PCs**, without legacy/CSM mode, on graphics-only screens with USB keyboards
-and NVMe SSDs. It also starts on **old BIOS PCs**, and it can **install itself** onto a computer's disk.
+It starts on **modern UEFI PCs**, without legacy/CSM mode, on graphics-only screens with USB
+keyboards and NVMe SSDs. It also starts on **old BIOS PCs**, and it can **install itself**
+onto a computer's disk.
+
+**New since the first version:** networking (DHCP/DNS/TCP/HTTP over an RTL8139 card),
+internet clock sync, an `apt` package manager (HTTP), a `run` scripting language, a graphical
+desktop (`gui`) with a moose wallpaper and apps, and an optional sign-in screen. See
+[handoff.md](handoff.md) for the full picture.
 
 ```
 moos> help
@@ -71,19 +77,29 @@ inside MOOS.
 
 ### Commands
 
-| Files | Text and tools | System |
+| Files | Tools | Net & system |
 |---|---|---|
-| `ls` list files | `edit` full-screen editor | `time` date and time |
-| `cat` show a file | `echo` print / save a line (`>`, `>>`) | `uptime` time since start |
-| `write` type a new file | `calc` integer calculator | `mem` memory map, storage |
-| `append` add lines | `clear` clear the screen | `sysinfo` firmware, CPU, screen |
-| `rm` delete (asks first) | `color` colours and themes | `history` recent commands |
-| `rename`, `copy` | `help` command list | `install` install MOOS on a disk |
-| `find` search in files | `man` manuals | `format` erase all files |
-| `wc` count, `hexdump` raw bytes | | `reboot`, `shutdown` |
+| `ls` list files | `edit` full-screen editor | `net` connect to the network |
+| `cat` show a file | `calc` integer calculator | `apt` install packages (HTTP) |
+| `write`, `append` | `run` run a MOOS script | `clock` 12/24h, colour, internet sync |
+| `rm` delete (asks first) | `echo` print / save a line | `gui` graphical desktop (UEFI) |
+| `rename`, `copy` | `color` colours and themes | `login` optional sign-in |
+| `find` search in files | `help`, `man` | `time`, `uptime`, `mem`, `sysinfo` |
+| `wc`, `hexdump` | `clear` | `install`, `format`, `reboot`, `shutdown` |
 
 Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, `grep`, `cls`,
 `date`, `exit` and others.
+
+## Networking, packages, scripting, and the desktop
+
+- **Networking** (`net up`): an RTL8139 driver with DHCP, DNS, UDP and a small TCP/HTTP
+  client — all written from scratch. `clock sync` sets the time from the internet.
+- **Packages** (`apt install <name>`): downloads a `.pkg` over plain HTTP and installs its
+  files. Host your own repo with any HTTP server; `tools/mkpkg.py` builds packages. (No
+  HTTPS, so not directly from github.com — see [handoff.md](handoff.md).)
+- **Scripting** (`run file.ms`): variables, `if/else`, `while`, `print`, and expressions.
+- **Desktop** (`apt install desktop`, then `gui`): a low-poly moose wallpaper, a taskbar,
+  a mouse, and windowed apps — Terminal, Text Editor, Script IDE, and a Browser. UEFI only.
 
 ## How it works
 

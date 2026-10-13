@@ -1,0 +1,13 @@
+%ifndef LAYOUT_INC
+%define LAYOUT_INC
+
+PART_START          equ 2048
+PART_SECTORS        equ 8192
+PART_KERNEL_LBA     equ 8
+PART_KERNEL_SECTS   equ 512
+PART_FS_LBA         equ 528
+PART_FS_END         equ 792
+PART_RESERVED       equ 1024
+MOOS_DISK_SECTORS   equ PART_START + PART_SECTORS
+
+%endif
