@@ -95,6 +95,14 @@ A_NAME      equ 13                  ; a field's name (a jump place on <a>)
 A_ACTION    equ 14
 A_METHOD    equ 15
 A_SIZE      equ 16
+A_SRC       equ 17                  ; img / video / audio / source / iframe
+A_WIDTH     equ 18
+A_HEIGHT    equ 19
+A_POSTER    equ 20                  ; video: picture shown before it plays
+A_AUTOPLAY  equ 21
+A_DATASRC   equ 22                  ; data-src: lazy-loading pages put the
+                                    ; real picture there
+A_SRCSET    equ 23                  ; img srcset: pictures for each size
 
 ; tag flags
 TF_BLOCK    equ 1                   ; starts and ends a line
@@ -149,6 +157,10 @@ DI_SIZE     equ 32
 DT_TEXT     equ 1
 DT_RECT     equ 2
 DT_INPUT    equ 3                   ; a form field (DI_LINK = its record)
+DT_IMAGE    equ 4                   ; a picture (DI_TEXT = its imgcache
+                                    ; record, DI_LINK = the link around it)
+DT_VIDEO    equ 5                   ; a video or audio player (DI_TEXT = its
+                                    ; record in player.asm)
 
 ; colours of the page
 C_PAGE_BG   equ 0xFFFFFF
@@ -194,7 +206,7 @@ TAGDEF T_ADDRESS,   "address",    TF_BLOCK, 8, SB_ITALIC, 0
 TAGDEF T_AREA,      "area",       TF_VOID, 0, 0, 0
 TAGDEF T_ARTICLE,   "article",    TF_BLOCK, 0, 0, 0
 TAGDEF T_ASIDE,     "aside",      TF_BLOCK, 0, 0, 0
-TAGDEF T_AUDIO,     "audio",      TF_SKIP, 0, 0, 0
+TAGDEF T_AUDIO,     "audio",      TF_RAW, 0, 0, 0
 TAGDEF T_B,         "b",          0, 0, SB_BOLD, 0
 TAGDEF T_BASE,      "base",       TF_VOID, 0, 0, 0
 TAGDEF T_BIG,       "big",        0, 0, 0, 0
@@ -286,7 +298,7 @@ TAGDEF T_TT,        "tt",         0, 0, 0, 0
 TAGDEF T_U,         "u",          0, 0, SB_ULINE, 0
 TAGDEF T_UL,        "ul",         TF_BLOCK, 8, 0, 0
 TAGDEF T_VAR,       "var",        0, 0, SB_ITALIC, 0
-TAGDEF T_VIDEO,     "video",      TF_SKIP, 0, 0, 0
+TAGDEF T_VIDEO,     "video",      TF_RAW, 0, 0, 0
 TAGDEF T_WBR,       "wbr",        TF_VOID, 0, 0, 0
 tag_table_end:
 T_COUNT equ (tag_table_end - tag_table) / 16
@@ -307,6 +319,13 @@ attr_names:
     db "action", 0, A_ACTION
     db "method", 0, A_METHOD
     db "size", 0, A_SIZE
+    db "src", 0, A_SRC
+    db "width", 0, A_WIDTH
+    db "height", 0, A_HEIGHT
+    db "poster", 0, A_POSTER
+    db "autoplay", 0, A_AUTOPLAY
+    db "data-src", 0, A_DATASRC
+    db "srcset", 0, A_SRCSET
     db 0
 
 ; named character references: name, 0, code point (word)
@@ -695,7 +714,7 @@ hp_ve       resd 1
 hp_name     resb 16                 ; tag name, lower case
 hp_an       resb 24                 ; attribute name, lower case
 hp_ent      resb 16
-hp_attrs    resb 2048
+hp_attrs    resb 8192
 br_title    resb 160                ; the page's <title>
 br_base     resb 512                ; its <base href>, if any
 section .text
@@ -1274,6 +1293,10 @@ hp_tag:
 .shown:
     test ebx, TF_RAW
     jnz .raw
+    cmp eax, T_IFRAME               ; an embedded YouTube video: a link to it
+    jne .not_iframe
+    call hp_iframe
+.not_iframe:
     test ebx, TF_SKIP
     jz .not_skip
     call .can_skip
@@ -1284,6 +1307,10 @@ hp_tag:
     jz .done
     cmp eax, T_BASE
     je .base
+    cmp eax, T_IMG
+    jne .emit
+    call hp_img_srcset
+.emit:
     call hp_emit_open
     cmp dword [hp_tagid], T_PRE
     jne .done
@@ -1608,6 +1635,14 @@ hp_attr:
     movzx eax, byte [edi + ecx + 1] ; the attribute id
     cmp eax, A_HREF
     je .url
+    cmp eax, A_SRC
+    je .url
+    cmp eax, A_POSTER
+    je .url
+    cmp eax, A_DATASRC
+    je .url
+    cmp eax, A_SRCSET
+    je .url
     call hp_attr_begin
     mov esi, [hp_vs]
     mov ecx, [hp_ve]
@@ -1654,7 +1689,7 @@ hp_attr_begin:
     mov edi, [hp_apos]
     lea ecx, [edi + 1]
     mov [hp_aout], ecx
-    mov ecx, hp_attrs + 2048 - 2
+    mov ecx, hp_attrs + 8192 - 2
     mov [hp_alim], ecx
     cmp edi, ecx
     jae .full
@@ -2107,8 +2142,18 @@ hp_raw_element:
     mov eax, [hp_tagid]
     cmp eax, T_TITLE
     je .title
+    cmp eax, T_VIDEO
+    je .media
+    cmp eax, T_AUDIO
+    je .media
     cmp eax, T_TEXTAREA
     jne .done
+    call hp_emit_open
+    jmp .done
+.media:                             ; <video> / <audio>: the element, with
+    mov ecx, edx                    ; the address of its first usable
+    mov esi, ebx                    ; <source> if it has no src of its own
+    call hp_media_source
     call hp_emit_open
     jmp .done
 .title:
@@ -2128,6 +2173,298 @@ hp_raw_element:
 .done:
     popad
     ret
+
+; hp_find_attr: EAX = attribute id -> ESI = its value among the tag's
+; attributes being collected (hp_attrs), CF=1 if it has none
+hp_find_attr:
+    mov esi, hp_attrs
+.l: cmp esi, [hp_apos]
+    jae .no
+    cmp [esi], al
+    je .yes
+.s: inc esi                         ; (past the id, then the value)
+    cmp esi, [hp_apos]
+    jae .no
+    cmp byte [esi], 0
+    jne .s
+    inc esi
+    jmp .l
+.yes:
+    inc esi
+    clc
+    ret
+.no:
+    stc
+    ret
+
+; hp_add_attr: EAX = attribute id, ESI = value -> appended to the tag's
+; attributes (if there is room)
+hp_add_attr:
+    pushad
+    call hp_attr_begin
+.c: lodsb
+    test al, al
+    jz .e
+    movzx eax, al
+    call hp_asink
+    jmp .c
+.e: call hp_attr_end
+    popad
+    ret
+
+; hp_media_source: <video> or <audio> without a src: ESI .. ECX = its
+; content. The src of the first <source> inside that MOOS can play (not
+; WebM or Ogg) is added to its attributes.
+hp_media_source:
+    pushad
+    mov eax, A_SRC
+    call hp_find_attr
+    jnc .done                       ; it has its own
+    mov [hms_end], ecx
+    mov edi, hms_save               ; keep the element's attributes
+    mov ecx, [hp_apos]
+    sub ecx, hp_attrs
+    mov [hms_len], ecx
+    push esi
+    mov esi, hp_attrs
+    rep movsb
+    pop esi
+    push dword [hp_end]             ; (hp_read_attrs stops at hp_end)
+    mov eax, [hms_end]
+    mov [hp_end], eax
+.scan:
+    cmp esi, [hms_end]
+    jae .none
+    cmp byte [esi], '<'
+    jne .next
+    lea edi, [esi + 1]
+    push esi
+    mov esi, hms_source
+    call str_iprefix                ; "<source"?
+    pop esi
+    jne .next
+    add esi, 7
+    call hp_read_attrs              ; its attributes (ESI moves past it)
+    mov eax, A_TYPE                 ; a type MOOS cannot play?
+    push esi
+    call hp_find_attr
+    jc .typeok
+    mov edi, hms_webm               ; (ESI = the type)
+    call str_has_ci
+    je .skip
+    mov edi, hms_ogg
+    call str_has_ci
+    je .skip
+.typeok:
+    mov eax, A_SRC
+    call hp_find_attr
+    jc .skip
+    mov edi, hms_src                ; take its src
+    mov ecx, 4000
+.cp:
+    lodsb
+    stosb
+    test al, al
+    jz .got
+    loop .cp
+    mov byte [edi], 0
+.got:
+    pop esi
+    pop dword [hp_end]
+    call .restore
+    mov esi, hms_src
+    mov eax, A_SRC
+    call hp_add_attr
+    jmp .done
+.skip:
+    pop esi
+    jmp .scan
+.next:
+    inc esi
+    jmp .scan
+.none:
+    pop dword [hp_end]
+    call .restore
+.done:
+    popad
+    ret
+.restore:                           ; the element's attributes back
+    mov esi, hms_save
+    mov edi, hp_attrs
+    mov ecx, [hms_len]
+    rep movsb
+    mov [hp_apos], edi
+    ret
+
+; hp_img_srcset: an <img> whose picture is only in srcset (no src, or a
+; data: placeholder there): the first address in srcset becomes its
+; data-src, which the layout uses then
+hp_img_srcset:
+    pushad
+    mov eax, A_DATASRC
+    call hp_find_attr
+    jnc .done                       ; (it has one)
+    mov eax, A_SRC
+    call hp_find_attr
+    jc .use
+    cmp byte [esi], 0
+    je .use
+    mov edi, esi
+    mov esi, li_data
+    call str_iprefix
+    jne .done                       ; a real src
+.use:
+    mov eax, A_SRCSET
+    call hp_find_attr
+    jc .done
+.sp:
+    cmp byte [esi], ' '
+    jne .first
+    inc esi
+    jmp .sp
+.first:
+    mov edi, hms_src
+    mov ecx, 4000
+.c: lodsb
+    test al, al
+    jz .end
+    cmp al, ' '                     ; (the address ends at a space; one
+    je .end                         ; ending in commas loses them)
+    stosb
+    loop .c
+.end:
+    cmp edi, hms_src
+    je .done
+    cmp byte [edi - 1], ','
+    jne .z
+    dec edi
+    jmp .end
+.z: mov byte [edi], 0
+    mov esi, hms_src
+    mov eax, A_DATASRC
+    call hp_add_attr
+.done:
+    popad
+    ret
+
+; hp_iframe: an <iframe> (whose content is skipped): if it shows a YouTube
+; video, put a link to the video (with its picture) in its place
+hp_iframe:
+    pushad
+    mov eax, A_SRC
+    call hp_find_attr
+    jc .done
+    mov edi, esi
+    mov esi, hif_embed              ; .../embed/<id>
+    call str_find_ci
+    jc .done
+    mov edx, eax
+    add edx, 7                      ; EDX = the id
+    mov esi, hif_yt
+    call str_find_ci                ; (on a YouTube address)
+    jc .done
+    mov edi, hms_src                ; the id, up to ? / " or the end
+    xor ecx, ecx
+.id:
+    mov al, [edx + ecx]
+    call is_alnum
+    jnc .idc
+    cmp al, '-'
+    je .idc
+    cmp al, '_'
+    jne .idend
+.idc:
+    mov [hif_id + ecx], al
+    inc ecx
+    cmp ecx, 20
+    jb .id
+.idend:
+    mov byte [hif_id + ecx], 0
+    test ecx, ecx
+    jz .done
+    mov dword [hp_apos], hp_attrs   ; <a href="https://www.youtube.com/watch?v=ID">
+    mov edi, hms_src
+    mov esi, hif_watch
+    call str_copy
+    mov esi, hif_id
+    call str_append
+    mov esi, hms_src
+    mov eax, A_HREF
+    call hp_add_attr
+    mov dword [hp_tagid], T_A
+    call hp_emit_open
+    mov dword [hp_apos], hp_attrs   ;   <img src="https://i.ytimg.com/vi/ID/mqdefault.jpg"
+    mov edi, hms_src
+    mov esi, hif_thumb1
+    call str_copy
+    mov esi, hif_id
+    call str_append
+    mov esi, hif_thumb2
+    call str_append
+    mov esi, hms_src
+    mov eax, A_SRC
+    call hp_add_attr
+    mov esi, hif_w
+    mov eax, A_WIDTH
+    call hp_add_attr
+    mov esi, hif_h
+    mov eax, A_HEIGHT
+    call hp_add_attr
+    mov esi, hif_alt
+    mov eax, A_ALT
+    call hp_add_attr
+    mov dword [hp_tagid], T_IMG
+    call hp_emit_open
+    call np_text_end                ; </a>
+    mov al, NT_CLOSE
+    call np_byte
+    mov al, T_A
+    call np_byte
+    mov dword [hp_tagid], T_IFRAME
+.done:
+    popad
+    ret
+
+; str_find_ci: EDI = text, ESI = what to find -> EAX = where (ignoring
+; case), CF=1 if absent
+str_find_ci:
+    push edi
+.l: cmp byte [edi], 0
+    je .no
+    call str_iprefix                ; (does EDI start with ESI?)
+    je .yes
+    inc edi
+    jmp .l
+.yes:
+    mov eax, edi
+    pop edi
+    clc
+    ret
+.no:
+    pop edi
+    stc
+    ret
+
+section .data
+hms_source  db "source", 0
+hms_webm    db "webm", 0
+hms_ogg     db "ogg", 0
+hif_embed   db "/embed/", 0
+hif_yt      db "youtube", 0
+hif_watch   db "https://www.youtube.com/watch?v=", 0
+hif_thumb1  db "https://i.ytimg.com/vi/", 0
+hif_thumb2  db "/mqdefault.jpg", 0
+hif_w       db "320", 0
+hif_h       db "180", 0
+hif_alt     db "YouTube video", 0
+section .bss
+alignb 4
+hms_end     resd 1
+hms_len     resd 1
+hms_save    resb 8192
+hms_src     resb 4096
+hif_id      resb 32
+section .text
 
 ; str_squeeze: ESI = string -> spaces at the ends removed, runs made one
 str_squeeze:
@@ -2381,10 +2718,17 @@ ly_finish:
     jns .l
     xor edx, edx
 .l: add [esi + DI_X], edx
+    cmp byte [esi + DI_TYPE], DT_IMAGE
+    je .pic
     cmp byte [esi + DI_TYPE], DT_TEXT
     jne .n
     movzx eax, byte [esi + DI_CW]
     call ly_lineh
+    jmp .bottom
+.pic:
+    movzx eax, word [esi + DI_H]    ; (a picture stands on the line too)
+    add eax, 2
+.bottom:
     neg eax
     add eax, [ly_lh]
     add eax, [ly_y]
@@ -2958,6 +3302,10 @@ ly_open:
     test ebx, TF_VOID
     jnz .void
     cmp eax, T_TEXTAREA
+    je .void
+    cmp eax, T_VIDEO                ; (their content was skipped, and they
+    je .void                        ; have no end in the page nodes)
+    cmp eax, T_AUDIO
     je .void
     call ly_autoclose
     mov eax, [ly_tag]
@@ -3612,9 +3960,21 @@ ly_void:
     je .input
     cmp eax, T_TEXTAREA
     je .area
+    cmp eax, T_VIDEO
+    je .video
+    cmp eax, T_AUDIO
+    je .audio
     jmp .done
 .br:
     call ly_br
+    jmp .done
+.video:
+    xor eax, eax
+    call ly_video
+    jmp .done
+.audio:
+    mov eax, 1
+    call ly_video
     jmp .done
 .hr:
     call ly_block_break
@@ -3631,8 +3991,10 @@ ly_void:
     mov ecx, 8
     call ly_margin
     jmp .done
-.img:                               ; an image: its description instead
-    mov eax, A_ALT
+.img:                               ; a picture, once it is loaded
+    call ly_image
+    jnc .done
+    mov eax, A_ALT                  ; not (yet): its description instead
     call ly_find_attr
     jc .noalt
     cmp byte [esi], 0
@@ -3913,6 +4275,278 @@ html_forms_reset:
     popad
     ret
 
+; ly_attr_num: EAX = attribute id -> EAX = its value as a whole number of
+; pixels (0 if missing, or not plain digits such as "100%")
+ly_attr_num:
+    push esi
+    call ly_find_attr
+    jc .none
+    call parse_uint
+    jc .none
+    cmp eax, 8000
+    ja .none
+    pop esi
+    ret
+.none:
+    xor eax, eax
+    pop esi
+    ret
+
+; ly_image: an <img> -> CF=0 if it was placed as a picture; CF=1 if its
+; description should be shown instead (no src, failed, or not loaded yet
+; and no size given). Also asks imgcache for the picture.
+ly_image:
+    pushad
+    mov eax, A_SRC                  ; src, or data-src (lazy-loading pages
+    call ly_find_attr               ; put the real one there)
+    jc .datasrc
+    cmp byte [esi], 0
+    je .datasrc
+    mov edi, li_data
+    xchg esi, edi
+    call str_iprefix                ; (src="data:..." placeholder?)
+    xchg esi, edi
+    jne .have
+    push esi
+    mov eax, A_DATASRC
+    call ly_find_attr
+    pop eax
+    jnc .have
+    mov esi, eax
+    jmp .have
+.datasrc:
+    mov eax, A_DATASRC
+    call ly_find_attr
+    jc .text
+.have:
+    call imgc_get
+    test eax, eax
+    jz .text
+    mov ebp, eax                    ; EBP = the picture's record
+    cmp dword [ebp + IR_STATE], IS_FAIL
+    je .text
+    mov eax, A_WIDTH
+    call ly_attr_num
+    mov ebx, eax                    ; EBX, ECX = width, height from the page
+    mov eax, A_HEIGHT
+    call ly_attr_num
+    mov ecx, eax
+    cmp dword [ebp + IR_STATE], IS_OK
+    jne .sized                      ; (not loaded yet: only its attributes)
+    test ebx, ebx
+    jnz .w
+    test ecx, ecx
+    jnz .h_only
+    mov ebx, [ebp + IR_W]           ; neither: its own size
+    mov ecx, [ebp + IR_H]
+    jmp .sized
+.h_only:                            ; width from the height, keeping shape
+    mov eax, ecx
+    mul dword [ebp + IR_W]
+    div dword [ebp + IR_H]
+    mov ebx, eax
+    jmp .sized
+.w:
+    test ecx, ecx
+    jnz .sized
+    mov eax, ebx                    ; height from the width
+    mul dword [ebp + IR_H]
+    div dword [ebp + IR_W]
+    mov ecx, eax
+.sized:
+    test ebx, ebx                   ; no size known: wait for the picture
+    jz .text
+    test ecx, ecx
+    jz .text
+    cmp ebx, 2                      ; 1x1 "tracking" pictures: nothing
+    ja .big
+    cmp ecx, 2
+    jbe .nothing
+.big:
+    mov eax, [ly_st + ST_RIGHT]     ; wider than the text: shrink it
+    sub eax, [ly_st + ST_LEFT]
+    cmp ebx, eax
+    jbe .fit
+    xchg eax, ebx                   ; EBX = room, EAX = width
+    push eax
+    mov eax, ecx                    ; height = height * room / width
+    mul ebx
+    pop esi
+    div esi
+    mov ecx, eax
+    test ecx, ecx
+    jnz .fit
+    inc ecx
+.fit:
+    cmp ecx, 30000
+    jbe .h_ok
+    mov ecx, 30000
+.h_ok:
+    call ly_begin                   ; on the line, like a word
+    xor edx, edx
+    cmp dword [ly_ps], 0
+    je .room
+    call ly_content
+    jz .room
+    mov edx, [ly_st + ST_CW]
+.room:
+    mov eax, [ly_x]
+    add eax, edx
+    add eax, ebx
+    cmp eax, [ly_st + ST_RIGHT]
+    jle .put
+    call ly_content
+    jz .put
+    call ly_finish
+    call ly_begin
+    xor edx, edx
+.put:
+    call ly_item
+    jc .nothing
+    mov byte [edi + DI_TYPE], DT_IMAGE
+    mov eax, [ly_x]
+    add eax, edx
+    mov [edi + DI_X], eax
+    mov eax, [ly_y]
+    mov [edi + DI_Y], eax
+    mov [edi + DI_W], bx
+    mov [edi + DI_H], cx
+    mov [edi + DI_TEXT], ebp
+    mov eax, [ly_st + ST_LINK]
+    mov [edi + DI_LINK], eax
+    add edx, ebx
+    add [ly_x], edx
+    lea eax, [ecx + 2]
+    cmp eax, [ly_lh]
+    jbe .lh
+    mov [ly_lh], eax
+.lh:
+    mov dword [ly_ps], 0
+    mov dword [ly_mark], 0
+.nothing:
+    popad
+    clc
+    ret
+.text:
+    popad
+    stc
+    ret
+
+; ly_video: EAX = 0 for <video>, 1 for <audio> -> a player box on a line of
+; its own (its record from player.asm, which also asks for the poster)
+ly_video:
+    pushad
+    mov [lv_audio], eax
+    mov eax, A_SRC
+    call ly_find_attr
+    jc .done
+    mov [lv_src], esi
+    xor eax, eax
+    mov [lv_poster], eax
+    mov [lv_auto], eax
+    mov eax, A_POSTER
+    call ly_find_attr
+    jc .np
+    call imgc_get
+    mov [lv_poster], eax
+.np:
+    mov eax, A_AUTOPLAY
+    call ly_find_attr
+    jc .na
+    mov dword [lv_auto], 1
+.na:
+    mov esi, [lv_src]               ; its record (EAX)
+    mov ebx, [lv_poster]
+    mov ecx, [lv_auto]
+    mov edx, [lv_audio]
+    call vid_get
+    test eax, eax
+    jz .done
+    mov ebp, eax
+    mov eax, A_WIDTH                ; size: from the page, else 640 x 360
+    call ly_attr_num                ; (audio: a bar 480 x 48)
+    mov ebx, eax
+    mov eax, A_HEIGHT
+    call ly_attr_num
+    mov ecx, eax
+    cmp dword [lv_audio], 0
+    je .vsize
+    test ebx, ebx
+    jnz .ah
+    mov ebx, 480
+.ah:
+    mov ecx, 48
+    jmp .fit
+.vsize:
+    test ebx, ebx
+    jnz .vw
+    mov ebx, 640
+.vw:
+    test ecx, ecx
+    jnz .fit
+    mov eax, ebx                    ; 16:9 when only the width is given
+    imul eax, 9
+    xor edx, edx
+    push ecx
+    mov ecx, 16
+    div ecx
+    pop ecx
+    mov ecx, eax
+.fit:
+    mov eax, [ly_st + ST_RIGHT]     ; no wider than the text
+    sub eax, [ly_st + ST_LEFT]
+    cmp ebx, eax
+    jbe .placed
+    push eax
+    mov eax, ecx
+    mul dword [esp]
+    div ebx
+    mov ecx, eax
+    pop ebx
+.placed:
+    cmp ebx, 160                    ; and not too small to use
+    jae .w_ok
+    mov ebx, 160
+.w_ok:
+    cmp ecx, 40
+    jae .h_ok
+    mov ecx, 40
+.h_ok:
+    call ly_block_break
+    push ecx
+    mov ecx, 8
+    call ly_margin
+    call ly_flush_margin
+    pop ecx
+    call ly_item
+    jc .done
+    mov byte [edi + DI_TYPE], DT_VIDEO
+    mov eax, [ly_st + ST_LEFT]
+    mov [edi + DI_X], eax
+    mov eax, [ly_y]
+    mov [edi + DI_Y], eax
+    mov [edi + DI_W], bx
+    mov [edi + DI_H], cx
+    mov [edi + DI_TEXT], ebp
+    mov eax, [ly_n]                 ; (not part of a line of text)
+    mov [ly_first], eax
+    add [ly_y], ecx
+    mov ecx, 8
+    call ly_margin
+.done:
+    popad
+    ret
+
+section .data
+li_data     db "data:", 0
+section .bss
+alignb 4
+lv_audio    resd 1
+lv_src      resd 1
+lv_poster   resd 1
+lv_auto     resd 1
+section .text
+
 ; ly_pool_copy_words: like ly_pool_copy but spaces stay spaces
 ly_pool_copy_words:
     push eax
@@ -4103,10 +4737,20 @@ html_paint:
     je .rect
     cmp byte [esi + DI_TYPE], DT_INPUT
     je .input
+    cmp byte [esi + DI_TYPE], DT_IMAGE
+    je .image
+    cmp byte [esi + DI_TYPE], DT_VIDEO
+    je .video
     call pt_text
     jmp .next
 .input:
     call pt_input
+    jmp .next
+.image:
+    call pt_image
+    jmp .next
+.video:
+    call vid_paint                  ; (player.asm: ESI = item, ECX / EDX)
     jmp .next
 .rect:
     push esi
@@ -4207,6 +4851,30 @@ pt_text:
     dec edi
     jmp .c
 .done:
+    popad
+    ret
+
+; pt_image: ESI = a picture's item, ECX / EDX = where on the screen. A
+; picture still loading (or that failed) is a light box with a frame.
+pt_image:
+    pushad
+    mov edi, [esi + DI_TEXT]
+    movzx ebx, word [esi + DI_H]
+    movzx eax, word [esi + DI_W]
+    mov esi, eax
+    cmp dword [edi + IR_STATE], IS_OK
+    jne .box
+    call imgc_paint
+    popad
+    ret
+.box:
+    mov edi, ebx
+    mov eax, 0xEEF0F3
+    call gfx_rgb
+    call gfx_fillrect
+    mov eax, 0xD0D5DB
+    call gfx_rgb
+    call gfx_frame
     popad
     ret
 
@@ -4450,8 +5118,12 @@ html_link_at:
     cmp edx, ebx
     jl .n
     push eax
+    movzx eax, word [esi + DI_H]    ; (a picture: its own height)
+    cmp byte [esi + DI_TYPE], DT_TEXT
+    jne .hgt
     movzx eax, byte [esi + DI_CW]
     call ly_lineh
+.hgt:
     add ebx, eax
     pop eax
     cmp edx, ebx

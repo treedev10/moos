@@ -424,6 +424,13 @@ section .text
 
 gui_redraw:
     pushad
+    cmp dword [pl_full], 0
+    je .desk
+    call pl_full_draw
+    call gui_cursor_show
+    call gfx_present
+    jmp .done
+.desk:
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
@@ -521,6 +528,7 @@ cmd_gui:
     call gui_handle
     call gui_wheel
     call gui_clock_check
+    call brow_tick
 .keys:
     call kbd_poll
     test eax, eax
@@ -537,6 +545,9 @@ cmd_gui:
     call gui_redraw
     jmp .loop
 .exit:
+    call vid_reset
+    call imgc_reset
+    mov dword [br_loaded], 0
 
     call gui_restore_console
     ret

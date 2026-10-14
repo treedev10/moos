@@ -79,6 +79,7 @@ topic_table:
     TOPIC "keys",     man_keys
     TOPIC "files",    man_files
     TOPIC "browser",  man_browser
+    TOPIC "youtube",  man_youtube
     dd 0
 
 shell_run:

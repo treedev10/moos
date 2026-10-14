@@ -475,6 +475,131 @@ alignb 4
 gt_x resd 1
 section .text
 
+gfx_blit:
+    pushad
+    mov eax, [gb_w]
+    test eax, eax
+    jle .done
+    cmp dword [gb_h], 0
+    jle .done
+    cmp dword [gb_sw], 0
+    jle .done
+    cmp dword [gb_sh], 0
+    jle .done
+    cmp dword [gb_sstride], 0
+    jne .st
+    mov eax, [gb_sw]
+    mov [gb_sstride], eax
+.st:
+    mov eax, [gb_sw]
+    shl eax, 16
+    xor edx, edx
+    div dword [gb_w]
+    mov [gb_fx], eax
+
+    mov eax, [gfx_cx0]
+    sub eax, [gb_x]
+    jns .c0
+    xor eax, eax
+.c0:
+    mov [gb_c0], eax
+    mov eax, [gfx_cx1]
+    sub eax, [gb_x]
+    cmp eax, [gb_w]
+    jle .c1
+    mov eax, [gb_w]
+.c1:
+    mov [gb_c1], eax
+    cmp eax, [gb_c0]
+    jle .done
+    mov eax, [gfx_cy0]
+    sub eax, [gb_y]
+    jns .r0
+    xor eax, eax
+.r0:
+    mov [gb_row], eax
+    mov eax, [gfx_cy1]
+    sub eax, [gb_y]
+    cmp eax, [gb_h]
+    jle .r1
+    mov eax, [gb_h]
+.r1:
+    mov [gb_r1], eax
+    xor eax, eax
+    cmp dword [bootinfo + BI.fb_format], 1
+    setne al
+    mov [gb_swap], eax
+.row:
+    mov eax, [gb_row]
+    cmp eax, [gb_r1]
+    jge .done
+    mul dword [gb_sh]
+    div dword [gb_h]
+    imul eax, [gb_sstride]
+    shl eax, 2
+    add eax, [gb_src]
+    mov esi, eax
+    mov eax, [gb_row]
+    add eax, [gb_y]
+    imul eax, [gfx_w]
+    add eax, [gb_x]
+    add eax, [gb_c0]
+    lea edi, [GUI_BB + eax * 4]
+    mov eax, [gb_c0]
+    mul dword [gb_fx]
+    mov edx, eax
+    mov ecx, [gb_c1]
+    sub ecx, [gb_c0]
+    mov ebx, [gb_fx]
+    cmp dword [gb_swap], 0
+    jne .swap
+.px:
+    mov eax, edx
+    shr eax, 16
+    mov eax, [esi + eax * 4]
+    mov [edi], eax
+    add edi, 4
+    add edx, ebx
+    dec ecx
+    jnz .px
+    jmp .next
+.swap:
+    mov eax, edx
+    shr eax, 16
+    mov eax, [esi + eax * 4]
+    bswap eax
+    shr eax, 8
+    mov [edi], eax
+    add edi, 4
+    add edx, ebx
+    dec ecx
+    jnz .swap
+.next:
+    inc dword [gb_row]
+    jmp .row
+.done:
+    mov dword [gb_sstride], 0
+    popad
+    ret
+
+section .bss
+alignb 4
+gb_src      resd 1
+gb_sw       resd 1
+gb_sh       resd 1
+gb_sstride  resd 1
+gb_x        resd 1
+gb_y        resd 1
+gb_w        resd 1
+gb_h        resd 1
+gb_fx       resd 1
+gb_c0       resd 1
+gb_c1       resd 1
+gb_row      resd 1
+gb_r1       resd 1
+gb_swap     resd 1
+section .text
+
 gfx_icon:
     push ebx
     mov ebx, 16

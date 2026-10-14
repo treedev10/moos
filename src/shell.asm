@@ -83,6 +83,7 @@ topic_table:                        ; manual pages that are not commands
     TOPIC "keys",     man_keys
     TOPIC "files",    man_files
     TOPIC "browser",  man_browser
+    TOPIC "youtube",  man_youtube
     dd 0
 
 ; ------------------------------------------------------------------ main loop

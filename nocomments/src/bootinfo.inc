@@ -12,6 +12,8 @@ struc KH
     .gdt        resd 1
     .gdtmax     resd 1
     .stack      resd 1
+    .bssend     resd 1
+    .limit      resd 1
 endstruc
 
 struc BI

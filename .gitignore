@@ -2,3 +2,4 @@ build/
 *.png
 uefi-vars.fd
 __pycache__/
+.claude/worktrees/

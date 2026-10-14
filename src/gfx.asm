@@ -519,6 +519,135 @@ alignb 4
 gt_x resd 1
 section .text
 
+; gfx_blit: draw a picture of 0x00RRGGBB pixels, stretched or shrunk to a
+; box (nearest pixel), cut to the clip rectangle. In: gb_src (pixels),
+; gb_sw, gb_sh (its size), gb_sstride (pixels per row; 0 = gb_sw), and the
+; box gb_x, gb_y, gb_w, gb_h.
+gfx_blit:
+    pushad
+    mov eax, [gb_w]
+    test eax, eax
+    jle .done
+    cmp dword [gb_h], 0
+    jle .done
+    cmp dword [gb_sw], 0
+    jle .done
+    cmp dword [gb_sh], 0
+    jle .done
+    cmp dword [gb_sstride], 0
+    jne .st
+    mov eax, [gb_sw]
+    mov [gb_sstride], eax
+.st:
+    mov eax, [gb_sw]                ; x step, 16.16 fixed point
+    shl eax, 16
+    xor edx, edx
+    div dword [gb_w]
+    mov [gb_fx], eax
+    ; the rows and columns of the box that are inside the clip
+    mov eax, [gfx_cx0]
+    sub eax, [gb_x]
+    jns .c0
+    xor eax, eax
+.c0:
+    mov [gb_c0], eax                ; first column (box-relative)
+    mov eax, [gfx_cx1]
+    sub eax, [gb_x]
+    cmp eax, [gb_w]
+    jle .c1
+    mov eax, [gb_w]
+.c1:
+    mov [gb_c1], eax                ; end column
+    cmp eax, [gb_c0]
+    jle .done
+    mov eax, [gfx_cy0]
+    sub eax, [gb_y]
+    jns .r0
+    xor eax, eax
+.r0:
+    mov [gb_row], eax
+    mov eax, [gfx_cy1]
+    sub eax, [gb_y]
+    cmp eax, [gb_h]
+    jle .r1
+    mov eax, [gb_h]
+.r1:
+    mov [gb_r1], eax
+    xor eax, eax                    ; swap red and blue unless the screen
+    cmp dword [bootinfo + BI.fb_format], 1 ; is BGRX (= 0x00RRGGBB)
+    setne al
+    mov [gb_swap], eax
+.row:
+    mov eax, [gb_row]
+    cmp eax, [gb_r1]
+    jge .done
+    mul dword [gb_sh]               ; source row = row * sh / h
+    div dword [gb_h]
+    imul eax, [gb_sstride]
+    shl eax, 2
+    add eax, [gb_src]
+    mov esi, eax                    ; ESI = the source row
+    mov eax, [gb_row]               ; EDI = the destination pixel
+    add eax, [gb_y]
+    imul eax, [gfx_w]
+    add eax, [gb_x]
+    add eax, [gb_c0]
+    lea edi, [GUI_BB + eax * 4]
+    mov eax, [gb_c0]                ; EDX = 16.16 source x
+    mul dword [gb_fx]
+    mov edx, eax
+    mov ecx, [gb_c1]
+    sub ecx, [gb_c0]                ; ECX = columns
+    mov ebx, [gb_fx]
+    cmp dword [gb_swap], 0
+    jne .swap
+.px:
+    mov eax, edx
+    shr eax, 16
+    mov eax, [esi + eax * 4]
+    mov [edi], eax
+    add edi, 4
+    add edx, ebx
+    dec ecx
+    jnz .px
+    jmp .next
+.swap:
+    mov eax, edx
+    shr eax, 16
+    mov eax, [esi + eax * 4]
+    bswap eax                       ; 00RRGGBB -> BBGGRR00
+    shr eax, 8                      ; -> 00BBGGRR
+    mov [edi], eax
+    add edi, 4
+    add edx, ebx
+    dec ecx
+    jnz .swap
+.next:
+    inc dword [gb_row]
+    jmp .row
+.done:
+    mov dword [gb_sstride], 0
+    popad
+    ret
+
+section .bss
+alignb 4
+gb_src      resd 1
+gb_sw       resd 1
+gb_sh       resd 1
+gb_sstride  resd 1
+gb_x        resd 1
+gb_y        resd 1
+gb_w        resd 1
+gb_h        resd 1
+gb_fx       resd 1
+gb_c0       resd 1
+gb_c1       resd 1
+gb_row      resd 1
+gb_r1       resd 1
+gb_swap     resd 1
+section .text
+
 ; gfx_icon: a 16x16 one-colour picture: ESI = 16 words (one per row, the
 ; top bit is the left pixel), ECX = x, EDX = y, EAX = pixel
 gfx_icon:

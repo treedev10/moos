@@ -207,7 +207,7 @@ efi_mouse_init:
 ; size, in whole 4 KB pages, below 4 GB (MOOS is 32-bit), cleared. Each
 ; block is noted with its owner (an app number or OWN_*) so the Task
 ; Manager can show who uses what.
-BIG_MAX     equ 64                      ; blocks at the same time
+BIG_MAX     equ 512                     ; blocks at the same time
 OWN_SYSTEM  equ 0                       ; owners: 1-15 are desktop apps,
 OWN_SOUND   equ 16                      ; these the rest of the system
 OWN_NET     equ 17

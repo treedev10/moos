@@ -25,10 +25,10 @@ PAD_X       equ 14                  ; room left and right of the page's text
 TB_BW       equ 30                  ; toolbar button width
 GO_W        equ 40
 ADDR_X      equ 4 * (TB_BW + 4) + 10 ; where the address bar starts
-URL_MAX     equ 1000
+URL_MAX     equ 4000
 HIST_MAX    equ 16
-HIST_SIZE   equ 1024                ; one history entry: URL, then scroll
-HIST_SCROLL equ 1020
+HIST_SIZE   equ 4096                ; one history entry: URL, then scroll
+HIST_SCROLL equ 4092
 LINE_STEP   equ 48                  ; pixels per arrow key / wheel notch
 MAX_REDIR   equ 8
 C_CHROME    equ 0xE4E7EB            ; toolbar and status line
@@ -38,11 +38,11 @@ C_BTN_OFF   equ 0xA8AEB5            ; (a button that cannot be used now)
 
 section .bss
 alignb 4
-br_url      resb 1024               ; the page shown (without its #part)
-br_addr     resb 1024               ; what the address bar shows
-br_tmp      resb 1024               ; URL work
-br_tmp2     resb 1024
-br_hover_url resb 1024              ; where the link under the mouse goes
+br_url      resb 4096               ; the page shown (without its #part)
+br_addr     resb 4096               ; what the address bar shows
+br_tmp      resb 4096               ; URL work
+br_tmp2     resb 4096
+br_hover_url resb 4096              ; where the link under the mouse goes
 br_frag     resb 256                ; the #part to jump to
 br_status   resb 320
 br_wintitle resb 200
@@ -207,6 +207,32 @@ brow_init:
     popad
     ret
 
+; brow_tick: from the desktop's main loop: the browser's work in the
+; background - the video player's step, and the page's next picture (not
+; while a video loads or plays: fetching a picture would hold it up)
+brow_tick:
+    test dword [wn_f + APP_BROWSER * 4], WF_OPEN
+    jnz .open
+    cmp dword [br_loaded], 0        ; the window was closed: stop playing,
+    je .r                           ; and let go of the page's pictures
+    mov dword [br_loaded], 0        ; (it starts afresh when opened again)
+    call vid_reset
+    call imgc_reset
+    ret
+.open:
+    call pl_tick
+    mov eax, [pl_state]
+    cmp eax, PS_LOADING
+    jb .pic
+    cmp eax, PS_PLAY
+    jbe .r
+.pic:
+    call imgc_tick
+    jnc .r
+    mov dword [br_lw], 0            ; a picture came: lay the page out again
+    or byte [gui_dirty], 1
+.r: ret
+
 ; brow_open_url: ESI = an address -> go there ("gui browser <url>")
 brow_open_url:
     pushad
@@ -335,6 +361,7 @@ app_brow_draw:
     mov [pg_vt], eax
     add eax, [br_vh]
     mov [pg_vb], eax
+    call vid_unseen                 ; (html_paint notes where players are)
     call html_paint
     mov ecx, [cb_x]
     mov edx, [cb_y]
@@ -657,6 +684,12 @@ brow_click:
     add ebx, [br_vw]
     cmp [mouse_x], ebx
     jge .scrollbar
+    call vid_at                     ; a video player?
+    jc .notvid
+    call vd_from_rec
+    call vid_click
+    jmp .done
+.notvid:
     ; the page: a form field, or a link?
     mov dword [pg_field], 0
     mov eax, [mouse_x]
@@ -905,6 +938,8 @@ brow_key:
     cmp dword [br_typing], 0
     jne .typing
 .page:
+    call pl_page_key                ; (K, J, L, F, M for a video)
+    jnc .done
     cmp eax, KEY_UP
     je .up
     cmp eax, KEY_DOWN
@@ -1591,7 +1626,7 @@ brow_reload:
 ; brow_hist_entry: EAX = entry number -> EDI = it
 brow_hist_entry:
     mov edi, eax
-    shl edi, 10
+    shl edi, 12
     add edi, BR_HIST
     ret
 
@@ -1702,6 +1737,8 @@ brow_load:
     mov edi, br_url
     call str_copy
     call html_forms_reset
+    call imgc_reset                 ; (the last page's pictures and video)
+    call vid_reset
     mov dword [br_loaded], 0
     mov dword [br_secure], 0
     mov dword [br_redirs], 0
@@ -1717,6 +1754,15 @@ brow_load:
     call brow_status_outbuf
     mov byte [gui_dirty], 1
     call gui_redraw
+    mov esi, br_url                 ; YouTube: a page MOOS makes itself
+    call yt_match                   ; (youtube.asm)
+    jc .again
+    mov dword [br_loaded], 1
+    mov dword [br_secure], 1
+    call yt_page
+    mov [br_bytes], ecx
+    call html_parse
+    jmp .parsed
 .again:
     mov esi, br_url
     mov edi, br_vsrc                ; view-source:<address>

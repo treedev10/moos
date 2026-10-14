@@ -18,10 +18,20 @@ DESCRIPTION
     bar and the status line say the page came over HTTPS. Plain text
     files are shown as they are.
 
-    It does not run JavaScript, apply style sheets or show pictures: a
-    picture is shown as its description (its "alt" text) in [brackets].
-    Pages built mostly by JavaScript show little. Parts that a page
-    marks as hidden are left out.
+    Pictures (JPEG, PNG and GIF, also "data:" pictures written into the
+    page) are loaded after the page is shown, one after the other, and
+    the page is laid out again as they come. Until then, and if one
+    cannot be loaded, its description (its "alt" text) is shown in
+    [brackets].
+
+    Videos and sound (<video> and <audio>) get a player: click it to
+    play. MOOS plays MP4 files with H.264 video and AAC sound - the
+    most common kind on the web. See THE PLAYER below, and man youtube
+    for YouTube.
+
+    It does not run JavaScript or apply style sheets. Pages built
+    mostly by JavaScript show little. Parts that a page marks as hidden
+    are left out.
 
 THE WINDOW
     Along the top: Back, Forward, Reload, Home (the start page), the
@@ -32,6 +42,17 @@ THE WINDOW
     Click a link to follow it; the mouse pointer becomes a hand over
     links. Drag the scroll bar, click above or below its thumb, or turn
     the mouse wheel to scroll.
+
+THE PLAYER
+    A video shows its poster picture and a play button until it is
+    clicked (or it starts by itself, if the page says so). Moving the
+    mouse over a playing video brings up the control bar: play/pause,
+    the time, the progress bar (light grey: downloaded; click to jump
+    there), the volume (click the speaker to mute) and full screen.
+    The file is downloaded while it plays, in pieces, and kept, so
+    going back costs nothing. Keys: K pause, J / L ten seconds back /
+    ahead, F full screen (Esc leaves it), M mute. One video plays at a
+    time; going to another page stops it.
 
 KEYS
     Ctrl+L          type an address (typing on the page does it too)
@@ -53,6 +74,7 @@ ADDRESSES
 
     #part at the end of an address scrolls to that place on the page.
     view-source:<address> shows a page's HTML as text.
+    youtube.com addresses show pages MOOS makes itself (man youtube).
     about:home is the start page; about:test shows what can be drawn.
 
 FORMS
@@ -68,8 +90,8 @@ MESSAGES
         HTTPS check failed - for example "the server uses an ECDSA
         certificate", which MOOS cannot check yet.
     MOOS cannot show this file
-        The address is a picture, a program or another kind of file.
-        It can be saved from the Terminal with  get <address> <file>.
+        The address is a program or another kind of file. It can be
+        saved from the Terminal with  get <address> <file>.
 
 TIPS
     Pages up to 512 KB are loaded; a bigger one is shown as far as it
@@ -77,4 +99,4 @@ TIPS
     sites that need you to sign in will not let you.
 
 SEE ALSO
-    gui, get, net
+    gui, get, net, youtube

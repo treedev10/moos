@@ -819,6 +819,15 @@ gui_handle:
     mov eax, [mouse_btn]
     mov ebx, [prev_btn]
     mov [prev_btn], eax
+    cmp dword [pl_full], 0          ; a video in full screen: clicks are its
+    je .windows
+    test eax, eax
+    jz .done
+    test ebx, ebx
+    jnz .done
+    call pl_full_click
+    jmp .done
+.windows:
     test eax, eax
     jz .up
     test ebx, ebx
@@ -1120,6 +1129,11 @@ gui_taskbar_click:
 ; empty desktop 1-5 open the apps too.
 gui_key:
     pushad
+    cmp dword [pl_full], 0          ; a video in full screen takes the keys
+    je .win
+    call pl_full_key
+    jmp .done
+.win:
     cmp dword [kmode], 0
     jne .kmode
     cmp eax, 27                     ; Esc: close the window, or leave
@@ -1253,3 +1267,7 @@ gui_key:
 %include "src/gui_apps.asm"
 %include "src/html.asm"
 %include "src/browser.asm"
+%include "src/imgcache.asm"
+%include "src/player.asm"
+%include "src/youtube.asm"
+%include "src/media_stub.asm"

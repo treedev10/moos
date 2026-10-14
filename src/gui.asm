@@ -464,6 +464,13 @@ section .text
 ; all of it (gui_dirty bit 1) or just the taskbar (bit 2)
 gui_redraw:
     pushad
+    cmp dword [pl_full], 0          ; a video in full screen: only that
+    je .desk
+    call pl_full_draw
+    call gui_cursor_show
+    call gfx_present
+    jmp .done
+.desk:
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
@@ -562,6 +569,7 @@ cmd_gui:
     call gui_handle                 ; clicks, drags, hovering
     call gui_wheel
     call gui_clock_check
+    call brow_tick                  ; pictures and video in the background
 .keys:
     call kbd_poll                   ; take every waiting key before drawing
     test eax, eax
@@ -578,6 +586,9 @@ cmd_gui:
     call gui_redraw
     jmp .loop
 .exit:
+    call vid_reset                  ; (no sound left playing, and the
+    call imgc_reset                 ; browser's memory given back)
+    mov dword [br_loaded], 0
     ; return to the text console
     call gui_restore_console
     ret

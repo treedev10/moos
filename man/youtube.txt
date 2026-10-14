@@ -1,0 +1,73 @@
+NAME
+    youtube - watching YouTube in the MOOS browser
+
+SYNOPSIS
+    gui browser youtube.com
+    gui browser youtube.com/watch?v=<id>
+
+DESCRIPTION
+    YouTube's own pages are a large JavaScript program, which the MOOS
+    browser does not run. So when you go to a YouTube address, MOOS
+    makes the page itself: it asks YouTube's API (the one YouTube's
+    apps use) for what is needed, and lays out a plain page.
+
+        youtube.com                    a search box
+        youtube.com/results?search_query=...
+                                       the videos found: a picture, the
+                                       title, channel, length and views
+        youtube.com/watch?v=<id>       the video player, the title, the
+        youtu.be/<id>                  channel, views and description
+        youtube.com/shorts/<id>
+        youtube.com/embed/<id>
+
+    Links to YouTube on other pages, and YouTube videos embedded in
+    other pages, lead to these pages too.
+
+THE PLAYER
+    The video starts by itself. MOOS plays YouTube's basic stream:
+    360p H.264 video with AAC sound in one MP4 file (YouTube calls it
+    itag 18). It downloads the file in pieces while playing; the light
+    grey part of the progress bar is what has arrived.
+
+    Move the mouse over the video to see the control bar: play/pause,
+    the time, the progress bar (click to jump there), the volume (click
+    the speaker to mute, the bar to set it) and full screen.
+
+    Keys while the browser shows a video:
+        K           pause / play
+        J, L        10 seconds back / ahead
+        F           full screen (Esc leaves it)
+        M           mute
+    In full screen also Space (pause), Left/Right (5 seconds), Up/Down
+    (volume).
+
+    Sound needs a sound card MOOS knows (see man sound); without one
+    the video plays silently.
+
+WHEN A VIDEO DOES NOT PLAY
+    "This video cannot be played in MOOS" comes with YouTube's reason
+    when there is one: videos that need you to sign in (age limits,
+    members only), live streams, and videos YouTube offers only in
+    pieces MOOS cannot use.
+
+    To get a stream address, MOOS has to ask as one of YouTube's apps.
+    Which apps get addresses that work without YouTube's JavaScript
+    changes from time to time. MOOS tries several in turn. When
+    YouTube changes things, newer app details can be given in the
+    file yt.cfg, one per line, tried before the built-in ones:
+
+        client NAME NUMBER VERSION USER-AGENT
+
+    for example
+
+        client ANDROID_VR 28 1.65.10 com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip
+
+    (write it with the editor:  edit yt.cfg). Projects such as yt-dlp
+    publish current values.
+
+    Two more yt.cfg lines are for testing: "api URL" asks another
+    server than https://www.youtube.com, and "images URL" takes the
+    pictures from another server than https://i.ytimg.com.
+
+SEE ALSO
+    browser, gui, sound, net
