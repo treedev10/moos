@@ -22,15 +22,19 @@
 ;  child), so a key's next is its value's next. The members of an object
 ;  and the elements of an array are therefore all walked the same way:
 ;  from the token after the container, follow next until the container's
-;  next. For example  {"a":[1,2],"b":null}  gives
+;  next. For example  {"a":[1,2],"b":null}  (20 bytes) gives 7 tokens:
 ;
-;    0 object  next 6       3 primitive 1  next 4
-;    1 string a next 5      4 primitive 2  next 5
-;    2 array    next 5      5 string b     next 7 ... wait: "b" is token 5,
-;                                          its value null is token 6, so
-;                                          "b" has next 7 and the object 7.
+;    index  type       start end  next
+;      0    object       0    20    7      the whole text
+;      1    string a     2     3    5      key; its value is tokens 2-4
+;      2    array        5    10    5
+;      3    primitive 1  6     7    4
+;      4    primitive 2  8     9    5
+;      5    string b    12    13    7      key; its value is token 6
+;      6    primitive   15    19    7      null
 ;
-;  (The object's next is 7 as well: the text has 7 tokens.)
+;  so the members of the object are at 1 (then next = 5) and 5 (then
+;  next = 7 = the object's next: done).
 ;
 ;  Then json_key / json_index find members and elements, json_str decodes
 ;  a string (escapes, including \uXXXX and surrogate pairs, to UTF-8),
@@ -778,14 +782,16 @@ json_eqi:
     jc .no
     cmp byte [ebx + JSON_TYPE], JSON_T_STRING
     jne .raw
-.str:
-    cmp esi, edx
+.str:                               ; (a 0 byte never matches: s ends there,
+    cmp esi, edx                    ; so reading on would pass its end)
     jae .end
     movzx eax, byte [esi]
     cmp al, '\'
     je .esc
     cmp al, [edi]
     jne .no
+    test al, al
+    jz .no
     inc esi
     inc edi
     jmp .str
@@ -797,6 +803,8 @@ json_eqi:
 .escb:
     cmp al, [edi]
     jne .no
+    test al, al                     ; (\u0000)
+    jz .no
     inc edi
     shr eax, 8
     dec ecx
@@ -808,6 +816,8 @@ json_eqi:
     mov al, [esi]
     cmp al, [edi]
     jne .no
+    test al, al
+    jz .no
     inc esi
     inc edi
     jmp .raw
@@ -953,7 +963,8 @@ json_index:
 ;   tokens are copied as they are (a number's digits, "true", or a whole
 ;   object's text). Returns the length (without the NUL), JSON_EINVAL (-1)
 ;   for a bad escape, or -2 if it does not fit (out then holds what fit:
-;   the start, NUL-terminated, never half an escaped character).
+;   the start, NUL-terminated, never half a character: an escape or a
+;   UTF-8 sequence is kept whole or left out).
 ; -----------------------------------------------------------------------------
 EXPORT(json_str)
 json_str:
@@ -1015,6 +1026,42 @@ json_str:
     sub eax, ARG(2)
     CLEAVE
 .full:
+    ; out is full at EDI. Do not leave the first bytes of a UTF-8
+    ; character at the end: step back over the continuation bytes
+    ; (10xxxxxx, at most 3) to the lead byte, and if the character it
+    ; starts is longer than what is there, cut it off.
+    mov ecx, ARG(2)                 ; ECX = start of out
+    mov esi, edi                    ; ESI = scanning back
+    xor edx, edx                    ; EDX = continuation bytes seen
+.fback:
+    cmp esi, ecx
+    jbe .fend                       ; (only continuation bytes: leave them)
+    dec esi
+    movzx eax, byte [esi]
+    mov ebx, eax
+    and ebx, 0xC0
+    cmp ebx, 0x80
+    jne .flead
+    inc edx
+    cmp edx, 3
+    jbe .fback
+    jmp .fend                       ; (4 or more: not UTF-8, leave them)
+.flead:                             ; ESI = the byte before them, EAX its value
+    cmp eax, 0xC0
+    jb .fend                        ; (ASCII: the end is a whole character)
+    mov ebx, 2                      ; EBX = the length the lead byte gives
+    cmp eax, 0xE0
+    jb .flen
+    inc ebx
+    cmp eax, 0xF0
+    jb .flen
+    inc ebx
+.flen:
+    inc edx                         ; EDX = bytes of it that are there
+    cmp edx, ebx
+    jae .fend
+    mov edi, esi                    ; incomplete: cut at its lead byte
+.fend:
     mov byte [edi], 0
 .full0:
     mov eax, -2
@@ -1044,84 +1091,77 @@ json_int:
     cmp al, JSON_T_PRIM
     jne .bad
 .text:
-    call json_text
+    call json_text                  ; ESI..EDX = the text
     jc .bad
-    xor edi, edi                    ; EDI = 1 if negative
+    xor ebx, ebx                    ; EBX: bit 0 = negative, bit 1 = too big
     cmp esi, edx
     jae .bad
     cmp byte [esi], '-'
     jne .digits
-    inc edi
+    inc ebx
     inc esi
 .digits:
-    xor eax, eax                    ; EAX = the value so far (its size),
-    xor ebx, ebx                    ; EBX = 1 once it is too big
-    mov ecx, esi                    ; ECX = where the digits start
+    xor eax, eax                    ; EAX = the size of the value so far
+    mov edi, esi                    ; EDI = where the digits start
 .dig:
     cmp esi, edx
     jae .end
-    movzx ebp, byte [esi]           ; (EBP is free here; CLEAVE restores it)
-    sub ebp, '0'
-    cmp ebp, 9
+    movzx ecx, byte [esi]
+    sub ecx, '0'
+    cmp ecx, 9
     ja .notdig
     inc esi
-    test ebx, ebx
-    jnz .dig
-    push edx
-    mov edx, 10
-    mul edx
-    test edx, edx
-    pop edx
-    jnz .big
-    add eax, ebp
-    jc .big
-    cmp eax, 0x80000000
+    cmp eax, 0x0CCCCCCD             ; 10 * EAX would pass 2^31: too big
+    jae .big
+    lea eax, [eax + eax * 4]
+    add eax, eax                    ; EAX * 10 + the digit: at most 0x80000001,
+    add eax, ecx                    ; so no carry out of 32 bits
+    cmp eax, 0x80000000             ; (2^31 itself is fine if negative)
     jbe .dig
 .big:
-    mov ebx, 1
+    or ebx, 2
+    mov eax, 0x0CCCCCCD             ; (so every later digit lands here too)
     jmp .dig
 .notdig:
     cmp byte [esi], '.'             ; a fraction: digits that are dropped
     jne .bad
-    cmp esi, ecx
+    cmp esi, edi
     je .bad                         ; (no digits before the point)
     inc esi
     cmp esi, edx
-    jae .bad
+    jae .bad                        ; (and at least one after it)
 .frac:
-    movzx ebp, byte [esi]
-    sub ebp, '0'
-    cmp ebp, 9
+    movzx ecx, byte [esi]
+    sub ecx, '0'
+    cmp ecx, 9
     ja .bad
     inc esi
     cmp esi, edx
     jb .frac
 .end:
-    cmp esi, ecx
+    cmp esi, edi
     je .bad                         ; no digits at all
     mov edx, ARG(2)
-    test edi, edi
-    jnz .neg
-    test ebx, ebx
-    jnz .posbig
-    cmp eax, 0x7FFFFFFF
-    ja .posbig
-    mov [edx], eax
-    xor eax, eax
-    CLEAVE
-.posbig:
-    mov dword [edx], 0x7FFFFFFF
-    mov eax, -2
-    CLEAVE
-.neg:
-    test ebx, ebx
-    jnz .negbig
+    test ebx, 2
+    jnz .huge
+    test ebx, 1
+    jz .pos
     neg eax                         ; (-0x80000000 is fine)
+    jmp .set
+.pos:
+    cmp eax, 0x7FFFFFFF
+    ja .huge
+.set:
     mov [edx], eax
     xor eax, eax
     CLEAVE
-.negbig:
-    mov dword [edx], 0x80000000
+.huge:                              ; out of range: the nearest int32
+    mov eax, 0x7FFFFFFF
+    test ebx, 1
+    jz .hset
+    inc eax                         ; (-2^31)
+.hset:
+    mov [edx], eax
     mov eax, -2
     CLEAVE
 .bad:
