@@ -9,22 +9,46 @@ org KORG
 
 %define KV(a) (kbase + ((a) - 0x10000))
 
+%ifdef FULL
+
+STACK_OFF    equ 0x480000
+%define STACK_TOP    KV(0x480000)
+%define UEFI_BOUNCE  KV(0x480000)
+BOUNCE_OFF   equ 0x480000
+%define FS_DIR       KV(0x500000)
+%define FS_DATA      KV(0x501000)
+%define SCRATCH      KV(0x600000)
+%define OUTBUF       KV(0x610000)
+%define NET_BUF      KV(0x620000)
+%define PKG_BUF      KV(0x630000)
+%define GUI_BB       KV(0xA30000)
+%define NET_RING     KV(0xF30000)
+%define TLS_BASE     KV(0xF40000)
+%define BR_BASE      KV(0xF60000)
+KMEM_END     equ 0x1160000
+KERNEL_LIMIT equ 0x400000
+PKG_BUF_SIZE equ 0x400000
+%else
+
+STACK_OFF    equ 0x90000
 %define STACK_TOP    KV(0x90000)
 %define UEFI_BOUNCE  KV(0xA0000)
+BOUNCE_OFF   equ 0xA0000
 %define FS_DIR       KV(0x100000)
 %define FS_DATA      KV(0x101000)
 %define SCRATCH      KV(0x200000)
 %define OUTBUF       KV(0x210000)
 %define NET_BUF      KV(0x220000)
 %define PKG_BUF      KV(0x230000)
-%define GUI_BB       KV(0x2B0000)
 %define NET_RING     KV(0x7B0000)
 %define TLS_BASE     KV(0x7C0000)
-%define BR_BASE      KV(0x7E0000)
+KMEM_END     equ 0x7E0000
+KERNEL_LIMIT equ 0x80000
+PKG_BUF_SIZE equ 0x80000
+%endif
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
-PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x9E0000 - 0x10000
+KMEM_SIZE    equ KMEM_END - 0x10000
 
 VGA_MEM      equ screen_buf
 SCR_COLS     equ 80
@@ -48,7 +72,9 @@ kernel_header:
     dd efi_tick - kbase
     dd uefi_gdt - kbase
     dd UEFI_GDT_MAX
-    dd 0x90000 - 0x10000
+    dd STACK_OFF - 0x10000
+    dd bss_end - kbase
+    dd KERNEL_LIMIT - 0x10000
 
 kernel_entry_bios:
     cli
@@ -140,8 +166,14 @@ zero_bss:
 %include "src/cmd_apt.asm"
 %include "src/cmd_login.asm"
 %include "src/script.asm"
+%ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/h264.asm"
+section .text
+%else
+%include "src/lite.asm"
+%endif
 %include "src/calc.asm"
 %include "src/editor.asm"
 %include "src/installer.asm"
