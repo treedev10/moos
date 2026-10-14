@@ -136,7 +136,10 @@ rcv_shift       resb 1                  ; ours (0 unless the server agreed)
 ack_now         resb 1                  ; send an ACK before returning
 tcp_force       resb 1                  ; tcp_output may probe a zero window
 tcp_opt_len     resb 1                  ; options for the next segment sent
+tcp_loss        resb 1                  ; "net loss": percent of segments lost
 tcp_opts        resb 12
+alignb 4
+tcp_lrand       resd 1                  ; its random numbers
 
 section .text
 
@@ -282,6 +285,11 @@ ring_out:
 ; tx_win say where it goes; tcp_opt_len bytes of tcp_opts become TCP options
 ; (and are used up). Registers kept.
 tcp_emit:
+    call tcp_lose                       ; ("net loss": thrown away instead)
+    jnc .send
+    mov byte [tcp_opt_len], 0
+    ret
+.send:
     pushad
     mov edi, NET_TXP
     mov [edi + 13], al                  ; flags
@@ -332,6 +340,35 @@ tcp_emit:
     mov ecx, ebp
     call ip_send
     popad
+    ret
+
+; tcp_lose -> CF=1 if this segment is to be thrown away: the "net loss"
+; test drops tcp_loss percent of the segments sent and received, picked at
+; random, so that retransmission and reordering can be tried on a network
+; that loses nothing. CF=0 when the test is off. Registers kept.
+tcp_lose:
+    cmp byte [tcp_loss], 0
+    je .keep
+    push eax
+    push ecx
+    push edx
+    mov eax, [tcp_lrand]                ; the next pseudo-random number
+    imul eax, eax, 1103515245
+    add eax, 12345
+    mov [tcp_lrand], eax
+    shr eax, 8
+    and eax, 0xFFFF
+    xor edx, edx
+    mov ecx, 100
+    div ecx                             ; EDX = 0..99
+    movzx eax, byte [tcp_loss]
+    cmp edx, eax                        ; CF=1 if below the percentage
+    pop edx
+    pop ecx
+    pop eax
+    ret
+.keep:
+    clc
     ret
 
 ; tcp_window -> EAX = the window field to send: the ring's free space,
@@ -1114,6 +1151,8 @@ tcp_input:
     mov eax, [seg_dport]
     cmp ax, [tcp_src_port]
     jne .stray
+    call tcp_lose                       ; ("net loss": as if it never came)
+    jc .r
     mov eax, [ticks]
     mov [tcp_last_rx], eax
     cmp byte [tcp_reset], 0

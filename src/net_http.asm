@@ -58,13 +58,13 @@ HB_CLOSE    equ 2                       ; when the server closes
 HB_CHUNK    equ 3                       ; chunked: at the last (empty) chunk
 
 ; where the chunk decoder is (hb_ck); the order matters (see .craw)
-CK_SIZE     equ 0                       ; reading a chunk's size (hex)
-CK_EXT      equ 1                       ; the rest of the size line
-CK_DATA     equ 2                       ; inside a chunk's data
-CK_CRLF     equ 3                       ; the CR LF after the data
-CK_TRAIL    equ 4                       ; after the last chunk: a line starts
-CK_TLINE    equ 5                       ;   inside a trailer line
-CK_DONE     equ 6                       ; the final blank line has come
+HCK_SIZE     equ 0                      ; reading a chunk's size (hex)
+HCK_EXT      equ 1                      ; the rest of the size line
+HCK_DATA     equ 2                      ; inside a chunk's data
+HCK_CRLF     equ 3                      ; the CR LF after the data
+HCK_TRAIL    equ 4                      ; after the last chunk: a line starts
+HCK_TLINE    equ 5                      ;   inside a trailer line
+HCK_DONE     equ 6                      ; the final blank line has come
 
 ; stream states (hs_state)
 HS_NONE     equ 0
@@ -82,7 +82,7 @@ rq_len          resd 1                  ; length of the request's head
 hb_mode         resd 1                  ; HB_*
 hb_left         resd 1                  ; HB_LEN: body bytes still to come;
                                         ; HB_CHUNK: bytes left in this chunk
-hb_ck           resd 1                  ; CK_*
+hb_ck           resd 1                  ; HCK_*
 hb_size         resd 1                  ; the chunk size being read,
 hb_digits       resd 1                  ;   and its hex digits so far
 hb_pre          resd 1                  ; body bytes that came in with the
@@ -1162,7 +1162,7 @@ http_body_setup:
     call http_contains_ci
     jc .not_chunked
     mov dword [hb_mode], HB_CHUNK
-    mov dword [hb_ck], CK_SIZE
+    mov dword [hb_ck], HCK_SIZE
     mov dword [hb_size], 0
     mov dword [hb_digits], 0
     jmp .r
@@ -1238,7 +1238,7 @@ http_body_read:
     call http_dechunk                   ; EAX = data left in place
     pop ecx
     jc .cbad
-    cmp dword [hb_ck], CK_DONE
+    cmp dword [hb_ck], HCK_DONE
     jne .cmore
     mov byte [hb_done], 1
     test eax, eax
@@ -1255,7 +1255,7 @@ http_body_read:
     jz .cret
     cmp eax, -1
     jne .cbroke
-    cmp dword [hb_ck], CK_TRAIL         ; closed after the last chunk (in
+    cmp dword [hb_ck], HCK_TRAIL        ; closed after the last chunk (in
     jb .cearly                          ; its trailer): that is the end
     mov byte [hb_done], 1
     jmp .cret
@@ -1301,23 +1301,23 @@ http_dechunk:
 .l: cmp esi, edx
     jae .out
     mov eax, [hb_ck]
-    cmp eax, CK_DATA
+    cmp eax, HCK_DATA
     je .data
-    cmp eax, CK_DONE
+    cmp eax, HCK_DONE
     je .out                             ; (anything after the end: dropped)
     movzx ecx, byte [esi]               ; ECX = the next character
     inc esi
-    cmp eax, CK_SIZE
+    cmp eax, HCK_SIZE
     je .size
-    cmp eax, CK_EXT
+    cmp eax, HCK_EXT
     je .ext
-    cmp eax, CK_CRLF
+    cmp eax, HCK_CRLF
     je .crlf
-    cmp eax, CK_TRAIL
+    cmp eax, HCK_TRAIL
     je .trail
-    cmp ecx, 10                         ; CK_TLINE: to the end of the line
+    cmp ecx, 10                        ; HCK_TLINE: to the end of the line
     jne .l
-    mov dword [hb_ck], CK_TRAIL
+    mov dword [hb_ck], HCK_TRAIL
     jmp .l
 .size:                                  ; hex digits of the size
     push ecx
@@ -1342,7 +1342,7 @@ http_dechunk:
     je .l
     jmp .bad
 .size_end:
-    mov dword [hb_ck], CK_EXT           ; ";extension", CR: skipped
+    mov dword [hb_ck], HCK_EXT          ; ";extension", CR: skipped
     cmp ecx, 10
     je .eol
     jmp .l
@@ -1354,10 +1354,10 @@ http_dechunk:
     test eax, eax
     jz .last
     mov [hb_left], eax
-    mov dword [hb_ck], CK_DATA
+    mov dword [hb_ck], HCK_DATA
     jmp .l
 .last:                                  ; size 0: the last chunk
-    mov dword [hb_ck], CK_TRAIL
+    mov dword [hb_ck], HCK_TRAIL
     jmp .l
 .data:                                  ; the chunk's bytes: moved down
     mov ecx, edx
@@ -1377,14 +1377,14 @@ http_dechunk:
 .d2:
     cmp dword [hb_left], 0
     jne .l
-    mov dword [hb_ck], CK_CRLF
+    mov dword [hb_ck], HCK_CRLF
     jmp .l
 .crlf:                                  ; CR LF after the data
     cmp ecx, 13
     je .l
     cmp ecx, 10
     jne .bad
-    mov dword [hb_ck], CK_SIZE
+    mov dword [hb_ck], HCK_SIZE
     mov dword [hb_size], 0
     mov dword [hb_digits], 0
     jmp .l
@@ -1393,10 +1393,10 @@ http_dechunk:
     je .l
     cmp ecx, 10
     je .done
-    mov dword [hb_ck], CK_TLINE
+    mov dword [hb_ck], HCK_TLINE
     jmp .l
 .done:
-    mov dword [hb_ck], CK_DONE
+    mov dword [hb_ck], HCK_DONE
 .out:
     mov eax, edi
     sub eax, ebx

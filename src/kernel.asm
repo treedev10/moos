@@ -160,6 +160,7 @@ kernel_entry_uefi:
     PRINTF `\x01g[ OK ]\x01n Graphics %dx%d, keyboard and timer through the firmware\n`, dword [bootinfo + BI.fb_width], dword [bootinfo + BI.fb_height]
 
 kernel_common:
+    call cookie_clear               ; (the jar's memory is not zeroed)
     call fs_init
     call clk_init
     call signin_maybe
