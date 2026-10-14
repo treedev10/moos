@@ -1213,7 +1213,7 @@ h264_deblock_mb:
     cmp dword [h264_dbk_y], 0
     je .notop
     mov eax, [h264_mbw]
-    shl eax, 6
+    shl eax, MI_SHIFT
     neg eax
     add eax, esi
     mov edx, [h264_mbw]
@@ -1313,7 +1313,7 @@ h264_deblock_mb:
     test ebp, ebp
     jnz .lh2
     mov ecx, [h264_mbw]
-    shl ecx, 6
+    shl ecx, MI_SHIFT
     neg ecx
     movzx ecx, byte [esi + ecx + MI_QP]
 .lh2:
@@ -1394,7 +1394,7 @@ h264_deblock_mb:
     test ebp, ebp
     jnz .ch2
     mov ecx, [h264_mbw]
-    shl ecx, 6
+    shl ecx, MI_SHIFT
     sub esi, ecx
 .ch2:
     call h264_lf_cparams

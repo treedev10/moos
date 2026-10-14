@@ -207,7 +207,7 @@ h264_clear_coef:
 h264_mb_setup:
     mov eax, [h264_mbaddr]
     mov esi, eax
-    shl esi, 6
+    shl esi, MI_SHIFT
     add esi, [h264_mbi]
     mov [h264_mip], esi
     mov edx, [esi + MI_SLICE]
@@ -241,7 +241,7 @@ h264_mb_setup:
     ; neighbours: available if in this slice
     mov ecx, [h264_slicenum]
     mov edi, [h264_mbw]
-    shl edi, 6                      ; EDI = a row of MI_ data
+    shl edi, MI_SHIFT               ; EDI = a row of MI_ data
     xor eax, eax
     mov [h264_avA], eax
     mov [h264_avB], eax

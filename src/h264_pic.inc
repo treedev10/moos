@@ -1095,29 +1095,35 @@ h264_mmco:
     pop esi
     ret
 
-; h264_build_list0: the reference picture list 0 of a P slice (8.2.4.2.1:
-; short-term frames by descending PicNum, then long-term ones by ascending
-; LongTermPicNum; then the modifications of 8.2.4.3) -> h264_list0
-; (num_ref_idx_l0_active entries; a missing picture is replaced by another
-; one so that decoding can go on). EAX = 0, -1 if something was missing.
-h264_build_list0:
+; h264_build_lists: the reference picture lists of a P or B slice (8.2.4)
+; -> h264_list0 (and h264_list1), num_ref_idx_lX_active entries each; a
+; missing picture is replaced by another one so that decoding can go on.
+; EAX = 0, -1 if something was missing.
+;   P (8.2.4.2.1): short-term frames by descending PicNum, then long-term
+;     ones by ascending LongTermPicNum.
+;   B (8.2.4.2.3): list 0 = short-term frames before the current one in
+;     display order (descending picture order count), then those after it
+;     (ascending), then long-term ones; list 1 = after, then before, then
+;     long-term. If list 1 equals list 0 (and has more than one entry),
+;     its first two entries are swapped.
+;   Then each list is modified as the slice header says (8.2.4.3).
+h264_build_lists:
     push ebx
     push esi
     push edi
     push ebp
-    mov eax, [h264_pic_fn]
-    push eax
     call h264_calc_fnw
-    pop eax
-    ; short-term frames, insertion sort by FrameNumWrap, largest first
+    cmp dword [h264_sh_type], ST_B
+    je .b
+    ; P: short-term frames, insertion sort by FrameNumWrap, largest first
     xor edi, edi                    ; EDI = entries
     xor ebx, ebx                    ; EBX = slot
 .s: mov esi, ebx
     SLOTP esi
-    test dword [esi + SL_FLAGS], F_SHORT
-    jz .snext
-    test dword [esi + SL_FLAGS], F_CUR
-    jnz .snext
+    mov eax, [esi + SL_FLAGS]
+    and eax, F_SHORT | F_CUR
+    cmp eax, F_SHORT
+    jne .snext
     mov eax, [esi + SL_FNW]
     mov ecx, edi                    ; find its place
 .sins:
@@ -1138,57 +1144,228 @@ h264_build_list0:
     inc ebx
     cmp ebx, H264_NSLOT
     jb .s
-    ; long-term frames, by LongTermFrameIdx, smallest first
+    mov esi, h264_list0
+    call h264_add_long
+    mov ecx, edi
+    mov edi, h264_list0
+    call h264_pad_list
+    jmp .modify
+.b: ; B: the short-term frames sorted by picture order count (ascending)
+    xor edi, edi                    ; EDI = entries (in h264_lt_tmp)
+    xor ebx, ebx
+.bs:
+    mov esi, ebx
+    SLOTP esi
+    mov eax, [esi + SL_FLAGS]
+    and eax, F_SHORT | F_CUR
+    cmp eax, F_SHORT
+    jne .bsnext
+    mov eax, [esi + SL_POC]
+    mov ecx, edi
+.bsins:
+    test ecx, ecx
+    jz .bsput
+    movzx edx, byte [h264_lt_tmp + ecx - 1]
+    SLOTP edx
+    cmp [edx + SL_POC], eax
+    jle .bsput
+    mov dl, [h264_lt_tmp + ecx - 1]
+    mov [h264_lt_tmp + ecx], dl
+    dec ecx
+    jmp .bsins
+.bsput:
+    mov [h264_lt_tmp + ecx], bl
+    inc edi
+.bsnext:
+    inc ebx
+    cmp ebx, H264_NSLOT
+    jb .bs
+    ; EBP = how many come before the current picture
+    xor ebp, ebp
+.bf:
+    cmp ebp, edi
+    jae .bfd
+    movzx eax, byte [h264_lt_tmp + ebp]
+    SLOTP eax
+    mov eax, [eax + SL_POC]
+    cmp eax, [h264_pic_poc]
+    jge .bfd
+    inc ebp
+    jmp .bf
+.bfd:
+    ; list 0: before (descending), after (ascending)
+    xor ecx, ecx                    ; ECX = position in the list
+    mov edx, ebp
+.l0a:
+    test edx, edx
+    jz .l0b
+    dec edx
+    mov al, [h264_lt_tmp + edx]
+    mov [h264_list0 + ecx], al
+    inc ecx
+    jmp .l0a
+.l0b:
+    mov edx, ebp
+.l0c:
+    cmp edx, edi
+    jae .l1
+    mov al, [h264_lt_tmp + edx]
+    mov [h264_list0 + ecx], al
+    inc ecx
+    inc edx
+    jmp .l0c
+.l1:
+    ; list 1: after (ascending), before (descending)
+    xor ecx, ecx
+    mov edx, ebp
+.l1a:
+    cmp edx, edi
+    jae .l1b
+    mov al, [h264_lt_tmp + edx]
+    mov [h264_list1 + ecx], al
+    inc ecx
+    inc edx
+    jmp .l1a
+.l1b:
+    mov edx, ebp
+.l1c:
+    test edx, edx
+    jz .l1d
+    dec edx
+    mov al, [h264_lt_tmp + edx]
+    mov [h264_list1 + ecx], al
+    inc ecx
+    jmp .l1c
+.l1d:
+    ; the long-term frames after both
+    push edi
+    mov esi, h264_list0
+    call h264_add_long
+    pop edi
+    mov esi, h264_list1
+    call h264_add_long
+    ; EDI = entries (the same in both). Identical lists: swap in list 1
+    cmp edi, 1
+    jbe .noswap
+    xor ecx, ecx
+.cmpl:
+    mov al, [h264_list0 + ecx]
+    cmp al, [h264_list1 + ecx]
+    jne .noswap
+    inc ecx
+    cmp ecx, edi
+    jb .cmpl
+    mov al, [h264_list1]
+    mov ah, [h264_list1 + 1]
+    mov [h264_list1], ah
+    mov [h264_list1 + 1], al
+.noswap:
+    mov ecx, edi
+    push ecx
+    mov edi, h264_list0
+    call h264_pad_list
+    pop ecx
+    mov edi, h264_list1
+    call h264_pad_list
+.modify:
+    ; the modifications of list 0 (and 1)
+    mov edi, h264_list0
+    mov eax, [h264_sh_nref0]
+    mov [h264_ml_n], eax
+    mov eax, [h264_sh_nrplm0]
+    mov [h264_ml_nm], eax
+    mov dword [h264_ml_m], h264_sh_rplm0
+    call h264_modify_list
+    mov ebp, eax
+    cmp dword [h264_sh_type], ST_B
+    jne .done
+    mov edi, h264_list1
+    mov eax, [h264_sh_nref1]
+    mov [h264_ml_n], eax
+    mov eax, [h264_sh_nrplm1]
+    mov [h264_ml_nm], eax
+    mov dword [h264_ml_m], h264_sh_rplm1
+    call h264_modify_list
+    or ebp, eax
+.done:
+    mov eax, ebp
+    pop ebp
+    pop edi
+    pop esi
+    pop ebx
+    ret
+
+; h264_add_long: ESI = a list with EDI entries -> the long-term frames
+; appended by ascending LongTermFrameIdx; EDI = the new number of entries.
+; EBX changed.
+h264_add_long:
+    push ebp
     mov ebp, edi                    ; EBP = where they start
     xor ebx, ebx
-.l: mov esi, ebx
-    SLOTP esi
-    test dword [esi + SL_FLAGS], F_LONG
-    jz .lnext
-    test dword [esi + SL_FLAGS], F_CUR
-    jnz .lnext
-    mov eax, [esi + SL_LT]
+.l: mov eax, ebx
+    SLOTP eax
+    mov ecx, [eax + SL_FLAGS]
+    and ecx, F_LONG | F_CUR
+    cmp ecx, F_LONG
+    jne .next
+    mov eax, [eax + SL_LT]
     mov ecx, edi
-.lins:
+.ins:
     cmp ecx, ebp
-    jbe .lput
-    movzx edx, byte [h264_list0 + ecx - 1]
+    jbe .put
+    movzx edx, byte [esi + ecx - 1]
     SLOTP edx
     cmp [edx + SL_LT], eax
-    jle .lput
-    mov dl, [h264_list0 + ecx - 1]
-    mov [h264_list0 + ecx], dl
+    jle .put
+    mov dl, [esi + ecx - 1]
+    mov [esi + ecx], dl
     dec ecx
-    jmp .lins
-.lput:
-    mov [h264_list0 + ecx], bl
+    jmp .ins
+.put:
+    mov [esi + ecx], bl
     inc edi
-.lnext:
+.next:
     inc ebx
     cmp ebx, H264_NSLOT
     jb .l
-    ; entries beyond the frames that exist: "no reference picture"
-    mov ecx, edi
-.pad:
-    cmp ecx, 33
-    jae .padd
-    mov byte [h264_list0 + ecx], 255
+    pop ebp
+    ret
+
+; h264_pad_list: EDI = a list with ECX entries: the rest of its 33 places
+; become "no reference picture" (255)
+h264_pad_list:
+.l: cmp ecx, 33
+    jae .r
+    mov byte [edi + ecx], 255
     inc ecx
-    jmp .pad
-.padd:
+    jmp .l
+.r: ret
+
+; h264_modify_list: EDI = an initial reference list, h264_ml_n = its
+; active size, h264_ml_nm / h264_ml_m = the modifications (8.2.4.3.1 for
+; short-term, 8.2.4.3.2 for long-term pictures). Missing entries are then
+; replaced by the first picture there is (or the latest reference, or the
+; picture itself). EAX = 0, -1 if something was missing. EBX ESI EDI EBP
+; kept.
+h264_modify_list:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    mov [h264_ml_list], edi
     xor ebp, ebp                    ; EBP = something was missing
-    ; modifications (8.2.4.3.1 / 8.2.4.3.2)
     mov eax, [h264_pic_fn]
     mov [h264_tmpi], eax            ; picNumLXPred = CurrPicNum
     xor esi, esi                    ; ESI = refIdxLX
     xor ebx, ebx                    ; EBX = modification number
 .mod:
-    cmp ebx, [h264_sh_nrplm0]
+    cmp ebx, [h264_ml_nm]
     jae .moddone
-    cmp esi, [h264_sh_nref0]
+    cmp esi, [h264_ml_n]
     jae .modbad
-    mov eax, [h264_sh_rplm0 + ebx * 8]
-    mov ecx, [h264_sh_rplm0 + ebx * 8 + 4]
+    mov edx, [h264_ml_m]
+    mov eax, [edx + ebx * 8]
+    mov ecx, [edx + ebx * 8 + 4]
     cmp eax, 2
     je .modlong
     inc ecx                         ; abs_diff_pic_num_minus1 + 1
@@ -1239,24 +1416,26 @@ h264_build_list0:
 .ins0:
     mov ebp, 1
 .ins1:
-    mov ecx, [h264_sh_nref0]        ; for cIdx = nref; cIdx > refIdx; cIdx--
+    push ebx
+    mov ebx, [h264_ml_list]
+    mov ecx, [h264_ml_n]            ; for cIdx = nref; cIdx > refIdx; cIdx--
 .sh:
     cmp ecx, esi
     jbe .shd
-    mov al, [h264_list0 + ecx - 1]
-    mov [h264_list0 + ecx], al
+    mov al, [ebx + ecx - 1]
+    mov [ebx + ecx], al
     dec ecx
     jmp .sh
 .shd:
     mov eax, edi
-    mov [h264_list0 + esi], al
+    mov [ebx + esi], al
     inc esi
     mov edi, esi                    ; EDI = nIdx
     mov ecx, esi
 .cmp:
-    cmp ecx, [h264_sh_nref0]
+    cmp ecx, [h264_ml_n]
     ja .cmpd
-    movzx eax, byte [h264_list0 + ecx]
+    movzx eax, byte [ebx + ecx]
     cmp eax, 255
     je .keep
     push ecx
@@ -1280,13 +1459,14 @@ h264_build_list0:
 .keep0:
     pop ecx
 .keep:
-    mov al, [h264_list0 + ecx]
-    mov [h264_list0 + edi], al
+    mov al, [ebx + ecx]
+    mov [ebx + edi], al
     inc edi
 .drop:
     inc ecx
     jmp .cmp
 .cmpd:
+    pop ebx
     inc ebx
     jmp .mod
 .modbad:
@@ -1294,16 +1474,14 @@ h264_build_list0:
 .moddone:
     ; replace missing entries by the first picture there is (or the latest
     ; reference, or the picture itself)
-    movzx eax, byte [h264_list0]
-    cmp eax, 255
-    jne .fill
+    mov edi, [h264_ml_list]
     xor ecx, ecx
 .f1:
-    movzx eax, byte [h264_list0 + ecx]
+    movzx eax, byte [edi + ecx]
     cmp eax, 255
     jne .fill
     inc ecx
-    cmp ecx, [h264_sh_nref0]
+    cmp ecx, [h264_ml_n]
     jb .f1
     mov eax, [h264_lastref]
     test eax, eax
@@ -1312,10 +1490,10 @@ h264_build_list0:
 .fill:
     xor ecx, ecx
 .f2:
-    cmp byte [h264_list0 + ecx], 255
+    cmp byte [edi + ecx], 255
     jne .f3
-    mov [h264_list0 + ecx], al
-    cmp ecx, [h264_sh_nref0]
+    mov [edi + ecx], al
+    cmp ecx, [h264_ml_n]
     jae .f3
     mov ebp, 1
 .f3:
@@ -1330,6 +1508,14 @@ h264_build_list0:
     pop ebx
     ret
 
+section .bss
+alignb 4
+h264_ml_list    resd 1              ; h264_modify_list: the list
+h264_ml_n       resd 1              ;   its active size
+h264_ml_nm      resd 1              ;   the modifications
+h264_ml_m       resd 1
+section .text
+
 ; h264_conceal: macroblocks of the picture that were not decoded are copied
 ; from the concealment frame (grey without one) and given harmless data
 ; for the deblocking filter.
@@ -1343,7 +1529,7 @@ h264_conceal:
     mov dword [h264_tmpi], 0
 .mb:
     mov esi, ebp
-    shl esi, 6
+    shl esi, MI_SHIFT
     add esi, [h264_mbi]
     mov eax, [esi + MI_SLICE]
     cmp eax, [h264_pic_slice0]

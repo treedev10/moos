@@ -116,7 +116,8 @@ SPS_SARH        equ 60
 SPS_EXPDELTA    equ 64              ; ExpectedDeltaPerPicOrderCntCycle
 SPS_ID          equ 68
 SPS_OFFREF      equ 72              ; offset_for_ref_frame[256]
-SPS_SZ          equ 72 + 1024
+SPS_D8I         equ 72 + 1024       ; byte: direct_8x8_inference_flag
+SPS_SZ          equ 72 + 1024 + 4
 
 ; ---- picture parameter set ------------------------------------------------
 PPS_VALID       equ 0
@@ -192,13 +193,17 @@ MI_I4M          equ 32              ; Intra4x4 modes (raster)
 MI_DBIDC        equ 48              ; disable_deblocking_filter_idc
 MI_DBA          equ 49              ; FilterOffsetA (signed)
 MI_DBB          equ 50              ; FilterOffsetB
-MI_SZ           equ 64
+MI_SZ           equ 128
+MI_SHIFT        equ 7               ; log2(MI_SZ)
 ; MI_TYPE bits
 MT_INTRA        equ 1
 MT_PCM          equ 2
 MT_I4           equ 4               ; Intra_4x4
 MT_I16          equ 8
 MT_SKIP         equ 16
+
+; weights of one reference index (h264_wt)
+WT_SZ           equ 24
 
 ; slice types (slice_type % 5)
 ST_P            equ 0
@@ -315,7 +320,13 @@ h264_sh_qp      resd 1              ; SliceQPY
 h264_sh_dbidc   resd 1
 h264_sh_dba     resd 1              ; FilterOffsetA = alpha_c0_offset_div2 * 2
 h264_sh_dbb     resd 1
-h264_sh_cabinit resd 1
+h264_sh_cabinit resd 1              ; cabac_init_idc
+h264_sh_wmode   resd 1              ; weighted prediction: 0 none, 1
+                                    ;   explicit, 2 implicit
+h264_sh_lwd     resd 1              ; luma_log2_weight_denom
+h264_sh_cwd     resd 1              ; chroma_log2_weight_denom
+h264_wt         resb 64 * WT_SZ     ; explicit weights (list * 32 + index)
+h264_wtf        resb 64             ;   which of them are not the default
 h264_sh_noout   resd 1
 h264_sh_ltref   resd 1
 h264_sh_adapt   resd 1
@@ -439,7 +450,7 @@ h264_layout:
     and eax, ~63
     mov [h264_mbi], eax
     mov ecx, [h264_maxnmb]
-    shl ecx, 6                      ; MI_SZ = 64
+    shl ecx, MI_SHIFT
     add eax, ecx
     mov [h264_slotmem], eax
     mov ecx, [h264_slotbytes]
@@ -488,7 +499,7 @@ h264_init:
     ; macroblock data: slice number 0 = never decoded
     mov edi, [h264_mbi]
     mov ecx, [h264_maxnmb]
-    shl ecx, 4
+    shl ecx, MI_SHIFT - 2           ; (dwords)
     rep stosd
     ; frame buffers
     xor ebx, ebx
@@ -1171,6 +1182,7 @@ h264_parse_sps:
     call h264_u1                    ; mb_adaptive_frame_field_flag
 .frames:
     call h264_u1                    ; direct_8x8_inference_flag
+    mov [edi + SPS_D8I], al
     call h264_u1                    ; frame_cropping_flag
     test eax, eax
     jz .nocrop
@@ -1567,7 +1579,7 @@ h264_slice:
     inc dword [h264_slicectr]
     cmp dword [h264_sh_type], ST_I
     je .data
-    call h264_build_list0           ; (a missing reference is replaced:
+    call h264_build_lists           ; (a missing reference is replaced:
     test eax, eax                   ;  decode the slice anyway)
     jz .data
     mov dword [h264_pic_err], 1
@@ -1643,11 +1655,8 @@ h264_slice_header:
     jne .skip
     cmp byte [esi + PPS_NSG], 1     ; slice groups: not supported
     jne .skip
-    cmp dword [h264_sh_type], ST_I  ; only I and P slices
-    je .typeok
-    cmp dword [h264_sh_type], ST_P
-    jne .skip
-.typeok:
+    cmp dword [h264_sh_type], ST_I  ; I, P and B slices (not SP / SI)
+    ja .skip
     movzx ecx, byte [edi + SPS_LOG2FN]
     call h264_u                     ; frame_num
     mov [h264_sh_fn], eax
@@ -1691,6 +1700,12 @@ h264_slice_header:
     call h264_ue                    ; redundant_pic_cnt
     mov [h264_sh_rpc], eax
 .norpc:
+    mov dword [h264_sh_dspat], 1
+    cmp dword [h264_sh_type], ST_B
+    jne .nodsp
+    call h264_u1                    ; direct_spatial_mv_pred_flag
+    mov [h264_sh_dspat], eax
+.nodsp:
     movzx eax, byte [esi + PPS_NREF0]
     mov [h264_sh_nref0], eax
     movzx eax, byte [esi + PPS_NREF1]
@@ -1702,41 +1717,62 @@ h264_slice_header:
     call h264_u1                    ; num_ref_idx_active_override_flag
     test eax, eax
     jz .noovr
-    call h264_ue
+    call h264_ue                    ; num_ref_idx_l0_active_minus1
     cmp eax, 15                     ; (32 only for fields)
     ja .bad
     inc eax
     mov [h264_sh_nref0], eax
+    cmp dword [h264_sh_type], ST_B
+    jne .noovr
+    call h264_ue                    ; num_ref_idx_l1_active_minus1
+    cmp eax, 15
+    ja .bad
+    inc eax
+    mov [h264_sh_nref1], eax
 .noovr:
     cmp dword [h264_sh_nref0], 16
     ja .bad
-    ; ref_pic_list_modification() for list 0
-    call h264_u1                    ; ref_pic_list_modification_flag_l0
+    ; ref_pic_list_modification() for list 0 (and list 1 in B slices)
+    mov edi, h264_sh_rplm0
+    call h264_read_rplm
     test eax, eax
-    jz .noref
-    xor ebx, ebx
-.rplm:
-    call h264_ue                    ; modification_of_pic_nums_idc
-    cmp eax, 3
-    je .rplmd
+    js .bad
+    mov [h264_sh_nrplm0], eax
+    cmp dword [h264_sh_type], ST_B
+    jne .noref
+    cmp dword [h264_sh_nref1], 16
     ja .bad
-    cmp ebx, H264_MAXRPLM
-    jae .bad
-    mov [h264_sh_rplm0 + ebx * 8], eax
-    call h264_ue                    ; abs_diff_pic_num_minus1 / long_term_pic_num
-    mov [h264_sh_rplm0 + ebx * 8 + 4], eax
-    inc ebx
-    call h264_bad_pos
-    jnz .bad
-    jmp .rplm
-.rplmd:
-    mov [h264_sh_nrplm0], ebx
+    mov edi, h264_sh_rplm1
+    call h264_read_rplm
+    test eax, eax
+    js .bad
+    mov [h264_sh_nrplm1], eax
 .noref:
-    ; (pred_weight_table: weighted_pred_flag is 0 in the Baseline profile)
-    cmp dword [h264_sh_type], ST_P
-    jne .nowp
+    ; weighted prediction: explicit (a pred_weight_table) or implicit
+    mov dword [h264_sh_wmode], 0
+    mov eax, [h264_sh_type]
+    cmp eax, ST_P
+    jne .wpb
     cmp byte [esi + PPS_WP], 0
-    jne .skip
+    je .nowp
+    jmp .wpt
+.wpb:
+    cmp eax, ST_B
+    jne .nowp
+    movzx eax, byte [esi + PPS_WBI]
+    cmp eax, 2
+    ja .bad
+    jb .wpb1
+    mov dword [h264_sh_wmode], 2    ; implicit (computed with the lists)
+    jmp .nowp
+.wpb1:
+    test eax, eax
+    jz .nowp
+.wpt:
+    mov dword [h264_sh_wmode], 1
+    call h264_parse_pwt
+    test eax, eax
+    jnz .bad
 .nowp:
     ; dec_ref_pic_marking()
     xor eax, eax
@@ -1791,6 +1827,16 @@ h264_slice_header:
 .mmcod:
     mov [h264_sh_nmmco], ebx
 .nomark:
+    mov dword [h264_sh_cabinit], 0
+    cmp byte [esi + PPS_CABAC], 0
+    je .nocab
+    cmp dword [h264_sh_type], ST_I
+    je .nocab
+    call h264_ue                    ; cabac_init_idc
+    cmp eax, 2
+    ja .bad
+    mov [h264_sh_cabinit], eax
+.nocab:
     call h264_se                    ; slice_qp_delta
     movsx edx, byte [esi + PPS_QP]
     add eax, edx
@@ -1841,6 +1887,127 @@ h264_slice_header:
     ret
 .bad:
     or eax, -1
+    ret
+
+; h264_read_rplm: ref_pic_list_modification() of one list (7.3.3.1) into
+; EDI (pairs idc, value) -> EAX = number of modifications, -1 if damaged.
+; EBX changed.
+h264_read_rplm:
+    call h264_u1                    ; ref_pic_list_modification_flag_lX
+    test eax, eax
+    jz .r
+    xor ebx, ebx
+.l: call h264_ue                    ; modification_of_pic_nums_idc
+    cmp eax, 3
+    je .d
+    ja .bad
+    cmp ebx, H264_MAXRPLM
+    jae .bad
+    mov [edi + ebx * 8], eax
+    call h264_ue                    ; abs_diff_pic_num_minus1 / long_term_pic_num
+    mov [edi + ebx * 8 + 4], eax
+    inc ebx
+    call h264_bad_pos
+    jnz .bad
+    jmp .l
+.d: mov eax, ebx
+.r: ret
+.bad:
+    or eax, -1
+    ret
+
+; h264_parse_pwt: pred_weight_table() (7.3.3.2) -> h264_sh_lwd / _cwd
+; (log2 of the denominators), the weights and offsets of every reference
+; index in h264_wt (WT_SZ bytes each: luma weight, offset, Cb weight,
+; offset, Cr weight, offset) and h264_wtf (bit 0: luma weighted, bit 1:
+; chroma weighted). EAX = 0, or -1 if damaged. EBX EDI changed.
+h264_parse_pwt:
+    call h264_ue                    ; luma_log2_weight_denom
+    cmp eax, 7
+    ja .bad
+    mov [h264_sh_lwd], eax
+    call h264_ue                    ; chroma_log2_weight_denom
+    cmp eax, 7
+    ja .bad
+    mov [h264_sh_cwd], eax
+    xor ebx, ebx                    ; EBX = list * 32 + reference index
+.ent:
+    mov eax, ebx
+    and eax, 31
+    mov ecx, [h264_sh_nref0]
+    cmp ebx, 32
+    jb .n0
+    mov ecx, [h264_sh_nref1]
+.n0:
+    cmp eax, ecx
+    jae .nextlist
+    imul edi, ebx, WT_SZ
+    add edi, h264_wt
+    mov ecx, [h264_sh_lwd]          ; defaults: 2^denominator, offset 0
+    mov eax, 1
+    shl eax, cl
+    mov [edi], eax
+    mov ecx, [h264_sh_cwd]
+    mov eax, 1
+    shl eax, cl
+    mov [edi + 8], eax
+    mov [edi + 16], eax
+    xor eax, eax
+    mov [edi + 4], eax
+    mov [edi + 12], eax
+    mov [edi + 20], eax
+    mov byte [h264_wtf + ebx], 0
+    call h264_u1                    ; luma_weight_lX_flag
+    test eax, eax
+    jz .noluma
+    or byte [h264_wtf + ebx], 1
+    call .weight
+    jc .bad
+    mov [edi], eax
+    call .weight
+    jc .bad
+    mov [edi + 4], eax
+.noluma:
+    call h264_u1                    ; chroma_weight_lX_flag
+    test eax, eax
+    jz .nochroma
+    or byte [h264_wtf + ebx], 2
+    call .weight
+    jc .bad
+    mov [edi + 8], eax
+    call .weight
+    jc .bad
+    mov [edi + 12], eax
+    call .weight
+    jc .bad
+    mov [edi + 16], eax
+    call .weight
+    jc .bad
+    mov [edi + 20], eax
+.nochroma:
+    inc ebx
+    jmp .ent
+.nextlist:
+    cmp ebx, 32                     ; list 1 only in B slices
+    jae .done
+    cmp dword [h264_sh_type], ST_B
+    jne .done
+    mov ebx, 32
+    jmp .ent
+.done:
+    call h264_bad_pos
+    jnz .bad
+    xor eax, eax
+    ret
+.bad:
+    or eax, -1
+    ret
+; a weight or offset: se(v) in -128..127 -> EAX, CF = 1 if out of range
+.weight:
+    call h264_se
+    lea ecx, [eax + 128]
+    cmp ecx, 256
+    cmc
     ret
 
 ; h264_same_pic: does the slice just read belong to the picture being
