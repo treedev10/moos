@@ -2,7 +2,9 @@
 """
 Make the test data for aac_test.c (the AAC-LC decoder, src/aac.asm).
 
-    python tests/native/aac_make.py [--quick]
+    python tests/native/aac_make.py [--quick] [--variants]
+
+(--variants: only remake the variants below from the cases already there)
 
 For each case an .m4a is encoded with ffmpeg's AAC encoder from a synthetic
 lavfi source, then
@@ -11,12 +13,14 @@ lavfi source, then
     NAME.ref    what the decoder must output: ffmpeg's own decode, as 16-bit
                 interleaved PCM (mono or stereo; more channels are downmixed
                 to stereo here with the same matrix aac.asm uses)
-and a line in build/aac/manifest.txt:  NAME MODE [ARG]
+and a line in build/aac/manifest.txt:  NAME MODE [ARG] [rate=R] [ch=C]
     snr  DB      SNR against NAME.ref must be at least DB
     pns  DB      PNS (random noise) is in use: band energies within DB of ref
     exact        output must equal NAME.ref (silence)
     same OTHER   decodes like case OTHER (variants: other headers, extra
                  elements); compared with OTHER.ref like snr 70
+    rate=, ch=   what aac_info must report, when the ADTS header does not
+                 say it (explicit rates, a PCE)
 
 Variants made from the frames of other cases (no encoder needed):
   *_sbr5 / *_ps29 / *_sbrsync   HE-AAC signalling in the AudioSpecificConfig
@@ -26,6 +30,20 @@ Variants made from the frames of other cases (no encoder needed):
                                 data), a FIL with an SBR payload, a DSE and a
                                 coupling channel element (CCE) with an empty
                                 spectrum - all must be skipped
+  *_explicit / *_rate44000       the sampling rate written out (index 15)
+                                in the AudioSpecificConfig
+Variants rewritten with aac_rewrite.py (parsed down to the spectral values
+and written back), for what ffmpeg's encoder never writes:
+  *_pulses     pulse data            *_tnshigh   TNS filters of order 9-12
+  *_pnsms      M/S on noise bands of both channels (one shared noise)
+  *_split      short windows: one window per group
+  *_separate   common_window 0 instead of a shared ics_info
+  *_cce        a coupling channel element with spectral data, a byte-aligned
+               data stream element and a PCE before each frame's elements
+  *_lfe        mono as an LFE element (PCE configuration with one LFE)
+Changes that alter the sound (pulses, tnshigh, pnsms) are compared with
+ffmpeg's decode of the rewritten stream; the others must decode exactly
+like the original, which is also checked with ffmpeg where it can read them.
 All files go to build/aac/. Needs ffmpeg, ffprobe, numpy.
 """
 import os
@@ -35,6 +53,9 @@ import subprocess
 import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import aac_rewrite                      # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUT = os.path.join(ROOT, "build", "aac")
@@ -404,9 +425,128 @@ def make_ref(adts, ref, ch):
     open(ref, "wb").write(mix.tobytes())
 
 
+def write_case(name, frames, asc):
+    """an .adts (frames: (ADTS header, access unit) pairs) and an .asc"""
+    adts = os.path.join(OUT, name + ".adts")
+    open(adts, "wb").write(adts_join(frames))
+    open(os.path.join(OUT, name + ".asc"), "wb").write(asc)
+    return adts
+
+
+def explicit_asc(asc, rate):
+    """the AudioSpecificConfig of an AAC-LC stream with its sampling rate
+    written out (index 15 + 24 bits)"""
+    ch = (asc[1] >> 3) & 15
+    assert asc[0] >> 3 == 2 and ch != 0
+    return to_bytes(Bits().put(5, 2).put(4, 15).put(24, rate).put(4, ch).put(3, 0).bits())
+
+
+def lfe_asc(asc):
+    """channelConfiguration 0 with a PCE that has a single LFE element"""
+    sfi = ((asc[0] & 7) << 1) | (asc[1] >> 7)
+    b = Bits().put(5, 2).put(4, sfi).put(4, 0).put(3, 0)
+    b.put(4, 0).put(2, 1).put(4, sfi)               # PCE: tag, profile, rate
+    b.put(4, 0).put(4, 0).put(4, 0).put(2, 1).put(3, 0).put(4, 0)
+    b.put(1, 0).put(1, 0).put(1, 0)                 # no mixdowns
+    b.put(4, 0)                                     # the LFE's tag
+    bits = b.bits()
+    bits += "0" * ((-len(bits)) % 8)                # byte_alignment
+    return to_bytes(bits + "00000000")              # no comment
+
+
+def ffmpeg_pcm(adts):
+    return run(["ffmpeg", "-v", "error", "-f", "aac", "-i", adts, "-f", "s16le", "-"])
+
+
+def rewritten(lines, quick):
+    """the variants made with aac_rewrite.py (see the top of this file)"""
+    have = set(l.split()[0] for l in lines)
+    jobs = [  # (change, suffix, bases, comparison)
+        ("pulses", "pulses", ["music_44100_s", "speech_64k_m", "clicks_128k", "pink_64k"],
+         "snr"),
+        ("tns_high", "tnshigh", ["music_44100_s", "tns_speech", "tones_64k"], "snr"),
+        ("pns_ms", "pnsms", ["pns_pink_64k", "pns_music_48k"], "pns"),
+        ("split", "split", ["clicks_128k", "clicks_64k_m", "tns_clicks", "clicks_48k_48000"],
+         "same"),
+        ("separate", "separate", ["music_44100_s", "noms_music"], "same"),
+        ("cce", "cce", ["music_44100_s", "speech_64k_m", "pink_64k"], "same"),
+        ("as_lfe", "lfe", ["speech_64k_m", "sweep_44100_m"], "same"),
+    ]
+    out = []
+    for change, suffix, bases, how in jobs:
+        for base in bases:
+            if base not in have:
+                continue
+            asc = open(os.path.join(OUT, base + ".asc"), "rb").read()
+            frames = adts_frames(open(os.path.join(OUT, base + ".adts"), "rb").read())
+            sfi = (frames[0][0][2] >> 2) & 15
+            raws = [r for _, r in frames]
+            aac_rewrite.identity_check(raws, sfi)
+            new, n = aac_rewrite.rewrite(raws, sfi, change)
+            if n == 0:
+                print("  (%s: nothing to change in %s)" % (change, base), file=sys.stderr)
+                continue
+            name = "%s_%s" % (base, suffix)
+            extra = ""
+            if change == "as_lfe":
+                asc = lfe_asc(asc)
+                extra = " ch=1"
+            adts = write_case(name, [(h, r) for (h, _), r in zip(frames, new)], asc)
+            if how == "same":
+                out.append("%s same %s%s" % (name, base, extra))
+                if change in ("split", "separate"):         # ffmpeg must agree
+                    a = ffmpeg_pcm(adts)
+                    b = open(os.path.join(OUT, base + ".ref"), "rb").read()
+                    if a != b:
+                        sys.exit("ffmpeg decodes %s differently from %s" % (name, base))
+            else:
+                ch = 1 if (asc[1] >> 3) & 15 == 1 else 2
+                make_ref(adts, os.path.join(OUT, name + ".ref"), ch)
+                out.append("%s %s %s" % (name, how, "70" if how == "snr" else "1.0"))
+            print("%s (%d of %d frames changed)" % (name, n, len(frames)), file=sys.stderr)
+    return out
+
+
+def variants(lines, quick):
+    """variants made from the frames of the cases in lines"""
+    out = []
+    have = set(l.split()[0] for l in lines)
+    rnd = random.Random(1)
+    for base in ("music_44100_s", "music_22050_s", "pink_64k" if quick else "speech_64k_m"):
+        asc = open(os.path.join(OUT, base + ".asc"), "rb").read()
+        frames = adts_frames(open(os.path.join(OUT, base + ".adts"), "rb").read())
+        for kind, a in he_ascs(asc).items():
+            if kind == "ps29" and ((asc[1] >> 3) & 15) != 1:
+                continue                        # PS needs a mono core
+            name = "%s_%s" % (base, kind)
+            write_case(name, frames, a)
+            out.append("%s same %s" % (name, base))
+        name = base + "_fil"
+        extra = [(h, prepend_elements(r, rnd, True)) for h, r in frames]
+        write_case(name, extra, asc)
+        out.append("%s same %s" % (name, base))
+    # explicit sampling rates: the same frames
+    base = "music_44100_s"
+    asc = open(os.path.join(OUT, base + ".asc"), "rb").read()
+    frames = adts_frames(open(os.path.join(OUT, base + ".adts"), "rb").read())
+    for name, rate in (("explicit", 44100), ("rate44000", 44000)):
+        write_case("%s_%s" % (base, name), frames, explicit_asc(asc, rate))
+        out.append("%s_%s same %s rate=%d" % (base, name, base, rate))
+    assert all(l.split()[2] in have for l in out if l.split()[1] == "same")
+    return out + rewritten(lines, quick)
+
+
 def main():
     quick = "--quick" in sys.argv
     os.makedirs(OUT, exist_ok=True)
+    manifest = os.path.join(OUT, "manifest.txt")
+    if "--variants" in sys.argv:
+        lines = open(manifest).read().split("\n")
+        lines = [l for l in lines[:lines.index("# variants")] if l]
+        lines += ["# variants"] + variants(lines, quick)
+        open(manifest, "w").write("\n".join(lines) + "\n")
+        print("%d lines in %s" % (len(lines), manifest), file=sys.stderr)
+        return
     lines = []
     for name, src, rate, ch, br, opts, mode, arg in case_list(quick):
         m4a = os.path.join(OUT, name + ".m4a")
@@ -420,25 +560,9 @@ def main():
         make_ref(adts, os.path.join(OUT, name + ".ref"), ch)
         lines.append("%s %s %s" % (name, mode, arg) if mode != "exact" else "%s exact" % name)
         print(name, file=sys.stderr)
-    # variants: HE-AAC signalling and extra elements
-    rnd = random.Random(1)
-    for base in ("music_44100_s", "music_22050_s", "pink_64k" if quick else "speech_64k_m"):
-        asc = open(os.path.join(OUT, base + ".asc"), "rb").read()
-        frames = adts_frames(open(os.path.join(OUT, base + ".adts"), "rb").read())
-        for kind, a in he_ascs(asc).items():
-            if kind == "ps29" and ((asc[1] >> 3) & 15) != 1:
-                continue                        # PS needs a mono core
-            name = "%s_%s" % (base, kind)
-            open(os.path.join(OUT, name + ".adts"), "wb").write(adts_join(frames))
-            open(os.path.join(OUT, name + ".asc"), "wb").write(a)
-            lines.append("%s same %s" % (name, base))
-        name = base + "_fil"
-        extra = [(h, prepend_elements(r, rnd, True)) for h, r in frames]
-        open(os.path.join(OUT, name + ".adts"), "wb").write(adts_join(extra))
-        open(os.path.join(OUT, name + ".asc"), "wb").write(asc)
-        lines.append("%s same %s" % (name, base))
-    open(os.path.join(OUT, "manifest.txt"), "w").write("\n".join(lines) + "\n")
-    print("%d cases in %s" % (len(lines), OUT), file=sys.stderr)
+    lines += ["# variants"] + variants(lines, quick)
+    open(manifest, "w").write("\n".join(lines) + "\n")
+    print("%d lines in %s" % (len(lines), manifest), file=sys.stderr)
 
 
 if __name__ == "__main__":
