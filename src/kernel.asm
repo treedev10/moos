@@ -212,6 +212,8 @@ zero_bss:
 %ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/h264.asm"               ; H.264 video decoder (module)
+section .text
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif
