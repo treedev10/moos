@@ -2185,7 +2185,7 @@ fa_scrollbar:
     imul eax, [iv_rows + 4]
     xor edx, edx
     div ebx
-    mov esi, eax
+    mov edi, eax                    ; (EDI: RECT sets ESI before reading it)
     mov eax, [iv_h + 4]
     imul eax, [iv_scroll + 4]
     xor edx, edx
@@ -2194,7 +2194,7 @@ fa_scrollbar:
     add edx, [iv_y + 4]
     mov ecx, [iv_x + 4]
     add ecx, [iv_w + 4]
-    RECT ecx, edx, FSB_W, esi, 0x6F8496
+    RECT ecx, edx, FSB_W, edi, 0x6F8496
 .done:
     popad
     ret
