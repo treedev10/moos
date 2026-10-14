@@ -359,16 +359,20 @@ tcp_window:
 ; number, ESI = data, ECX = length. Registers kept.
 tcp_xmit:
     push eax
+    push edx
     mov eax, [tcp_dst_ip]
     mov [tx_dip], eax
     mov ax, [tcp_src_port]
     mov [tx_sport], ax
     mov ax, [tcp_dst_port]
     mov [tx_dport], ax
-    mov eax, [rcv_nxt]
+    mov eax, [rcv_nxt]                  ; (+1 for the server's FIN, which
+    movzx edx, byte [tcp_fin_in]        ; takes a sequence number but is
+    add eax, edx                        ; not data in the ring)
     mov [tx_ack], eax
     call tcp_window
     mov [tx_win], eax
+    pop edx
     pop eax
     test al, TCP_ACK                    ; (the SYN acknowledges nothing)
     jnz .go
@@ -504,8 +508,9 @@ tcp_output:
     call tcp_arm
 .done:
     mov eax, [snd_end]                  ; data the window holds back: the timer
-    cmp eax, [snd_nxt]                  ; also probes a window that stays shut
-    je .out
+    sub eax, [snd_nxt]                  ; also probes a window that stays shut
+    test eax, eax
+    jle .out
     call tcp_arm
 .out:
     popad
@@ -550,8 +555,9 @@ tcp_timer:
     jne .resend
     ; nothing unacknowledged: the timer was probing a zero window
     mov eax, [snd_end]
-    cmp eax, [snd_una]
-    je .stop                            ; (and nothing waits to be sent)
+    sub eax, [snd_nxt]
+    test eax, eax
+    jle .stop                           ; (and nothing waits to be sent)
     mov dword [rtx_n], 0                ; probes never give up by themselves
     mov byte [tcp_force], 1
     mov dword [rtx_at], 0
@@ -1381,6 +1387,9 @@ tcp_in_estab:
     lea eax, [ebx + ecx]                ; the FIN comes after the data
     mov [fin_seq], eax
     mov byte [fin_known], 1
+    cmp byte [tcp_fin_in], 0            ; their FIN again: our ACK of it
+    je .nofinflag                       ; was lost, so say it again
+    mov byte [ack_now], 1
 .nofinflag:
     test ecx, ecx
     jz .data_done
@@ -1451,8 +1460,8 @@ tcp_in_estab:
     mov eax, [rcv_nxt]
     cmp eax, [fin_seq]
     jne .finish
-    inc dword [rcv_nxt]
-    mov byte [tcp_fin_in], 1
+    mov byte [tcp_fin_in], 1            ; (rcv_nxt stays at the end of the
+                                        ; data; tcp_xmit adds the FIN's 1)
     mov dword [ooo_n], 0
     mov byte [ack_now], 1
 .finish:
