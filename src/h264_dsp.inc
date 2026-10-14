@@ -14,16 +14,12 @@ h264_mct1       resb 16 * 16        ; motion compensation: two predictions
 h264_mct2       resb 16 * 16
 h264_mcti       resd 21 * 16        ; 6-tap intermediates (j)
 alignb 4
-h264_dbk_bs     resb 4              ; deblocking: bS of the four segments
 h264_dbk_bsh    resb 16             ; bS of all edges (4 x 4), vertical
 h264_dbk_bsv    resb 16             ;   and horizontal
 alignb 4
 h264_dbk_a      resd 1              ; alpha, beta, tC0 row of the edge
 h264_dbk_b      resd 1
 h264_dbk_tc     resd 1
-h264_dbk_xs     resd 1              ; step across the edge
-h264_dbk_ls     resd 1              ; step along it
-h264_dbk_lines  resd 1              ; lines per bS segment (4 / 2)
 h264_dbk_mb     resd 1              ; deblocking: MI_ of the macroblock
 h264_dbk_mo     resd 1              ;   its motion data
 h264_dbk_x      resd 1
@@ -609,104 +605,140 @@ h264_predchroma:
 ;  Inverse transform
 ; =============================================================================
 
+; H264_TR4W: transpose the 4x4 words in the low halves of XMM0..XMM3
+; (the high halves become junk). XMM4 not used.
+%macro H264_TR4W 0
+    punpcklwd xmm0, xmm1            ; a0 b0 a1 b1 a2 b2 a3 b3
+    punpcklwd xmm2, xmm3            ; c0 d0 c1 d1 c2 d2 c3 d3
+    movdqa xmm1, xmm0
+    punpckldq xmm0, xmm2            ; a0 b0 c0 d0 | a1 b1 c1 d1
+    punpckhdq xmm1, xmm2            ; a2 b2 c2 d2 | a3 b3 c3 d3
+    movdqa xmm2, xmm1
+    movhlps xmm3, xmm1              ; a3 b3 c3 d3
+    movhlps xmm1, xmm0              ; a1 b1 c1 d1
+%endmacro
+
+; H264_IDCT4: the 4-point inverse transform across XMM0..XMM3 (d0..d3 ->
+; f0..f3, word lanes): e0 = d0 + d2, e1 = d0 - d2, e2 = (d1 >> 1) - d3,
+; e3 = d1 + (d3 >> 1); f0 = e0 + e3, f1 = e1 + e2, f2 = e1 - e2,
+; f3 = e0 - e3. XMM4 XMM5 changed.
+%macro H264_IDCT4 0
+    movdqa xmm4, xmm0
+    paddw xmm0, xmm2                ; e0
+    psubw xmm4, xmm2                ; e1
+    movdqa xmm5, xmm1
+    psraw xmm5, 1
+    psubw xmm5, xmm3                ; e2
+    psraw xmm3, 1
+    paddw xmm3, xmm1                ; e3
+    movdqa xmm1, xmm4
+    paddw xmm1, xmm5                ; f1
+    psubw xmm4, xmm5
+    movdqa xmm2, xmm4               ; f2
+    movdqa xmm5, xmm0
+    paddw xmm0, xmm3                ; f0
+    psubw xmm5, xmm3
+    movdqa xmm3, xmm5               ; f3
+%endmacro
+
 ; h264_idct_add: ESI = 4x4 coefficients (int16, raster, already scaled;
 ; cleared afterwards), EDI = destination, EDX = stride: the inverse
-; transform (8.5.12.2) added to the prediction with clipping.
+; transform (8.5.12.2) added to the prediction with clipping. SSE2: the
+; four rows sit in the low halves of XMM0..XMM3; a 1-D transform across
+; the registers works on all four lines at once, so the block is transposed
+; before each pass (rows first, then columns, as the standard orders them;
+; the >> 1 roundings make the order matter). The values fit in 16 bits for
+; any conforming stream (8.5.12.2), damaged ones just give wrong pixels.
+; EAX ECX XMM0-XMM7 changed.
 h264_idct_add:
-    push ebx
-    push esi
-    push edi
-    push ebp
-    push edx
-    ; rows: e0 = d0 + d2, e1 = d0 - d2, e2 = (d1 >> 1) - d3, e3 = d1 + (d3 >> 1)
-    ; f0 = e0 + e3, f1 = e1 + e2, f2 = e1 - e2, f3 = e0 - e3
-    xor ebx, ebx
-.row:
-    movsx eax, word [esi + ebx * 8]
-    movsx ecx, word [esi + ebx * 8 + 2]
-    movsx edx, word [esi + ebx * 8 + 4]
-    movsx ebp, word [esi + ebx * 8 + 6]
-    call h264_idct1
-    push ebx
-    shl ebx, 4
-    mov [h264_tmpi + ebx], eax
-    mov [h264_tmpi + ebx + 4], ecx
-    mov [h264_tmpi + ebx + 8], edx
-    mov [h264_tmpi + ebx + 12], ebp
-    pop ebx
-    inc ebx
-    cmp ebx, 4
-    jb .row
-    xor eax, eax
-    mov [esi], eax
-    mov [esi + 4], eax
-    mov [esi + 8], eax
-    mov [esi + 12], eax
-    mov [esi + 16], eax
-    mov [esi + 20], eax
-    mov [esi + 24], eax
-    mov [esi + 28], eax
-    ; columns, then (x + 32) >> 6 added to the prediction
-    pop esi                         ; ESI = stride
-    xor ebx, ebx
-.col:
-    mov eax, [h264_tmpi + ebx * 4]
-    mov ecx, [h264_tmpi + ebx * 4 + 16]
-    mov edx, [h264_tmpi + ebx * 4 + 32]
-    mov ebp, [h264_tmpi + ebx * 4 + 48]
-    call h264_idct1
-    push edi
-    add edi, ebx
-    call .put
-    mov eax, ecx
-    call .put
-    mov eax, edx
-    call .put
-    mov eax, ebp
-    call .put
-    pop edi
-    inc ebx
-    cmp ebx, 4
-    jb .col
-    pop ebp
-    pop edi
-    pop esi
-    pop ebx
+    movq xmm0, [esi]
+    movq xmm1, [esi + 8]
+    movq xmm2, [esi + 16]
+    movq xmm3, [esi + 24]
+    pxor xmm7, xmm7
+    movdqu [esi], xmm7
+    movdqu [esi + 16], xmm7
+    H264_TR4W                       ; registers = columns
+    H264_IDCT4                      ; horizontal pass (each row)
+    H264_TR4W                       ; registers = rows
+    H264_IDCT4                      ; vertical pass
+    mov eax, 0x00200020             ; (x + 32) >> 6
+    movd xmm6, eax
+    pshufd xmm6, xmm6, 0
+    punpcklqdq xmm0, xmm1           ; rows 0 | 1
+    punpcklqdq xmm2, xmm3           ; rows 2 | 3
+    paddw xmm0, xmm6
+    paddw xmm2, xmm6
+    psraw xmm0, 6
+    psraw xmm2, 6
+    lea ecx, [edx * 3]
+    movd xmm4, [edi]                ; the prediction, as words
+    movd xmm5, [edi + edx]
+    punpckldq xmm4, xmm5
+    punpcklbw xmm4, xmm7
+    paddw xmm0, xmm4
+    movd xmm4, [edi + edx * 2]
+    movd xmm5, [edi + ecx]
+    punpckldq xmm4, xmm5
+    punpcklbw xmm4, xmm7
+    paddw xmm2, xmm4
+    packuswb xmm0, xmm2             ; clipped to 0..255: the 4 rows
+    movd [edi], xmm0
+    psrldq xmm0, 4
+    movd [edi + edx], xmm0
+    psrldq xmm0, 4
+    movd [edi + edx * 2], xmm0
+    psrldq xmm0, 4
+    movd [edi + ecx], xmm0
     ret
-.put:                               ; EAX = residual: pixel at EDI, next row
-    push edx
+
+; h264_idct_dc_add: the same for a block whose only coefficient is the DC
+; (ESI as above, the DC cleared): every residual is (DC + 32) >> 6.
+; EAX ECX XMM0 XMM4-XMM7 changed.
+h264_idct_dc_add:
+    movsx eax, word [esi]
+    mov word [esi], 0
     add eax, 32
     sar eax, 6
-    movzx edx, byte [edi]
-    add edx, eax
-    call h264_clip1
-    mov [edi], dl
-    add edi, esi
-    pop edx
+    movd xmm0, eax
+    pshuflw xmm0, xmm0, 0
+    punpcklqdq xmm0, xmm0           ; 8 words of the residual
+    pxor xmm7, xmm7
+    lea ecx, [edx * 3]
+    movd xmm4, [edi]
+    movd xmm5, [edi + edx]
+    punpckldq xmm4, xmm5
+    punpcklbw xmm4, xmm7
+    paddw xmm4, xmm0
+    movd xmm5, [edi + edx * 2]
+    movd xmm6, [edi + ecx]
+    punpckldq xmm5, xmm6
+    punpcklbw xmm5, xmm7
+    paddw xmm5, xmm0
+    packuswb xmm4, xmm5
+    movd [edi], xmm4
+    psrldq xmm4, 4
+    movd [edi + edx], xmm4
+    psrldq xmm4, 4
+    movd [edi + edx * 2], xmm4
+    psrldq xmm4, 4
+    movd [edi + ecx], xmm4
     ret
 
-; h264_idct1: one 4-point inverse transform: EAX, ECX, EDX, EBP = d0..d3 ->
-; the four results in the same registers. EBX ESI EDI kept.
-h264_idct1:
-    push esi
-    push edi
-    lea esi, [eax + edx]            ; e0
-    sub eax, edx                    ; e1
-    mov edi, ecx
-    sar edi, 1
-    sub edi, ebp                    ; e2
-    sar ebp, 1
-    add ebp, ecx                    ; e3
-    lea ecx, [eax + edi]            ; f1 = e1 + e2
-    sub eax, edi                    ; f2 = e1 - e2
-    mov edx, eax
-    lea eax, [esi + ebp]            ; f0 = e0 + e3
-    sub esi, ebp                    ; f3 = e0 - e3
-    mov ebp, esi
-    pop edi
-    pop esi
-    ret
-
+; h264_idct_any: h264_idct_add, or h264_idct_dc_add when only the DC is
+; there (arguments as h264_idct_add)
+h264_idct_any:
+    movdqu xmm0, [esi]
+    movdqu xmm1, [esi + 16]
+    xor eax, eax
+    pinsrw xmm0, eax, 0             ; all but the DC
+    por xmm0, xmm1
+    pxor xmm7, xmm7
+    pcmpeqb xmm0, xmm7
+    pmovmskb eax, xmm0
+    cmp eax, 0xFFFF
+    jne h264_idct_add
+    jmp h264_idct_dc_add
 ; =============================================================================
 ;  Motion compensation
 ; =============================================================================
@@ -1219,7 +1251,8 @@ h264_deblock_mb:
     inc ebp
     cmp ebp, 4
     jb .he
-    ; filter: luma
+    ; filter: luma. Vertical edges are transposed into h264_lfv (8 vectors
+    ; p3 .. q3 of 16 lines) and back; horizontal edges are filtered in place
     mov ebx, [h264_cur]
     SLOTP ebx
     mov eax, [h264_dbk_y]
@@ -1229,31 +1262,42 @@ h264_deblock_mb:
     shl edx, 4
     add eax, edx
     add eax, [ebx + SL_Y]
-    mov [h264_tmpi + 120], eax      ; the macroblock's luma
+    mov [h264_dbk_lp], eax          ; the macroblock's luma
     xor ebp, ebp                    ; vertical edges
 .lv:
     mov eax, [h264_dbk_bsh + ebp * 4]
     test eax, eax
     jz .lvn
-    mov [h264_dbk_bs], eax
     mov esi, [h264_dbk_mb]          ; qP of the two macroblocks
-    movzx eax, byte [esi + MI_QP]
+    movzx edx, byte [esi + MI_QP]
+    mov ecx, edx
     test ebp, ebp
     jnz .lv1
     movzx ecx, byte [esi - MI_SZ + MI_QP]
-    jmp .lv2
 .lv1:
-    mov ecx, eax
-.lv2:
-    call h264_dbk_params
+    call h264_lf_lparams
     jz .lvn
-    mov edi, [h264_tmpi + 120]
-    lea edi, [edi + ebp * 4]
-    mov dword [h264_dbk_xs], 1
+    push eax
+    mov esi, [h264_dbk_lp]          ; 16 rows of 8 pixels around the edge
+    lea esi, [esi + ebp * 4 - 4]
     mov eax, [h264_ystride]
-    mov [h264_dbk_ls], eax
-    mov dword [h264_dbk_lines], 4
-    call h264_filter_luma
+    mov edi, h264_lfv
+    mov edx, 16
+    call h264_tr8x8
+    mov edi, h264_lfv + 8
+    call h264_tr8x8
+    pop eax
+    mov ebx, h264_lfv
+    mov ecx, 16
+    call h264_lf_luma
+    mov esi, h264_lfv               ; and back
+    mov eax, 16
+    mov edi, [h264_dbk_lp]
+    lea edi, [edi + ebp * 4 - 4]
+    mov edx, [h264_ystride]
+    call h264_tr8x8
+    mov esi, h264_lfv + 8
+    call h264_tr8x8
 .lvn:
     inc ebp
     cmp ebp, 4
@@ -1263,10 +1307,9 @@ h264_deblock_mb:
     mov eax, [h264_dbk_bsv + ebp * 4]
     test eax, eax
     jz .lhn
-    mov [h264_dbk_bs], eax
     mov esi, [h264_dbk_mb]
-    movzx eax, byte [esi + MI_QP]
-    mov ecx, eax
+    movzx edx, byte [esi + MI_QP]
+    mov ecx, edx
     test ebp, ebp
     jnz .lh2
     mov ecx, [h264_mbw]
@@ -1274,24 +1317,19 @@ h264_deblock_mb:
     neg ecx
     movzx ecx, byte [esi + ecx + MI_QP]
 .lh2:
-    call h264_dbk_params
+    call h264_lf_lparams
     jz .lhn
-    mov edi, ebp
-    shl edi, 2
-    imul edi, [h264_ystride]
-    add edi, [h264_tmpi + 120]
-    mov eax, [h264_ystride]
-    mov [h264_dbk_xs], eax
-    mov dword [h264_dbk_ls], 1
-    mov dword [h264_dbk_lines], 4
-    call h264_filter_luma
+    mov ecx, [h264_ystride]         ; p3 = 4 rows above the edge
+    lea ebx, [ebp * 4 - 4]
+    imul ebx, ecx
+    add ebx, [h264_dbk_lp]
+    call h264_lf_luma
 .lhn:
     inc ebp
     cmp ebp, 4
     jb .lh
-    ; chroma: edges 0 and 2 (in 4x4 luma block units), both planes
-    xor ebp, ebp                    ; 0 = Cb, 1 = Cr
-.cp:
+    ; chroma: edges 0 and 2 (in 4x4 luma block units); Cb in lanes 0-7 and
+    ; Cr in lanes 8-15 of the vectors
     mov ebx, [h264_cur]
     SLOTP ebx
     mov eax, [h264_dbk_y]
@@ -1300,69 +1338,104 @@ h264_deblock_mb:
     mov edx, [h264_dbk_x]
     shl edx, 3
     add eax, edx
-    add eax, [ebx + SL_U + ebp * 4]
-    mov [h264_tmpi + 124], eax
-    xor ebx, ebx                    ; vertical edges 0, 2
+    mov edx, eax
+    add eax, [ebx + SL_U]
+    mov [h264_dbk_cbp], eax
+    add edx, [ebx + SL_V]
+    mov [h264_dbk_crp], edx
+    xor ebp, ebp                    ; vertical edges 0, 2
 .cv:
-    mov eax, [h264_dbk_bsh + ebx * 4]
+    mov eax, [h264_dbk_bsh + ebp * 4]
     test eax, eax
     jz .cvn
-    mov [h264_dbk_bs], eax
-    mov esi, [h264_dbk_mb]
-    movzx eax, byte [esi + MI_QPC + ebp]
-    mov ecx, eax
-    test ebx, ebx
+    mov edi, [h264_dbk_mb]
+    mov esi, edi
+    test ebp, ebp
     jnz .cv2
-    movzx ecx, byte [esi - MI_SZ + MI_QPC + ebp]
+    sub esi, MI_SZ
 .cv2:
-    call h264_dbk_params
-    jz .cvn
-    mov edi, [h264_tmpi + 124]
-    lea edi, [edi + ebx * 2]
-    mov dword [h264_dbk_xs], 1
-    mov eax, [h264_cstride]
-    mov [h264_dbk_ls], eax
-    mov dword [h264_dbk_lines], 2
-    call h264_filter_chroma
+    call h264_lf_cparams
+    push eax
+    mov eax, [h264_cstride]         ; 8 rows of each plane, x - 4 .. x + 3
+    mov edx, 16
+    mov esi, [h264_dbk_cbp]
+    lea esi, [esi + ebp * 2 - 4]
+    mov edi, h264_lfv
+    call h264_tr8x8
+    mov esi, [h264_dbk_crp]
+    lea esi, [esi + ebp * 2 - 4]
+    mov edi, h264_lfv + 8
+    call h264_tr8x8
+    pop eax
+    mov ebx, h264_lfv + 2 * 16      ; p1
+    mov ecx, 16
+    call h264_lf_chroma
+    mov eax, 16
+    mov edx, [h264_cstride]
+    mov esi, h264_lfv
+    mov edi, [h264_dbk_cbp]
+    lea edi, [edi + ebp * 2 - 4]
+    call h264_tr8x8
+    mov esi, h264_lfv + 8
+    mov edi, [h264_dbk_crp]
+    lea edi, [edi + ebp * 2 - 4]
+    call h264_tr8x8
 .cvn:
-    add ebx, 2
-    cmp ebx, 4
+    add ebp, 2
+    cmp ebp, 4
     jb .cv
-    xor ebx, ebx                    ; horizontal edges 0, 2
+    xor ebp, ebp                    ; horizontal edges 0, 2
 .ch:
-    mov eax, [h264_dbk_bsv + ebx * 4]
+    mov eax, [h264_dbk_bsv + ebp * 4]
     test eax, eax
     jz .chn
-    mov [h264_dbk_bs], eax
-    mov esi, [h264_dbk_mb]
-    movzx eax, byte [esi + MI_QPC + ebp]
-    mov ecx, eax
-    test ebx, ebx
+    mov edi, [h264_dbk_mb]
+    mov esi, edi
+    test ebp, ebp
     jnz .ch2
     mov ecx, [h264_mbw]
     shl ecx, 6
-    neg ecx
-    add ecx, esi
-    movzx ecx, byte [ecx + MI_QPC + ebp]
+    sub esi, ecx
 .ch2:
-    call h264_dbk_params
-    jz .chn
-    mov edi, ebx
-    shl edi, 1
-    imul edi, [h264_cstride]
-    add edi, [h264_tmpi + 124]
-    mov eax, [h264_cstride]
-    mov [h264_dbk_xs], eax
-    mov dword [h264_dbk_ls], 1
-    mov dword [h264_dbk_lines], 2
-    call h264_filter_chroma
+    call h264_lf_cparams
+    ; rows p1, p0, q0, q1 of both planes into the vectors
+    mov ecx, [h264_cstride]
+    lea edx, [ebp * 2 - 2]
+    imul edx, ecx                   ; EDX = offset of row p1
+    mov esi, [h264_dbk_cbp]
+    add esi, edx
+    mov edi, [h264_dbk_crp]
+    add edi, edx
+    xor edx, edx
+.chl:
+    movq xmm0, [esi]
+    movhps xmm0, [edi]
+    movdqu [h264_lfv + 2 * 16 + edx], xmm0
+    add esi, ecx
+    add edi, ecx
+    add edx, 16
+    cmp edx, 4 * 16
+    jb .chl
+    mov ebx, h264_lfv + 2 * 16
+    mov ecx, 16
+    call h264_lf_chroma
+    mov ecx, [h264_cstride]         ; p0 and q0 back
+    lea edx, [ebp * 2 - 1]
+    imul edx, ecx
+    mov esi, [h264_dbk_cbp]
+    add esi, edx
+    mov edi, [h264_dbk_crp]
+    add edi, edx
+    movdqu xmm0, [h264_lfv + 3 * 16]
+    movq [esi], xmm0
+    movhps [edi], xmm0
+    movdqu xmm0, [h264_lfv + 4 * 16]
+    movq [esi + ecx], xmm0
+    movhps [edi + ecx], xmm0
 .chn:
-    add ebx, 2
-    cmp ebx, 4
+    add ebp, 2
+    cmp ebp, 4
     jb .ch
-    inc ebp
-    cmp ebp, 2
-    jb .cp
     pop ebp
     ret
 ; EAX = MI_ of the neighbouring macroblock: ZF = 1 if the edge to it must
@@ -1490,375 +1563,600 @@ h264_dbk_params:
     test eax, eax
 .r: ret
 
-; h264_filter_luma: filter one luma edge of 16 lines. EDI = q0 of the first
-; line, h264_dbk_xs = step across the edge, _ls = to the next line,
-; h264_dbk_bs = bS of the four segments of 4 lines. EBX EBP kept.
-h264_filter_luma:
+; ---- the filters themselves (SSE2) -------------------------------------------
+; The samples of an edge are handled as vectors: one byte per line, p3 .. q3
+; (p0 next to the edge on one side, q0 on the other). For a horizontal edge
+; those are simply picture rows; a vertical edge is transposed into
+; h264_lfv first (h264_tr8x8) and back afterwards. The decisions (8.7.2.2)
+; are made on bytes, 16 lines at once; the filters (8.7.2.3, 8.7.2.4) on
+; words, 8 lines at a time, through the word copies in h264_lfw:
+;   +0 p3, +16 p2, +32 p1, +48 p0, +64 q0, +80 q1, +96 q2, +112 q3,
+;   +128 filterSamplesFlag, +144 ap < beta, +160 aq < beta (masks; for a
+;   bS 4 edge also with |p0 - q0| < (alpha >> 2) + 2), +176 tC0,
+;   +192 .. +272 the results p2' p1' p0' q0' q1' q2';
+; lines 0-7 at h264_lfw, lines 8-15 at h264_lfw + LFW_HALF.
+; Within one frame, bS 4 happens for every line of an edge or for none, so
+; an edge is either strong or normal as a whole.
+
+LFW_HALF        equ 384
+
+; H264_ABSD a, b, c, t: a = |b - c| (unsigned bytes); t is scratch
+%macro H264_ABSD 4
+    movdqa %1, %2
+    psubusb %1, %3
+    movdqa %4, %3
+    psubusb %4, %2
+    por %1, %4
+%endmacro
+
+; H264_GE a, x, t: a (bytes, a limit, from memory) becomes the mask
+; x >= limit; t is scratch
+%macro H264_GE 3
+    psubusb %1, %2
+    pxor %3, %3
+    pcmpeqb %1, %3
+%endmacro
+
+; H264_STRONG_SIDE p3, p2, p1, p0, q0, q1, mask, out2, out1, out0 (offsets
+; in the word copies at ESI): one side of the bS 4 luma filter (8.7.2.4):
+; where the mask (ap / aq with the extra condition) holds
+;   p0' = (p2 + 2 p1 + 2 p0 + 2 q0 + q1 + 4) >> 3
+;   p1' = (p2 + p1 + p0 + q0 + 2) >> 2
+;   p2' = (2 p3 + 3 p2 + p1 + p0 + q0 + 4) >> 3
+; otherwise p0' = (2 p1 + p0 + q1 + 2) >> 2 (where the edge is filtered at
+; all) and p1, p2 stay. XMM6 = 2 in every word; XMM0-XMM5, XMM7 changed.
+%macro H264_STRONG_SIDE 10
+    movdqu xmm0, [esi + %3]         ; p1
+    movdqu xmm1, [esi + %4]         ; p0
+    movdqu xmm2, [esi + %5]         ; q0
+    movdqu xmm5, [esi + %6]         ; q1
+    movdqa xmm7, xmm0               ; the weak p0'
+    paddw xmm7, xmm7
+    paddw xmm7, xmm1
+    paddw xmm7, xmm5
+    paddw xmm7, xmm6
+    psrlw xmm7, 2
+    movdqu xmm4, [esi + 128]
+    pand xmm7, xmm4
+    pandn xmm4, xmm1
+    por xmm7, xmm4                  ; filtered ? weak p0' : p0
+    movdqa xmm3, xmm0
+    paddw xmm3, xmm1
+    paddw xmm3, xmm2                ; s = p1 + p0 + q0
+    movdqu xmm4, [esi + %2]         ; p2
+    movdqa xmm1, xmm3               ; p0'
+    paddw xmm1, xmm1
+    paddw xmm1, xmm4
+    paddw xmm1, xmm5
+    paddw xmm1, xmm6
+    paddw xmm1, xmm6
+    psrlw xmm1, 3
+    movdqu xmm2, [esi + %7]
+    pand xmm1, xmm2
+    pandn xmm2, xmm7
+    por xmm1, xmm2
+    movdqu [esi + %10], xmm1
+    movdqa xmm1, xmm4               ; p1'
+    paddw xmm1, xmm3
+    paddw xmm1, xmm6
+    psrlw xmm1, 2
+    movdqu xmm2, [esi + %7]
+    pand xmm1, xmm2
+    pandn xmm2, xmm0
+    por xmm1, xmm2
+    movdqu [esi + %9], xmm1
+    movdqu xmm1, [esi + %1]         ; p2'
+    paddw xmm1, xmm1
+    paddw xmm1, xmm4
+    paddw xmm1, xmm4
+    paddw xmm1, xmm4
+    paddw xmm1, xmm3
+    paddw xmm1, xmm6
+    paddw xmm1, xmm6
+    psrlw xmm1, 3
+    movdqu xmm2, [esi + %7]
+    pand xmm1, xmm2
+    pandn xmm2, xmm4
+    por xmm1, xmm2
+    movdqu [esi + %8], xmm1
+%endmacro
+
+; H264_WEAK_SIDE p2, p1 (a register), mask, out: p1' = p1 + Clip3(-tC0,
+; tC0, (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1) where the mask (ap <
+; beta and filtered) holds. XMM0 = (p0 + q0 + 1) >> 1, XMM1 = tC0, XMM7 =
+; -tC0; XMM4 XMM5 changed.
+%macro H264_WEAK_SIDE 4
+    movdqu xmm4, [esi + %1]
+    paddw xmm4, xmm0
+    psubw xmm4, %2
+    psubw xmm4, %2
+    psraw xmm4, 1
+    pminsw xmm4, xmm1
+    pmaxsw xmm4, xmm7
+    movdqu xmm5, [esi + %3]
+    pand xmm4, xmm5
+    paddw xmm4, %2
+    movdqu [esi + %4], xmm4
+%endmacro
+
+; h264_tr8x8: transpose 8x8 bytes: 8 rows of 8 bytes at ESI (EAX bytes
+; apart) become 8 rows at EDI (EDX bytes apart): row k of the result =
+; byte k of every source row. ESI and EDI advance by 8 rows; ECX and
+; XMM0-XMM7 changed.
+h264_tr8x8:
+    lea ecx, [eax * 3]
+    movq xmm0, [esi]
+    movq xmm1, [esi + eax]
+    movq xmm2, [esi + eax * 2]
+    movq xmm3, [esi + ecx]
+    lea esi, [esi + eax * 4]
+    movq xmm4, [esi]
+    movq xmm5, [esi + eax]
+    movq xmm6, [esi + eax * 2]
+    movq xmm7, [esi + ecx]
+    lea esi, [esi + eax * 4]
+    punpcklbw xmm0, xmm1            ; rows 0, 1 interleaved
+    punpcklbw xmm2, xmm3            ; 2, 3
+    punpcklbw xmm4, xmm5            ; 4, 5
+    punpcklbw xmm6, xmm7            ; 6, 7
+    movdqa xmm1, xmm0
+    punpcklwd xmm0, xmm2            ; columns 0-3 of rows 0-3
+    punpckhwd xmm1, xmm2            ; columns 4-7 of rows 0-3
+    movdqa xmm5, xmm4
+    punpcklwd xmm4, xmm6            ; columns 0-3 of rows 4-7
+    punpckhwd xmm5, xmm6            ; columns 4-7 of rows 4-7
+    movdqa xmm2, xmm0
+    punpckldq xmm0, xmm4            ; columns 0 | 1
+    punpckhdq xmm2, xmm4            ; 2 | 3
+    movdqa xmm3, xmm1
+    punpckldq xmm1, xmm5            ; 4 | 5
+    punpckhdq xmm3, xmm5            ; 6 | 7
+    lea ecx, [edx * 3]
+    movq [edi], xmm0
+    movhps [edi + edx], xmm0
+    movq [edi + edx * 2], xmm2
+    movhps [edi + ecx], xmm2
+    lea edi, [edi + edx * 4]
+    movq [edi], xmm1
+    movhps [edi + edx], xmm1
+    movq [edi + edx * 2], xmm3
+    movhps [edi + ecx], xmm3
+    lea edi, [edi + edx * 4]
+    ret
+
+; h264_lf_bcast: XMM0 = the byte AL in all 16 lanes
+h264_lf_bcast:
+    movd xmm0, eax
+    punpcklbw xmm0, xmm0
+    pshuflw xmm0, xmm0, 0
+    punpcklqdq xmm0, xmm0
+    ret
+
+; h264_lf_lparams: the per-line parameters of a luma edge. EAX = bS of
+; its four segments (a byte each), ECX = qP of the p macroblock, EDX = of
+; q -> h264_lf_a / _b / _t / _e; ZF = 1 (jz taken) if alpha or beta is 0
+; (nothing to filter), else EAX = 1 for a bS 4 edge, 0 otherwise. EBX ESI
+; EDI EBP kept.
+h264_lf_lparams:
+    push ebx
+    push esi
+    mov ebx, eax
+    mov eax, edx
+    call h264_dbk_params
+    jz .out
+    mov eax, [h264_dbk_a]
+    call h264_lf_bcast
+    movdqu [h264_lf_a], xmm0
+    mov eax, [h264_dbk_b]
+    call h264_lf_bcast
+    movdqu [h264_lf_b], xmm0
+    movd xmm0, ebx                  ; enabled where bS > 0 (4 lines each)
+    punpcklbw xmm0, xmm0
+    punpcklwd xmm0, xmm0
+    pxor xmm1, xmm1
+    pcmpeqb xmm0, xmm1
+    pcmpeqb xmm1, xmm1
+    pxor xmm0, xmm1
+    movdqu [h264_lf_e], xmm0
+    mov eax, 1
+    cmp bl, 4
+    je .nz
+    mov esi, [h264_dbk_tc]          ; tC0 of each segment (bS 0..3)
+    mov eax, ebx
+    shr eax, 24
+    movzx edx, byte [esi + eax]
+    shl edx, 8
+    mov eax, ebx
+    shr eax, 16
+    and eax, 255
+    mov dl, [esi + eax]
+    shl edx, 8
+    movzx eax, bh
+    mov dl, [esi + eax]
+    shl edx, 8
+    movzx eax, bl
+    mov dl, [esi + eax]
+    movd xmm0, edx
+    punpcklbw xmm0, xmm0
+    punpcklwd xmm0, xmm0
+    movdqu [h264_lf_t], xmm0
+    xor eax, eax
+.nz:
+    test esp, esp                   ; ZF = 0
+.out:
+    pop esi
+    pop ebx
+    ret
+
+; h264_lf_cparams: the per-line parameters of a chroma edge, Cb in lanes
+; 0-7, Cr in lanes 8-15 (2 lines per bS segment). EAX = bS of the four
+; segments, ESI = MI_ of the p macroblock, EDI = of q (h264_dbk_mb) ->
+; h264_lf_a / _b / _t / _e (alpha or beta 0 leaves a plane unfiltered),
+; EAX = 1 for a bS 4 edge, else 0. EBX ESI EDI EBP kept.
+h264_lf_cparams:
     push ebx
     push ebp
-    xor ebx, ebx                    ; line
-.line:
+    mov ebx, eax
+    movd xmm0, ebx                  ; enabled where bS > 0
+    punpcklbw xmm0, xmm0
+    punpcklqdq xmm0, xmm0
+    pxor xmm1, xmm1
+    pcmpeqb xmm0, xmm1
+    pcmpeqb xmm1, xmm1
+    pxor xmm0, xmm1
+    movdqu [h264_lf_e], xmm0
+    xor ebp, ebp                    ; plane
+.pl:
+    movzx eax, byte [edi + MI_QPC + ebp]
+    movzx ecx, byte [esi + MI_QPC + ebp]
+    call h264_dbk_params
+    mov ecx, ebp
+    shl ecx, 3                      ; ECX = first lane of the plane
+    mov eax, [h264_dbk_a]
+    imul eax, 0x01010101
+    mov [h264_lf_a + ecx], eax
+    mov [h264_lf_a + ecx + 4], eax
+    mov eax, [h264_dbk_b]
+    imul eax, 0x01010101
+    mov [h264_lf_b + ecx], eax
+    mov [h264_lf_b + ecx + 4], eax
+    cmp bl, 4
+    je .nexp
+    push esi
+    mov esi, [h264_dbk_tc]
+    xor edx, edx                    ; segment
+.seg:
     mov eax, ebx
-    shr eax, 2
-    movzx eax, byte [h264_dbk_bs + eax]
-    test eax, eax
-    jz .next
-    push ebx
-    mov ebp, eax                    ; EBP = bS
-    mov esi, [h264_dbk_xs]
-    ; samples: p0 = [edi - xs], p1 = [edi - 2 xs] ...; q0 = [edi] ...
-    mov ecx, edi
-    sub ecx, esi
-    movzx eax, byte [ecx]           ; p0
-    movzx edx, byte [edi]           ; q0
-    mov [h264_fl + 0], eax
-    mov [h264_fl + 16], edx
-    sub ecx, esi
-    movzx eax, byte [ecx]
-    mov [h264_fl + 4], eax          ; p1
-    sub ecx, esi
-    movzx eax, byte [ecx]
-    mov [h264_fl + 8], eax          ; p2
-    sub ecx, esi
-    movzx eax, byte [ecx]
-    mov [h264_fl + 12], eax         ; p3
-    lea ecx, [edi + esi]
-    movzx eax, byte [ecx]
-    mov [h264_fl + 20], eax         ; q1
-    add ecx, esi
-    movzx eax, byte [ecx]
-    mov [h264_fl + 24], eax         ; q2
-    add ecx, esi
-    movzx eax, byte [ecx]
-    mov [h264_fl + 28], eax         ; q3
-    ; |p0 - q0| < alpha, |p1 - p0| < beta, |q1 - q0| < beta
-    mov eax, [h264_fl + 0]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    cmp eax, [h264_dbk_a]
-    jae .skip
-    mov eax, [h264_fl + 4]
-    sub eax, [h264_fl + 0]
-    call h264_abs
-    cmp eax, [h264_dbk_b]
-    jae .skip
-    mov eax, [h264_fl + 20]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    cmp eax, [h264_dbk_b]
-    jae .skip
-    mov eax, [h264_fl + 8]          ; ap = |p2 - p0|, aq = |q2 - q0|
-    sub eax, [h264_fl + 0]
-    call h264_abs
-    mov [h264_fl + 32], eax
-    mov eax, [h264_fl + 24]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    mov [h264_fl + 36], eax
-    cmp ebp, 4
-    je .strong
-    ; bS < 4: tC = tC0 + (ap < beta) + (aq < beta)
-    mov eax, [h264_dbk_tc]
-    movzx ecx, byte [eax + ebp]     ; tC0
-    mov edx, ecx
-    mov eax, [h264_fl + 32]
-    cmp eax, [h264_dbk_b]
-    jae .t1
-    inc edx
-.t1:
-    mov eax, [h264_fl + 36]
-    cmp eax, [h264_dbk_b]
-    jae .t2
-    inc edx
-.t2:
-    ; delta = Clip3(-tC, tC, (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3)
-    mov eax, [h264_fl + 16]
-    sub eax, [h264_fl + 0]
-    shl eax, 2
-    add eax, [h264_fl + 4]
-    sub eax, [h264_fl + 20]
-    add eax, 4
-    sar eax, 3
-    call h264_clip3                 ; EAX in -EDX..EDX
     push ecx
-    mov ecx, edi
-    sub ecx, esi
-    mov edx, [h264_fl + 0]
-    add edx, eax
-    call h264_clip1
-    mov [ecx], dl                   ; p0'
-    mov edx, [h264_fl + 16]
-    sub edx, eax
-    call h264_clip1
-    mov [edi], dl                   ; q0'
+    lea ecx, [edx * 8]
+    shr eax, cl
     pop ecx
-    ; p1' = p1 + Clip3(-tC0, tC0, (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1)
-    mov eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    inc eax
-    shr eax, 1
-    mov [h264_fl + 40], eax
-    mov eax, [h264_fl + 32]
-    cmp eax, [h264_dbk_b]
-    jae .nop1
-    mov eax, [h264_fl + 8]
-    add eax, [h264_fl + 40]
-    mov edx, [h264_fl + 4]
-    shl edx, 1
-    sub eax, edx
-    sar eax, 1
-    mov edx, ecx
-    call h264_clip3
-    add eax, [h264_fl + 4]
-    mov edx, edi
-    sub edx, esi
-    sub edx, esi
-    mov [edx], al
-.nop1:
-    mov eax, [h264_fl + 36]
-    cmp eax, [h264_dbk_b]
-    jae .skip
-    mov eax, [h264_fl + 24]
-    add eax, [h264_fl + 40]
-    mov edx, [h264_fl + 20]
-    shl edx, 1
-    sub eax, edx
-    sar eax, 1
-    mov edx, ecx
-    call h264_clip3
-    add eax, [h264_fl + 20]
-    mov [edi + esi], al
-    jmp .skip
-.strong:
-    ; bS = 4: strong filter where the edge is smooth enough
-    mov eax, [h264_fl + 0]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    mov edx, [h264_dbk_a]
-    shr edx, 2
-    add edx, 2
-    mov [h264_fl + 44], eax         ; |p0 - q0|
-    mov [h264_fl + 48], edx         ; (alpha >> 2) + 2
-    mov eax, [h264_fl + 32]
-    cmp eax, [h264_dbk_b]
-    jae .pweak
-    mov eax, [h264_fl + 44]
-    cmp eax, [h264_fl + 48]
-    jae .pweak
-    ; p0' = (p2 + 2 p1 + 2 p0 + 2 q0 + q1 + 4) >> 3
-    mov eax, [h264_fl + 4]
-    add eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    shl eax, 1
-    add eax, [h264_fl + 8]
-    add eax, [h264_fl + 20]
-    add eax, 4
-    shr eax, 3
-    mov ecx, edi
-    sub ecx, esi
-    mov [ecx], al
-    ; p1' = (p2 + p1 + p0 + q0 + 2) >> 2
-    mov eax, [h264_fl + 8]
-    add eax, [h264_fl + 4]
-    add eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    add eax, 2
-    shr eax, 2
-    sub ecx, esi
-    mov [ecx], al
-    ; p2' = (2 p3 + 3 p2 + p1 + p0 + q0 + 4) >> 3
-    mov eax, [h264_fl + 12]
-    shl eax, 1
-    mov edx, [h264_fl + 8]
-    lea edx, [edx * 2 + edx]
-    add eax, edx
-    add eax, [h264_fl + 4]
-    add eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    add eax, 4
-    shr eax, 3
-    sub ecx, esi
-    mov [ecx], al
-    jmp .qside
-.pweak:
-    ; p0' = (2 p1 + p0 + q1 + 2) >> 2
-    mov eax, [h264_fl + 4]
-    shl eax, 1
-    add eax, [h264_fl + 0]
-    add eax, [h264_fl + 20]
-    add eax, 2
-    shr eax, 2
-    mov ecx, edi
-    sub ecx, esi
-    mov [ecx], al
-.qside:
-    mov eax, [h264_fl + 36]
-    cmp eax, [h264_dbk_b]
-    jae .qweak
-    mov eax, [h264_fl + 44]
-    cmp eax, [h264_fl + 48]
-    jae .qweak
-    ; q0' = (p1 + 2 p0 + 2 q0 + 2 q1 + q2 + 4) >> 3
-    mov eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    add eax, [h264_fl + 20]
-    shl eax, 1
-    add eax, [h264_fl + 4]
-    add eax, [h264_fl + 24]
-    add eax, 4
-    shr eax, 3
-    mov [edi], al
-    ; q1' = (p0 + q0 + q1 + q2 + 2) >> 2
-    mov eax, [h264_fl + 0]
-    add eax, [h264_fl + 16]
-    add eax, [h264_fl + 20]
-    add eax, [h264_fl + 24]
-    add eax, 2
-    shr eax, 2
-    mov [edi + esi], al
-    ; q2' = (2 q3 + 3 q2 + q1 + q0 + p0 + 4) >> 3
-    mov eax, [h264_fl + 28]
-    shl eax, 1
-    mov edx, [h264_fl + 24]
-    lea edx, [edx * 2 + edx]
-    add eax, edx
-    add eax, [h264_fl + 20]
-    add eax, [h264_fl + 16]
-    add eax, [h264_fl + 0]
-    add eax, 4
-    shr eax, 3
-    lea ecx, [edi + esi * 2]
-    mov [ecx], al
-    jmp .skip
-.qweak:
-    ; q0' = (2 q1 + q0 + p1 + 2) >> 2
-    mov eax, [h264_fl + 20]
-    shl eax, 1
-    add eax, [h264_fl + 16]
-    add eax, [h264_fl + 4]
-    add eax, 2
-    shr eax, 2
-    mov [edi], al
-.skip:
-    pop ebx
-.next:
-    add edi, [h264_dbk_ls]
-    inc ebx
-    cmp ebx, 16
-    jb .line
-    pop ebp
-    pop ebx
-    ret
-
-; h264_filter_chroma: filter one chroma edge of 8 lines (bS segment = 2
-; lines); arguments as h264_filter_luma. EBX EBP kept.
-h264_filter_chroma:
-    push ebx
-    push ebp
-    xor ebx, ebx
-.line:
-    mov eax, ebx
-    shr eax, 1
-    movzx eax, byte [h264_dbk_bs + eax]
-    test eax, eax
-    jz .next
-    mov ebp, eax
-    mov esi, [h264_dbk_xs]
-    mov ecx, edi
-    sub ecx, esi
-    movzx eax, byte [ecx]           ; p0
-    mov [h264_fl + 0], eax
-    sub ecx, esi
-    movzx eax, byte [ecx]           ; p1
-    mov [h264_fl + 4], eax
-    movzx eax, byte [edi]           ; q0
-    mov [h264_fl + 16], eax
-    movzx eax, byte [edi + esi]     ; q1
-    mov [h264_fl + 20], eax
-    mov eax, [h264_fl + 0]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    cmp eax, [h264_dbk_a]
-    jae .next
-    mov eax, [h264_fl + 4]
-    sub eax, [h264_fl + 0]
-    call h264_abs
-    cmp eax, [h264_dbk_b]
-    jae .next
-    mov eax, [h264_fl + 20]
-    sub eax, [h264_fl + 16]
-    call h264_abs
-    cmp eax, [h264_dbk_b]
-    jae .next
-    lea ecx, [edi]
-    sub ecx, esi                    ; ECX = p0
-    cmp ebp, 4
-    je .strong
-    mov eax, [h264_dbk_tc]          ; tC = tC0 + 1
-    movzx edx, byte [eax + ebp]
+    movzx eax, al
+    mov al, [esi + eax]
+    mov ah, al
+    mov [h264_lf_t + ecx + edx * 2], ax
     inc edx
-    mov eax, [h264_fl + 16]
-    sub eax, [h264_fl + 0]
-    shl eax, 2
-    add eax, [h264_fl + 4]
-    sub eax, [h264_fl + 20]
-    add eax, 4
-    sar eax, 3
-    call h264_clip3
-    mov edx, [h264_fl + 0]
-    add edx, eax
-    call h264_clip1
-    mov [ecx], dl
-    mov edx, [h264_fl + 16]
-    sub edx, eax
-    call h264_clip1
-    mov [edi], dl
-    jmp .next
-.strong:
-    mov eax, [h264_fl + 4]          ; p0' = (2 p1 + p0 + q1 + 2) >> 2
-    shl eax, 1
-    add eax, [h264_fl + 0]
-    add eax, [h264_fl + 20]
-    add eax, 2
-    shr eax, 2
-    mov [ecx], al
-    mov eax, [h264_fl + 20]         ; q0' = (2 q1 + q0 + p1 + 2) >> 2
-    shl eax, 1
-    add eax, [h264_fl + 16]
-    add eax, [h264_fl + 4]
-    add eax, 2
-    shr eax, 2
-    mov [edi], al
-.next:
-    add edi, [h264_dbk_ls]
-    inc ebx
-    cmp ebx, 8
-    jb .line
+    cmp edx, 4
+    jb .seg
+    pop esi
+.nexp:
+    inc ebp
+    cmp ebp, 2
+    jb .pl
+    xor eax, eax
+    cmp bl, 4
+    sete al
     pop ebp
     pop ebx
     ret
 
-; h264_abs: EAX -> |EAX|
-h264_abs:
-    test eax, eax
-    jns .r
-    neg eax
-.r: ret
-
-; h264_clip3: EAX clipped to -EDX..EDX
-h264_clip3:
-    cmp eax, edx
-    jle .a
-    mov eax, edx
+; h264_lf_masks: the decisions of an edge (8.7.2.2), 16 lines. XMM0 = p0,
+; XMM1 = q0, XMM2 = p1, XMM3 = q1 (bytes) -> XMM6 = filterSamplesFlag
+; (|p0 - q0| < alpha, |p1 - p0| < beta, |q1 - q0| < beta, bS > 0), also
+; in h264_lf_m; h264_lf_d = |p0 - q0|; EAX = its byte mask (0: nothing to
+; do). XMM4 XMM5 XMM7 changed.
+h264_lf_masks:
+    H264_ABSD xmm4, xmm0, xmm1, xmm5
+    movdqu [h264_lf_d], xmm4
+    movdqu xmm6, [h264_lf_a]
+    H264_GE xmm6, xmm4, xmm5
+    H264_ABSD xmm4, xmm2, xmm0, xmm5
+    movdqu xmm7, [h264_lf_b]
+    H264_GE xmm7, xmm4, xmm5
+    por xmm6, xmm7
+    H264_ABSD xmm4, xmm3, xmm1, xmm5
+    movdqu xmm7, [h264_lf_b]
+    H264_GE xmm7, xmm4, xmm5
+    por xmm6, xmm7
+    movdqu xmm7, [h264_lf_e]
+    pandn xmm6, xmm7
+    movdqu [h264_lf_m], xmm6
+    pmovmskb eax, xmm6
     ret
-.a: neg edx
-    cmp eax, edx
-    jge .b
-    mov eax, edx
-.b: neg edx
+
+; h264_lf_unpack: word copies of a byte vector for the two halves.
+; XMM0 = the vector, EDX = offset in h264_lfw; XMM7 = 0 -> zero extended,
+; XMM1 changed.
+h264_lf_unpack:
+    movdqa xmm1, xmm0
+    punpcklbw xmm0, xmm7
+    punpckhbw xmm1, xmm7
+    movdqu [h264_lfw + edx], xmm0
+    movdqu [h264_lfw + edx + LFW_HALF], xmm1
+    ret
+
+; h264_lf_unpackm: the same for a mask (0xFF -> 0xFFFF). XMM1 changed.
+h264_lf_unpackm:
+    movdqa xmm1, xmm0
+    punpcklbw xmm0, xmm0
+    punpckhbw xmm1, xmm1
+    movdqu [h264_lfw + edx], xmm0
+    movdqu [h264_lfw + edx + LFW_HALF], xmm1
+    ret
+
+; h264_lf_luma: filter one luma edge of 16 lines. EBX = the vector of p3
+; samples (16 bytes, one per line), ECX = the distance to the next vector
+; (p2, p1, p0, q0, q1, q2, q3 follow), EAX = 1 for a bS 4 edge, else 0;
+; h264_lf_a / _b / _t / _e = per line alpha, beta, tC0 and enable.
+; p2 .. q2 are rewritten. EBX EBP kept.
+h264_lf_luma:
+    push ebp
+    mov ebp, eax
+    lea edx, [ecx * 3]
+    lea edi, [ebx + ecx * 4]        ; EDI = q0
+    movdqu xmm0, [ebx + edx]        ; p0
+    movdqu xmm1, [edi]              ; q0
+    movdqu xmm2, [ebx + ecx * 2]    ; p1
+    movdqu xmm3, [edi + ecx]        ; q1
+    call h264_lf_masks
+    test eax, eax
+    jz .out
+    movdqu xmm2, [ebx + ecx]        ; ap: |p2 - p0| < beta
+    H264_ABSD xmm4, xmm2, xmm0, xmm5
+    movdqu xmm5, [h264_lf_b]
+    H264_GE xmm5, xmm4, xmm7
+    pandn xmm5, xmm6
+    movdqu xmm3, [edi + ecx * 2]    ; aq: |q2 - q0| < beta
+    H264_ABSD xmm4, xmm3, xmm1, xmm7
+    movdqu xmm7, [h264_lf_b]
+    H264_GE xmm7, xmm4, xmm0
+    pandn xmm7, xmm6
+    test ebp, ebp
+    jz .masks
+    mov eax, [h264_lf_a]            ; bS 4: and |p0 - q0| < (alpha >> 2) + 2
+    shr eax, 2                      ; (alpha is the same on every line)
+    and eax, 63
+    add eax, 2
+    call h264_lf_bcast
+    movdqu xmm1, [h264_lf_d]
+    H264_GE xmm0, xmm1, xmm4
+    movdqa xmm1, xmm0
+    pandn xmm0, xmm5
+    pandn xmm1, xmm7
+    movdqa xmm5, xmm0
+    movdqa xmm7, xmm1
+.masks:
+    movdqa xmm0, xmm5
+    mov edx, 144
+    call h264_lf_unpackm
+    movdqa xmm0, xmm7
+    mov edx, 160
+    call h264_lf_unpackm
+    movdqu xmm0, [h264_lf_m]
+    mov edx, 128
+    call h264_lf_unpackm
+    pxor xmm7, xmm7
+    movdqu xmm0, [h264_lf_t]
+    mov edx, 176
+    call h264_lf_unpack
+    mov eax, ebx                    ; the samples
+    xor edx, edx
+.u: movdqu xmm0, [eax]
+    call h264_lf_unpack
+    add eax, ecx
+    add edx, 16
+    cmp edx, 128
+    jb .u
+    push ecx
+    mov esi, h264_lfw
+    test ebp, ebp
+    jnz .strong
+    call .weak_half
+    add esi, LFW_HALF
+    call .weak_half
+    jmp .store
+.strong:
+    mov eax, 0x00020002
+    movd xmm6, eax
+    pshufd xmm6, xmm6, 0
+    H264_STRONG_SIDE 0, 16, 32, 48, 64, 80, 144, 192, 208, 224
+    H264_STRONG_SIDE 112, 96, 80, 64, 48, 32, 160, 272, 256, 240
+    add esi, LFW_HALF
+    H264_STRONG_SIDE 0, 16, 32, 48, 64, 80, 144, 192, 208, 224
+    H264_STRONG_SIDE 112, 96, 80, 64, 48, 32, 160, 272, 256, 240
+.store:
+    pop ecx
+    lea eax, [ebx + ecx]            ; p2 .. q2 back as bytes
+    xor edx, edx
+.s: movdqu xmm0, [h264_lfw + edx + 192]
+    movdqu xmm1, [h264_lfw + edx + 192 + LFW_HALF]
+    packuswb xmm0, xmm1
+    movdqu [eax], xmm0
+    add eax, ecx
+    add edx, 16
+    cmp edx, 96
+    jb .s
+.out:
+    pop ebp
+    ret
+; the bS < 4 filter (8.7.2.3) of 8 lines, word copies at ESI
+.weak_half:
+    mov eax, 0x00040004
+    movd xmm6, eax
+    pshufd xmm6, xmm6, 0
+    movdqu xmm0, [esi + 48]         ; p0
+    movdqu xmm1, [esi + 64]         ; q0
+    movdqu xmm2, [esi + 32]         ; p1
+    movdqu xmm3, [esi + 80]         ; q1
+    movdqa xmm4, xmm1               ; (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3
+    psubw xmm4, xmm0
+    psllw xmm4, 2
+    paddw xmm4, xmm2
+    psubw xmm4, xmm3
+    paddw xmm4, xmm6
+    psraw xmm4, 3
+    movdqu xmm5, [esi + 176]        ; tC = tC0 + (ap < beta) + (aq < beta)
+    movdqu xmm6, [esi + 144]
+    psubw xmm5, xmm6
+    movdqu xmm6, [esi + 160]
+    psubw xmm5, xmm6
+    pminsw xmm4, xmm5               ; delta = Clip3(-tC, tC, ...)
+    pxor xmm6, xmm6
+    psubw xmm6, xmm5
+    pmaxsw xmm4, xmm6
+    movdqu xmm6, [esi + 128]
+    pand xmm4, xmm6
+    movdqa xmm5, xmm0
+    paddw xmm5, xmm4
+    movdqu [esi + 224], xmm5        ; p0' = Clip1(p0 + delta) (by packing)
+    movdqa xmm5, xmm1
+    psubw xmm5, xmm4
+    movdqu [esi + 240], xmm5        ; q0' = Clip1(q0 - delta)
+    pavgw xmm0, xmm1                ; (p0 + q0 + 1) >> 1
+    movdqu xmm1, [esi + 176]        ; tC0
+    pxor xmm7, xmm7
+    psubw xmm7, xmm1
+    H264_WEAK_SIDE 16, xmm2, 144, 208
+    H264_WEAK_SIDE 96, xmm3, 160, 256
+    movdqu xmm4, [esi + 16]         ; p2, q2 stay
+    movdqu [esi + 192], xmm4
+    movdqu xmm4, [esi + 96]
+    movdqu [esi + 272], xmm4
+    ret
+
+; h264_lf_chroma: filter one chroma edge, 16 lanes (8 lines of Cb and 8
+; of Cr). EBX = the vector of p1 samples, ECX = the distance to the next
+; (p0, q0, q1 follow), EAX = 1 for a bS 4 edge; h264_lf_a / _b / _t / _e
+; per lane. p0 and q0 are rewritten (8.7.2.3 / 8.7.2.4 with
+; chromaEdgeFlag 1). EBX EBP kept.
+h264_lf_chroma:
+    push ebp
+    mov ebp, eax
+    movdqu xmm0, [ebx + ecx]        ; p0
+    movdqu xmm1, [ebx + ecx * 2]    ; q0
+    movdqu xmm2, [ebx]              ; p1
+    lea edx, [ecx * 3]
+    movdqu xmm3, [ebx + edx]        ; q1
+    call h264_lf_masks
+    test eax, eax
+    jz .out
+    pxor xmm7, xmm7                 ; word copies of p1 .. q1
+    movdqu xmm0, [ebx]
+    mov edx, 32
+    call h264_lf_unpack
+    movdqu xmm0, [ebx + ecx]
+    mov edx, 48
+    call h264_lf_unpack
+    movdqu xmm0, [ebx + ecx * 2]
+    mov edx, 64
+    call h264_lf_unpack
+    lea eax, [ecx * 3]
+    movdqu xmm0, [ebx + eax]
+    mov edx, 80
+    call h264_lf_unpack
+    movdqu xmm0, [h264_lf_t]
+    mov edx, 176
+    call h264_lf_unpack
+    movdqu xmm0, [h264_lf_m]
+    mov edx, 128
+    call h264_lf_unpackm
+    mov esi, h264_lfw
+    call .half
+    add esi, LFW_HALF
+    call .half
+    movdqu xmm0, [h264_lfw + 224]   ; p0', q0' back as bytes
+    movdqu xmm1, [h264_lfw + 224 + LFW_HALF]
+    packuswb xmm0, xmm1
+    movdqu [ebx + ecx], xmm0
+    movdqu xmm0, [h264_lfw + 240]
+    movdqu xmm1, [h264_lfw + 240 + LFW_HALF]
+    packuswb xmm0, xmm1
+    movdqu [ebx + ecx * 2], xmm0
+.out:
+    pop ebp
+    ret
+.half:
+    movdqu xmm0, [esi + 48]         ; p0
+    movdqu xmm1, [esi + 64]         ; q0
+    movdqu xmm2, [esi + 32]         ; p1
+    movdqu xmm3, [esi + 80]         ; q1
+    movdqu xmm6, [esi + 128]        ; filterSamplesFlag
+    test ebp, ebp
+    jnz .strong
+    mov eax, 0x00040004
+    movd xmm5, eax
+    pshufd xmm5, xmm5, 0
+    movdqa xmm4, xmm1               ; (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3
+    psubw xmm4, xmm0
+    psllw xmm4, 2
+    paddw xmm4, xmm2
+    psubw xmm4, xmm3
+    paddw xmm4, xmm5
+    psraw xmm4, 3
+    movdqu xmm5, [esi + 176]        ; tC = tC0 + 1
+    mov eax, 0x00010001
+    movd xmm7, eax
+    pshufd xmm7, xmm7, 0
+    paddw xmm5, xmm7
+    pminsw xmm4, xmm5
+    pxor xmm7, xmm7
+    psubw xmm7, xmm5
+    pmaxsw xmm4, xmm7
+    pand xmm4, xmm6
+    paddw xmm0, xmm4
+    psubw xmm1, xmm4
+    movdqu [esi + 224], xmm0
+    movdqu [esi + 240], xmm1
+    ret
+.strong:
+    mov eax, 0x00020002
+    movd xmm7, eax
+    pshufd xmm7, xmm7, 0
+    movdqa xmm4, xmm2               ; p0' = (2 p1 + p0 + q1 + 2) >> 2
+    paddw xmm4, xmm4
+    paddw xmm4, xmm0
+    paddw xmm4, xmm3
+    paddw xmm4, xmm7
+    psrlw xmm4, 2
+    movdqa xmm5, xmm3               ; q0' = (2 q1 + q0 + p1 + 2) >> 2
+    paddw xmm5, xmm5
+    paddw xmm5, xmm1
+    paddw xmm5, xmm2
+    paddw xmm5, xmm7
+    psrlw xmm5, 2
+    pand xmm4, xmm6
+    pand xmm5, xmm6
+    pandn xmm6, xmm0
+    por xmm4, xmm6
+    movdqu xmm6, [esi + 128]
+    pandn xmm6, xmm1
+    por xmm5, xmm6
+    movdqu [esi + 224], xmm4
+    movdqu [esi + 240], xmm5
     ret
 
 section .bss
+alignb 16
+h264_lfv        resb 8 * 16         ; an edge's sample vectors (transposed)
+h264_lf_a       resb 16             ; per line: alpha
+h264_lf_b       resb 16             ;   beta
+h264_lf_t       resb 16             ;   tC0
+h264_lf_e       resb 16             ;   0xFF where bS > 0
+h264_lf_m       resb 16             ;   filterSamplesFlag
+h264_lf_d       resb 16             ;   |p0 - q0|
+h264_lfw        resb 2 * LFW_HALF   ; word copies (see above)
 alignb 4
-h264_fl         resd 16             ; one line of the deblocking filter
+h264_dbk_lp     resd 1              ; the macroblock in the current frame:
+h264_dbk_cbp    resd 1              ;   luma, Cb, Cr
+h264_dbk_crp    resd 1
 section .text

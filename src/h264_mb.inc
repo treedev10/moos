@@ -2202,7 +2202,7 @@ h264_rec_i4:
     shl esi, 5
     add esi, h264_coef
     mov edx, [h264_ystride]
-    call h264_idct_add
+    call h264_idct_any
 .next:
     inc ebp
     cmp ebp, 16
@@ -2243,7 +2243,7 @@ h264_rec_luma_res:
     shl esi, 5
     add esi, h264_coef
     mov edx, [h264_ystride]
-    call h264_idct_add
+    call h264_idct_any
 .n: inc ebp
     cmp ebp, 16
     jb .l
@@ -2289,7 +2289,7 @@ h264_rec_chroma_res:
     imul eax, [h264_cstride]
     add edi, eax
     mov edx, [h264_cstride]
-    call h264_idct_add
+    call h264_idct_any
 .n: inc ebp
     cmp ebp, 24
     jb .l
