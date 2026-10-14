@@ -109,6 +109,14 @@ net_err         resd 1
 udp_src_port    resd 1
 net_scratch     resd 1
 nic_wait        resd 1
+; traffic counters (for the Task Manager and fetch): every frame that goes
+; through net_tx_frame / comes in through net_rx_poll, with its Ethernet
+; header. Byte counts are 64-bit so they never wrap.
+alignb 4
+net_tx_bytes    resd 2
+net_rx_bytes    resd 2
+net_tx_pkts     resd 1
+net_rx_pkts     resd 1
 
 section .data
 mac_bcast       db 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
@@ -478,10 +486,15 @@ nic_link_wait:
     ret
 
 ; net_tx_frame: ESI = frame, ECX = length (14..1792). Sends it on whichever
-; card is in use. Registers kept.
+; card is in use (and counts it). Registers kept.
 net_tx_frame:
     cmp ecx, 1792
     ja .r
+    cmp byte [nic_kind], NIC_NONE
+    je .r
+    add [net_tx_bytes], ecx
+    adc dword [net_tx_bytes + 4], 0
+    inc dword [net_tx_pkts]
     cmp byte [nic_kind], NIC_E1000
     je e1000_tx
     cmp byte [nic_kind], NIC_RTL8168
@@ -493,8 +506,19 @@ net_tx_frame:
 .r: ret
 
 ; net_rx_poll: if a frame has arrived, copy it to NET_RXP and set rx_frame /
-; rx_len, CF=0. CF=1 when nothing is waiting.
+; rx_len, CF=0 (and count it). CF=1 when nothing is waiting.
 net_rx_poll:
+    call .card
+    jc .r
+    push eax
+    mov eax, [rx_len]
+    add [net_rx_bytes], eax
+    adc dword [net_rx_bytes + 4], 0
+    inc dword [net_rx_pkts]
+    pop eax
+    clc
+.r: ret
+.card:                              ; the driver of the card in use
     cmp byte [nic_kind], NIC_E1000
     je e1000_rx
     cmp byte [nic_kind], NIC_RTL8168

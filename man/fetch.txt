@@ -1,0 +1,65 @@
+NAME
+    fetch - the MOOS cow and a summary of the system
+
+SYNOPSIS
+    fetch
+    neofetch
+
+DESCRIPTION
+    fetch draws the MOOS cow in colour and, beside it, one line for each
+    part of the system - handy for a screenshot, or to see at a glance
+    what MOOS found:
+
+    user@host      who you are: the sign-in name (see  man login ), or
+                   moos when sign-in is off; the computer is always moos
+    OS             MOOS, its version, and that it is 32-bit x86 code
+    Firmware       UEFI with the UEFI version and the firmware maker
+                   (for example EDK II), or the PC BIOS
+    Kernel         which of the two MOOS kernels is running and its
+                   size: the full kernel (UEFI PCs: desktop, browser) or
+                   the smaller BIOS kernel (text console only)
+    Uptime         time since start-up (see  man uptime )
+    Packages       packages installed with apt (see  man apt )
+    Shell          the MOOS command line
+    Resolution     the graphics mode (UEFI), or 80x25 text (BIOS)
+    CPU            the processor's name, how many processors the
+                   firmware switched on (in brackets), and its clock in
+                   MHz, measured by MOOS
+    Memory         memory in use / installed, and the percentage
+    Disk           your files: how many, how much they hold, out of the
+                   128 KB MOOSFS has (see  man files )
+    Network        the address MOOS got (see  man net ), or "not
+                   connected", and the network card
+
+    The bottom row shows the 16 colours of the text screen.
+
+    fetch works on the text console and in the desktop's Terminal, and
+    fits a screen 80 characters wide.
+
+HOW IT KNOWS
+    CPU name      the processor reports it itself (CPUID); "(R)",
+                  "(TM)" and the clock written in the name are left out
+    Processors    counted in the ACPI table the firmware gives every
+                  operating system (the MADT); the processor's own
+                  report when there is no such table
+    MHz           the time-stamp counter, a counter in the processor
+                  that runs at a steady rate, counted for a tenth of a
+                  second against the 100 Hz timer
+    Memory        UEFI: the firmware's memory map, read now - in use is
+                  everything that is not free (the firmware, MOOS and
+                  its buffers). BIOS: the memory the BIOS reported, and
+                  in use is the part MOOS keeps for itself
+    Packages      apt leaves a <name>.inst file for each package
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    fetch
+    neofetch     alias
+
+ALIASES
+    neofetch
+
+SEE ALSO
+    sysinfo, mem, uptime, apt, net

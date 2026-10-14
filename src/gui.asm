@@ -4,25 +4,31 @@
 ;  A simple desktop: a plain coloured background (the colour is chosen in
 ;  Settings), a taskbar with app buttons and a clock, a mouse cursor, and
 ;  windows for the built-in apps (terminal, text editor, script IDE, web
-;  browser and settings) that can be moved, resized, maximized and
-;  minimized (gui_win.asm). Drawn with gfx.asm into a back buffer.
+;  browser, settings and the Task Manager) that can be moved, resized,
+;  maximized and minimized (gui_win.asm). Drawn with gfx.asm into a back
+;  buffer.
 ;
 ;  The whole screen is only redrawn when something changes (a key, a click,
 ;  the clock). When just the mouse moves, the cursor is erased and redrawn
 ;  in the back buffer and only those two small areas are copied to the
 ;  screen, so the cursor stays smooth even on big screens.
 ;
-;  Keys: F1-F5 (or 1-5 on the empty desktop) open an app; F6 switches
-;  windows; F7 / F8 move / resize one with the arrow keys; F9 / F10
-;  minimize / maximize; Esc closes the window, and Esc on the empty desktop
-;  leaves. So the desktop works without a mouse too.
+;  Keys: F1-F5 and F11 (or 1-6 on the empty desktop) open an app; F6
+;  switches windows; F7 / F8 move / resize one with the arrow keys; F9 /
+;  F10 minimize / maximize; Esc closes the window, and Esc on the empty
+;  desktop leaves. So the desktop works without a mouse too.
+;
+;  The main loop also keeps the books for the Task Manager (gui_tasks.asm):
+;  the time spent polling for input counts as idle, everything else as
+;  work, charged to the app doing it or to the desktop; once a second the
+;  counts become percentages.
 ; =============================================================================
 TASKBAR_H   equ 34
 CUR_W       equ 24                  ; the area the mouse cursor covers
 CUR_H       equ 20
 CUR_DX      equ 6                   ; (it starts this far left of the tip)
-TB_N        equ 6                   ; taskbar buttons: 5 apps + Quit
-TB_QUIT     equ 5
+TB_N        equ 7                   ; taskbar buttons: 6 apps + Quit
+TB_QUIT     equ 6
 
 ; RECT x,y,w,h,rgb  (immediate or register expressions)
 %macro RECT 5
@@ -33,6 +39,18 @@ TB_QUIT     equ 5
     mov eax, %5
     call gfx_rgb
     call gfx_fillrect
+%endmacro
+
+; APP_CALL owner, routine: call routine with the CPU time charged to owner
+; (a register or memory operand; all registers reach the routine as they
+; were). See gui_tasks.asm.
+%macro APP_CALL 2
+    push eax
+    mov eax, %1
+    call cpu_enter
+    pop eax
+    call %2
+    call cpu_leave
 %endmacro
 
 ; TEXT x,y,ptr,fg,bg
@@ -71,7 +89,7 @@ desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
 gui_hint1   db "Click an app on the taskbar, or press its key:", 0
-gui_hint2   db "F1 Terminal   F2 Editor   F3 Script IDE   F4 Browser   F5 Settings", 0
+gui_hint2   db "F1 Terminal  F2 Editor  F3 Script IDE  F4 Browser  F5 Settings  F11 Tasks", 0
 gui_hint3   db "Drag a title bar to move a window, an edge or corner to resize it.", 0
 gui_hint4   db "Keys: F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
 gui_hint5   db "Esc closes a window. Esc on the empty desktop leaves.", 0
@@ -81,13 +99,16 @@ ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
 ga_settings db "settings", 0
-tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_quit
-tb_lens     db 8, 6, 10, 7, 8, 4
+ga_tasks    db "tasks", 0
+tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_tasks
+            dd tb_l_quit
+tb_lens     db 8, 6, 10, 7, 8, 5, 4
 tb_l_term   db "Terminal", 0
 tb_l_edit   db "Editor", 0
 tb_l_ide    db "Script IDE", 0
 tb_l_brow   db "Browser", 0
 tb_l_set    db "Settings", 0
+tb_l_tasks  db "Tasks", 0
 tb_l_quit   db "Quit", 0
 ; desktop colours (Settings, item 6); desk_color picks one
 DESK_NCOLORS equ 8
@@ -349,7 +370,7 @@ gui_taskbar:
     popad
     ret
 
-; tb_hit -> EAX = the taskbar button under the mouse (0-4 apps, TB_QUIT),
+; tb_hit -> EAX = the taskbar button under the mouse (0-5 apps, TB_QUIT),
 ; or -1 if none
 tb_hit:
     push ecx
@@ -460,24 +481,35 @@ section .bss
 gui_clockbuf resb 16
 section .text
 
-; gui_redraw: draw the whole desktop into the back buffer, then show it -
-; all of it (gui_dirty bit 1) or just the taskbar (bit 2)
+; gui_redraw: draw the whole desktop into the back buffer and show it
+; (gui_dirty bit 1), or when only the taskbar changed (bit 2: the clock, a
+; button lit up) just the taskbar - the rest of the back buffer still
+; holds the last frame
 gui_redraw:
     pushad
+    inc dword [gui_frames]          ; (the Task Manager's frames/s)
+    test byte [gui_dirty], 1
+    jz .bar
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
     call gui_cursor_show
-    test byte [gui_dirty], 1
-    jz .bar
     call gfx_present
     jmp .done
 .bar:
+    call cur_rect                   ; take the cursor off (it may reach
+    mov ebx, cur_under              ; into the taskbar), draw the taskbar,
+    mov eax, 1                      ; put the cursor back
+    call gfx_copy_rect
+    call gui_taskbar
+    call gui_cursor_show
     xor ecx, ecx
     mov edx, [gfx_h]
     sub edx, TASKBAR_H
     mov esi, [gfx_w]
     mov edi, TASKBAR_H
+    call gfx_present_rect
+    call cur_rect
     call gfx_present_rect
 .done:
     mov byte [gui_dirty], 0
@@ -515,6 +547,7 @@ cmd_gui:
     mov eax, [ticks]
     mov [gui_clk_tick], eax
     mov byte [gui_clk_sec], 0xFF
+    call cpu_reset                  ; (start the CPU accounting)
     cmp dword [argc], 2             ; "gui <app> ..." opens apps straight away
     jb .start
     mov ebx, 1
@@ -539,6 +572,10 @@ cmd_gui:
     mov edi, ga_settings
     call str_icmp
     je .open
+    mov eax, APP_TASKS
+    mov edi, ga_tasks
+    call str_icmp
+    je .open
     mov eax, APP_BROWSER
     mov edi, ga_browser
     call str_icmp
@@ -548,7 +585,7 @@ cmd_gui:
     jae .start
     mov esi, [argv + ebx * 4]
     inc ebx
-    call brow_open_url
+    APP_CALL APP_BROWSER, brow_open_url
     jmp .arg
 .open:
     call gui_open
@@ -557,13 +594,25 @@ cmd_gui:
     mov byte [gui_dirty], 1
     call gui_redraw
 .loop:
+    mov eax, CPU_IDLE               ; polling the mouse: idle time
+    call cpu_switch
     call efi_mouse_poll
+    mov eax, CPU_DESK               ; the rest is work
+    call cpu_switch
     call gui_hover_check
     call gui_handle                 ; clicks, drags, hovering
     call gui_wheel
     call gui_clock_check
+    call gui_app_ticks              ; apps working in the background
+    call cpu_sample_check           ; once a second: CPU %, network, fps
 .keys:
+    mov eax, CPU_IDLE               ; polling the keyboard: idle time
+    call cpu_switch
     call kbd_poll                   ; take every waiting key before drawing
+    push eax
+    mov eax, CPU_DESK
+    call cpu_switch
+    pop eax
     test eax, eax
     jz .draw
     call gui_key                    ; window keys, or to the focused app

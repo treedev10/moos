@@ -324,6 +324,38 @@ big_owned:
     pop ecx
     ret
 
+%ifdef FULL
+; ------------------------------------------------------- memory map
+; The firmware keeps a map of all memory: what is free, what it uses
+; itself, what is loaded programs (MOOS), what is not RAM at all. Asking
+; for it while MOOS runs shows how much is really in use right now (the
+; Task Manager and fetch show it).
+MM_BUF_SIZE equ 16384                   ; room for ~340 map entries
+
+section .bss
+alignb 8
+mm_buf      resb MM_BUF_SIZE            ; the map (EFI_MEMORY_DESCRIPTORs)
+mm_size     resq 1
+mm_key      resq 1
+mm_dsize    resq 1
+mm_dver     resq 1
+mm_free_kb  resd 1
+section .text
+
+; efi_memmap: add up the firmware's memory map now -> EAX = installed RAM
+; in KB, EDX = KB of it nobody uses (free). EAX = 0 if the firmware did
+; not give a map (or this is not a UEFI PC).
+efi_memmap:
+    xor eax, eax
+    xor edx, edx
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    jne .r
+    mov eax, efi_memmap64
+    call efi64
+    mov edx, [mm_free_kb]
+.r: ret
+%endif
+
 ; efi_mouse_poll: refresh mouse_x / mouse_y / mouse_btn from the device
 efi_mouse_poll:
     cmp byte [mouse_ok], 0
@@ -385,6 +417,64 @@ efi_freepages64:
     call [rax + 48]                     ; FreePages
     xor eax, eax
     LEAVE64
+
+%ifdef FULL
+; efi_memmap64: GetMemoryMap into mm_buf, then count the pages -> EAX = KB
+; of RAM (0 if it failed), mm_free_kb = KB free. RAM is every kind of
+; memory except "reserved" (0), "unusable" (8) and the non-RAM kinds above
+; ACPI NVS (10): memory-mapped I/O, firmware ROM, persistent memory.
+; Free is "conventional memory" (7) that nobody has taken.
+efi_memmap64:
+    ENTER64
+    mov qword [rel mm_size], MM_BUF_SIZE
+    mov rax, [rel bootinfo + BI.bs]
+    lea rcx, [rel mm_size]
+    lea rdx, [rel mm_buf]
+    lea r8, [rel mm_key]
+    lea r9, [rel mm_dsize]
+    lea r10, [rel mm_dver]
+    mov [rsp + 32], r10
+    call [rax + 56]                     ; GetMemoryMap
+    test rax, rax
+    jnz .fail                           ; (also when the buffer is too small)
+    mov r9, [rel mm_dsize]
+    cmp r9, 40                          ; a descriptor is at least 40 bytes
+    jb .fail
+    lea rsi, [rel mm_buf]
+    mov rcx, rsi
+    add rcx, [rel mm_size]
+    xor edx, edx                        ; RDX = pages of RAM
+    xor r8d, r8d                        ; R8 = free pages
+.entry:
+    lea rax, [rsi + 32]
+    cmp rax, rcx
+    ja .total
+    mov eax, [rsi]                      ; Type
+    cmp eax, 7                          ; EfiConventionalMemory
+    jne .used
+    add r8, [rsi + 24]                  ; NumberOfPages
+.used:
+    test eax, eax
+    jz .skip
+    cmp eax, 8
+    je .skip
+    cmp eax, 10
+    ja .skip
+    add rdx, [rsi + 24]
+.skip:
+    add rsi, r9
+    jmp .entry
+.total:
+    shl r8, 2                           ; pages -> KB
+    mov [rel mm_free_kb], r8d
+    shl rdx, 2
+    mov eax, edx
+    LEAVE64
+.fail:
+    xor eax, eax
+    mov [rel mm_free_kb], eax
+    LEAVE64
+%endif
 
 ; efi_readkey64: -> EAX = scan code << 16 | character, 0 if no key arrived
 ; within about half a second

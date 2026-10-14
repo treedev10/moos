@@ -182,3 +182,162 @@ mem_copy:
     pop esi
     pop ecx
     ret
+
+; ------------------------------------------------- building text in memory
+; The sb_ routines add to a text being built at EDI: each appends its part,
+; moves EDI to the new end and keeps the text zero-terminated. Other
+; registers are kept. (fetch and the Task Manager build their lines this
+; way, so they work whether the output goes to the screen or a window.)
+
+; sb_str: append the string ESI
+sb_str:
+    push eax
+    push esi
+.l: lodsb
+    test al, al
+    jz .e
+    stosb
+    jmp .l
+.e: mov byte [edi], 0
+    pop esi
+    pop eax
+    ret
+
+; sb_char: append the character AL
+sb_char:
+    stosb
+    mov byte [edi], 0
+    ret
+
+; sb_uint: append EAX as a decimal number
+sb_uint:
+    push ebx
+    push ecx
+    push esi
+    mov ebx, 10
+    call fmt_uint                   ; ESI = the digits
+    call sb_str
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+
+; sb_tenths: append EAX tenths as "12.3"
+sb_tenths:
+    push eax
+    push ecx
+    push edx
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    call sb_uint
+    mov al, '.'
+    call sb_char
+    lea eax, [edx + '0']
+    call sb_char
+    pop edx
+    pop ecx
+    pop eax
+    ret
+
+; sb_permille: append EAX thousandths as a percentage, "12.3%"
+sb_permille:
+    push eax
+    call sb_tenths
+    mov al, '%'
+    call sb_char
+    pop eax
+    ret
+
+; sb_bytes: append EAX bytes as "512 B", "12 KB", "1.5 MB" ...
+; sb_kb:    the same for EAX kilobytes
+; sb_size:  the same for EDX:EAX in the unit ECX (0 bytes, 1 KB, 2 MB)
+; Below 10 of a unit one decimal is shown ("1.5 MB"), above it none.
+sb_bytes:
+    push ecx
+    push edx
+    xor ecx, ecx
+    xor edx, edx
+    call sb_size
+    pop edx
+    pop ecx
+    ret
+sb_kb:
+    push ecx
+    push edx
+    mov ecx, 1
+    xor edx, edx
+    call sb_size
+    pop edx
+    pop ecx
+    ret
+sb_size:
+    pushad
+.down:                              ; bring it below 1024 * 1024 units
+    test edx, edx
+    jnz .shift
+    cmp eax, 1024 * 1024
+    jb .small
+.shift:
+    shrd eax, edx, 10
+    shr edx, 10
+    inc ecx
+    jmp .down
+.small:
+    cmp eax, 1024
+    jb .whole                       ; e.g. "512 KB"
+    imul eax, eax, 10               ; tenths of the next unit up,
+    add eax, 512                    ; rounded
+    shr eax, 10
+    inc ecx
+    cmp eax, 100
+    jb .dec
+    add eax, 5                      ; 10 or more: no decimal (rounded)
+    xor edx, edx
+    mov ebx, 10
+    div ebx
+.whole:
+    call sb_uint
+    jmp .unit
+.dec:
+    call sb_tenths
+.unit:
+    cmp ecx, 4
+    jbe .u
+    mov ecx, 4
+.u: mov al, ' '
+    call sb_char
+    mov esi, [sb_units + ecx * 4]
+    call sb_str
+    mov [esp], edi                  ; (EDI after popad)
+    popad
+    ret
+
+section .data
+sb_units    dd sb_u0, sb_u1, sb_u2, sb_u3, sb_u4
+sb_u0       db "B", 0
+sb_u1       db "KB", 0
+sb_u2       db "MB", 0
+sb_u3       db "GB", 0
+sb_u4       db "TB", 0
+section .text
+
+; sb_ip: append the IPv4 address EAX (network byte order) as "10.0.2.15"
+sb_ip:
+    push eax
+    push ecx
+    push edx
+    mov edx, eax
+    mov ecx, 4
+.l: movzx eax, dl
+    call sb_uint
+    shr edx, 8
+    dec ecx
+    jz .e
+    mov al, '.'
+    call sb_char
+    jmp .l
+.e: pop edx
+    pop ecx
+    pop eax
+    ret
