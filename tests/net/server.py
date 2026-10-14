@@ -21,6 +21,7 @@ http://10.9.N.1:PORT/ with run.py --tap):
     /stall/SIZE            sends half, then nothing (the client must time out)
     /continue              an interim "100 Continue" before the real reply
     /headers               the request's head, echoed back as text
+    /page                  a web page (HTML), sent chunked in small pieces
     /echo                  POST: method, Content-Type, length and SHA-256 of
                            the body, its first 64 bytes, the User-Agent
                            and every X-... header
@@ -253,6 +254,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
         self.wfile.write(b'0\r\nX-Trailer: done\r\n\r\n')
         print('   sent %d chunks' % n, flush=True)
+
+    def r_page(self, parts, q):
+        # a web page for the browser, sent chunked in small pieces (the
+        # network layer must put it back together)
+        html = (b'<html><head><title>MOOS test page</title></head><body>'
+                b'<h1>Chunked page</h1><p>This page came in ' + b'many small chunks.</p>'
+                b'<p>' + b' '.join(b'word%d' % i for i in range(300)) + b'</p>'
+                b'<p><a href="/hello">a link</a> END-OF-PAGE</p></body></html>')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Transfer-Encoding', 'chunked')
+        self.end_headers()
+        for i in range(0, len(html), 37):
+            piece = html[i:i + 37]
+            self.wfile.write(b'%x\r\n' % len(piece) + piece + b'\r\n')
+        self.wfile.write(b'0\r\n\r\n')
 
     def r_close(self, parts, q):
         data = gen_cached(int(parts[0]))
