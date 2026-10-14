@@ -9,6 +9,7 @@
  *           --fuzz N      N corrupted frames per fuzzed case (default 3000)
  *           --nofuzz      skip the robustness tests
  *           --bench       only measure the speed (long_music, 10 runs)
+ *           --dump C F    only decode case C and write its PCM to file F
  *           -v            more output
  *
  * For every case in manifest.txt (see aac_make.py) the access units are taken
@@ -505,18 +506,37 @@ static int fuzz_asc(int count)
 int main(int argc, char **argv)
 {
     int fuzz = 3000, nofuzz = 0, bench = 0;
-    const char *only[64];
+    const char *only[64], *dump = NULL, *dump_to = NULL;
     int nonly = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--dir") && i + 1 < argc) dir = argv[++i];
         else if (!strcmp(argv[i], "--fuzz") && i + 1 < argc) fuzz = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--nofuzz")) nofuzz = 1;
         else if (!strcmp(argv[i], "--bench")) bench = 1;
+        else if (!strcmp(argv[i], "--dump") && i + 2 < argc) {
+            dump = argv[++i];
+            dump_to = argv[++i];
+        }
         else if (!strcmp(argv[i], "-v")) verbose = 1;
         else if (nonly < 64) only[nonly++] = argv[i];
     }
     signal(SIGALRM, on_alarm);
     printf("aac_ctx_size = %u bytes\n", aac_ctx_size());
+
+    if (dump) {                         /* --dump CASE FILE: just the PCM */
+        Stream s;
+        load(dump, &s);
+        int16_t *pcm;
+        uint32_t rate, ch;
+        double secs;
+        int n = decode_all(&s, &pcm, &rate, &ch, &secs);
+        if (n < 0) return 1;
+        FILE *f = fopen(dump_to, "wb");
+        if (!f || fwrite(pcm, 2, (size_t)n * 1024 * ch, f) != (size_t)n * 1024 * ch) return 2;
+        fclose(f);
+        printf("%s: %d frames, %u Hz, %u channels -> %s\n", dump, n, rate, ch, dump_to);
+        return 0;
+    }
 
     if (bench) {
         Stream s;
