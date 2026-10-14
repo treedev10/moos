@@ -267,8 +267,8 @@ static int decode_all(const Stream *s, int16_t **pcm, uint32_t *rate, uint32_t *
     return n;
 }
 
-static int run_case(const char *name, const char *mode, const char *arg, double *dec_time,
-                    double *audio_time)
+static int run_case(const char *name, const char *mode, const char *arg, uint32_t want_rate,
+                    uint32_t want_chans, double *dec_time, double *audio_time)
 {
     Stream s;
     load(name, &s);
@@ -289,9 +289,11 @@ static int run_case(const char *name, const char *mode, const char *arg, double 
     uint32_t want_ch = s.chcfg == 1 ? 1 : 2;
     if (s.chcfg == 0) want_ch = 2;                  /* (PCE cases are stereo or more) */
     if (strstr(name, "_ps29")) want_ch = 1;
-    if (rate != rates[s.sfi] || ch != want_ch) {
+    if (want_chans) want_ch = want_chans;           /* (ch= in the manifest) */
+    if (!want_rate) want_rate = rates[s.sfi];       /* (rate= in the manifest) */
+    if (rate != want_rate || ch != want_ch) {
         printf("FAIL %-26s aac_info: rate %u channels %u, expected %u / %u\n", name, rate, ch,
-               rates[s.sfi], want_ch);
+               want_rate, want_ch);
         ok = 0;
     }
     size_t nsamp = (size_t)n * 1024 * ch;
@@ -529,15 +531,27 @@ int main(int argc, char **argv)
     int total = 0, passed = 0;
     double dect = 0, audt = 0;
     while (fgets(line, sizeof line, m)) {
-        char name[200], mode[32], arg[200] = "";
-        if (sscanf(line, "%199s %31s %199s", name, mode, arg) < 2) continue;
+        /* NAME MODE [ARG] [rate=R] [ch=C]; # starts a comment line */
+        char name[200] = "", mode[32] = "", arg[200] = "";
+        uint32_t want_rate = 0, want_ch = 0;
+        int ntok = 0;
+        for (char *t = strtok(line, " \t\r\n"); t; t = strtok(NULL, " \t\r\n")) {
+            if (ntok == 0 && t[0] == '#') break;
+            if (!strncmp(t, "rate=", 5)) want_rate = atoi(t + 5);
+            else if (!strncmp(t, "ch=", 3)) want_ch = atoi(t + 3);
+            else if (ntok == 0) snprintf(name, sizeof name, "%s", t);
+            else if (ntok == 1) snprintf(mode, sizeof mode, "%s", t);
+            else if (ntok == 2) snprintf(arg, sizeof arg, "%s", t);
+            ntok++;
+        }
+        if (!name[0] || !mode[0]) continue;
         if (nonly) {
             int hit = 0;
             for (int i = 0; i < nonly; i++) if (strstr(name, only[i])) hit = 1;
             if (!hit) continue;
         }
         total++;
-        passed += run_case(name, mode, arg, &dect, &audt);
+        passed += run_case(name, mode, arg, want_rate, want_ch, &dect, &audt);
     }
     fclose(m);
     printf("%d of %d cases passed; %.1f s of audio decoded in %.2f s (%.0fx realtime)\n",
