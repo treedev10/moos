@@ -21,6 +21,9 @@ identity_check), so each change below is the only difference:
   cce         a coupling channel element with real spectral data, an
               aligned data stream element and a PCE in front of each frame
   as_lfe      single channel elements turned into LFE elements
+  shapes      window_shape flipped (sine <-> KBD) in about half of the
+              frames, so every pairing of a frame's shape with the last
+              frame's shape occurs, for every window sequence
 """
 import os
 import random
@@ -725,6 +728,19 @@ def separate(els, rnd):
     return done
 
 
+def shapes(els, rnd):
+    done = 0
+    seen = set()
+    for e, c in channels(els):
+        if id(c.info) in seen:                      # (shared by a pair)
+            continue
+        seen.add(id(c.info))
+        if rnd.random() < 0.5:
+            c.info.shape ^= 1
+            done += 1
+    return done
+
+
 def as_lfe(els, rnd):
     done = 0
     for e in els:
@@ -799,7 +815,8 @@ def cce_front(els, rnd):
 
 
 CHANGES = {"pulses": pulses, "tns_high": tns_high, "pns_ms": pns_ms, "split": split_groups,
-           "ms_all": ms_all, "separate": separate, "as_lfe": as_lfe, "cce": cce_front}
+           "ms_all": ms_all, "separate": separate, "as_lfe": as_lfe, "cce": cce_front,
+           "shapes": shapes}
 
 
 def rewrite(frames, sfi, change, seed=1):

@@ -371,11 +371,12 @@ static int fuzz_case(const char *name, int count)
     size_t clen, olen, ilen;
     uint32_t csz = aac_ctx_size();
     void *ctx = guarded(csz, &cbase, &clen);
-    int16_t *out = guarded(1024 * 2 * sizeof(int16_t), &obase, &olen);
     if (aac_init(ctx, s.asc, s.asclen) < 0) { printf("FAIL fuzz %s: init\n", name); return 0; }
     uint32_t rate, ch;
     aac_info(ctx, &rate, &ch);
-    if (ch > 2) { printf("FAIL fuzz %s: %u channels\n", name, ch); return 0; }
+    if (ch < 1 || ch > 2) { printf("FAIL fuzz %s: %u channels\n", name, ch); return 0; }
+    /* exactly the 1024 frames of output aac_info promises, then the guard */
+    int16_t *out = guarded(1024 * ch * sizeof(int16_t), &obase, &olen);
     int errors = 0, oks = 0, kinds[5] = {0};
     uint8_t *buf = malloc(65536);
     for (int i = 0; i < count; i++) {
@@ -431,29 +432,39 @@ static int fuzz_case(const char *name, int count)
     return good;
 }
 
-/* random and mangled AudioSpecificConfigs: aac_init must return, and when it
-   accepts one, decoding real and random frames must stay in bounds */
+/* random and mangled AudioSpecificConfigs (from several real ones: plain,
+   explicit rate, HE-AAC, PCE): aac_init must return, and when it accepts
+   one, decoding real frames must stay in bounds (the output buffer is
+   exactly as big as the channel count aac_info reports) */
 static int fuzz_asc(int count)
 {
-    Stream s;
-    load("music_44100_s", &s);
+    static const char *bases[] = {"music_44100_s", "speech_64k_m", "multi_pce",
+                                  "multi_6ch_pce", "music_44100_s_explicit",
+                                  "music_44100_s_sbrsync", "speech_64k_m_ps29",
+                                  "music_22050_s_sbr5", "speech_64k_m_lfe", "multi_8ch"};
+    enum { NB = sizeof bases / sizeof bases[0] };
+    Stream s[NB];
+    for (int b = 0; b < NB; b++) load(bases[b], &s[b]);
     void *cbase, *obase, *ibase;
     size_t clen, olen, ilen;
     void *ctx = guarded(aac_ctx_size(), &cbase, &clen);
-    int16_t *out = guarded(1024 * 2 * sizeof(int16_t), &obase, &olen);
-    int accepted = 0;
+    int accepted = 0, decoded = 0;
     for (int i = 0; i < count; i++) {
+        const Stream *st = &s[rnd() % NB];
         uint8_t asc[64];
         uint32_t n = rnd() % 40;
-        if (rnd() & 1) {
-            memcpy(asc, s.asc, s.asclen);
-            for (uint32_t k = s.asclen; k < sizeof asc; k++) asc[k] = rnd();
-            asc[rnd() % 6] ^= 1 << (rnd() % 8);
-            n = rnd() % 12;
-        } else {
+        if (rnd() % 4) {                            /* a real one, changed */
+            uint32_t base = st->asclen < sizeof asc ? st->asclen : sizeof asc;
+            memcpy(asc, st->asc, base);
+            for (uint32_t k = base; k < sizeof asc; k++) asc[k] = rnd();
+            int flips = 1 + rnd() % 3;
+            for (int f = 0; f < flips; f++) asc[rnd() % (base + 1)] ^= 1 << (rnd() % 8);
+            n = rnd() % 4 ? base : rnd() % (base + 4);  /* (sometimes cut or longer) */
+        } else {                                    /* random bytes */
             for (uint32_t k = 0; k < n; k++) asc[k] = rnd();
         }
         uint8_t *a = guarded(n ? n : 1, &ibase, &ilen);
+        a += n ? 0 : 1;
         memcpy(a, asc, n);
         alarm(5);
         in_decode = 1;
@@ -468,21 +479,24 @@ static int fuzz_asc(int count)
             printf("FAIL asc fuzz: accepted config gives rate %u channels %u\n", rate, ch);
             return 0;
         }
+        int16_t *out = guarded(1024 * ch * sizeof(int16_t), &obase, &olen);
         for (int f = 0; f < 3; f++) {
-            const AU *au = &s.au[rnd() % s.nau];
+            const AU *au = &st->au[rnd() % st->nau];
             uint8_t *in = guarded(au->len, &ibase, &ilen);
             memcpy(in, au->p, au->len);
             alarm(5);
             in_decode = 1;
-            aac_decode(ctx, in, au->len, out);
+            if (aac_decode(ctx, in, au->len, out) == 1024) decoded++;
             in_decode = 0;
             alarm(0);
             munmap(ibase, ilen);
         }
+        munmap(obase, olen);
     }
-    printf("ok   fuzz AudioSpecificConfig: %d tried, %d accepted (and decoded)\n", count, accepted);
+    printf("ok   fuzz AudioSpecificConfig: %d tried, %d accepted, %d frames decoded with them\n",
+           count, accepted, decoded);
     munmap(cbase, clen);
-    munmap(obase, olen);
+    for (int b = 0; b < NB; b++) { free(s[b].adts); free(s[b].asc); free(s[b].au); }
     return 1;
 }
 
@@ -574,7 +588,9 @@ int main(int argc, char **argv)
     if (!nofuzz && !nonly) {
         const char *fz[] = {"music_44100_s", "speech_64k_m", "clicks_128k", "is_wide_64k",
                             "pns_pink_64k", "tns_clicks", "music_96000_s", "music_8000_s",
-                            "multi_pce"};
+                            "multi_pce", "multi_8ch", "music_44100_s_cce",
+                            "music_44100_s_pulses", "pns_music_48k_pnsms",
+                            "speech_64k_m_ps29", "music_22050_s_fil", "speech_64k_m_lfe"};
         for (unsigned i = 0; i < sizeof fz / sizeof fz[0]; i++)
             if (!fuzz_case(fz[i], fuzz)) mt_failures++;
         if (!fuzz_asc(fuzz)) mt_failures++;
