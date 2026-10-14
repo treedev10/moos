@@ -621,12 +621,12 @@ h264_decode_avcc:
     inc eax                         ; lengthSizeMinusOne + 1
     cmp eax, 3
     je .bad
-    mov [ebp - 4], eax
+    mov [ebp - 16], eax
     movzx edi, byte [esi + 5]
     and edi, 31                     ; numOfSequenceParameterSets
     add esi, 6
     sub ebx, 6
-    mov dword [ebp - 8], 0          ; 0 = SPS, 1 = PPS
+    mov dword [ebp - 20], 0          ; 0 = SPS, 1 = PPS
 .sets:
     test edi, edi
     jz .next_kind
@@ -656,9 +656,9 @@ h264_decode_avcc:
     dec edi
     jnz .one
 .next_kind:
-    cmp dword [ebp - 8], 0
+    cmp dword [ebp - 20], 0
     jne .done
-    mov dword [ebp - 8], 1
+    mov dword [ebp - 20], 1
     test ebx, ebx
     jz .done
     movzx edi, byte [esi]           ; numOfPictureParameterSets
@@ -666,7 +666,7 @@ h264_decode_avcc:
     dec ebx
     jmp .sets
 .done:
-    mov eax, [ebp - 4]
+    mov eax, [ebp - 16]
     jmp .out
 .bad:
     or eax, -1

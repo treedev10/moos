@@ -228,9 +228,26 @@ static int fuzz(NAL *nals, int count, int runs, uint32_t maxw, uint32_t maxh)
         if (h264_init(ctxb.p, memb.p, msz, maxw, maxh) != 0) { printf("init failed\n"); return 1; }
         int mode = rnd() % 8;
         uint32_t rate = 1 + rnd() % 2000;      /* bit flips per million bits */
+        int skip_ps = 0;
+        if (rnd() % 3 == 0) {                   /* parameter sets from a damaged avcC */
+            uint8_t *rec = malloc(65536 + 64);
+            uint32_t alen = make_avcc(nals, count, rec);
+            if (alen) {
+                if (rnd() % 2) alen = 1 + rnd() % alen;
+                GBUF b = gbuf(alen);
+                memcpy(b.p, rec, alen);
+                uint32_t flips = rnd() % 4;
+                for (uint32_t k = 0; k < flips; k++) b.p[rnd() % alen] ^= 1 << (rnd() % 8);
+                h264_decode_avcc(ctxb.p, b.p, alen);
+                gfree(b);
+                skip_ps = rnd() % 2;
+            }
+            free(rec);
+        }
         for (int i = 0; i < count; i++) {
             NAL n = nals[i];
             int action = rnd() % 100;
+            if (skip_ps && ((n.p[0] & 31) == 7 || (n.p[0] & 31) == 8)) continue;
             int reps = 1;
             if (mode == 1 && action < 5) continue;                  /* drop */
             if (mode == 2 && action < 5) reps = 2 + rnd() % 3;      /* duplicate */

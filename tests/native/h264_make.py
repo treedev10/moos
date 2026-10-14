@@ -5,7 +5,10 @@ Make the test streams for tests/native/h264_test.c, and run the test on them.
     python3 tests/native/h264_make.py              make every stream (build/h264/)
     python3 tests/native/h264_make.py NAME...      only these (prefix match)
     python3 tests/native/h264_make.py --run [NAME...]   make (if missing) and test
+    python3 tests/native/h264_make.py --run --avcc   parameter sets through h264_decode_avcc
     python3 tests/native/h264_make.py --list
+    python3 tests/native/h264_make.py --fuzz=N [--seed=S] [NAME...]
+                                         robustness: N damaged runs per stream
 
 Each stream NAME.264 is encoded with ffmpeg + libx264 (Baseline profile unless
 the case says otherwise) from one of ffmpeg's test sources, and NAME.yuv is
@@ -178,6 +181,8 @@ def main():
             print("%-14s %s %dx%d %d frames %s %s" % (n, c[0], c[1], c[2], c[3], c[4], c[5] or ""))
         return
     do_run = "--run" in args
+    fuzz = [int(a.split("=")[1]) for a in args if a.startswith("--fuzz=")]
+    seed = ([int(a.split("=")[1]) for a in args if a.startswith("--seed=")] or [1])[0]
     args = [a for a in args if not a.startswith("--")]
     names = [n for n in CASES if not args or any(n.startswith(a) for a in args)]
     if do_run:
@@ -185,12 +190,36 @@ def main():
                        capture_output=True)
     exe = os.path.join(ROOT, "build", "native", "h264_test")
     failed = []
+    if fuzz:
+        import concurrent.futures
+        subprocess.run([sys.executable, os.path.join(ROOT, "tests", "native", "run.py"), "h264"],
+                       capture_output=True)
+
+        def one(n):
+            stream, _ = make(n)
+            w, h = CASES[n][1], CASES[n][2]
+            # a few runs with less memory than the stream needs, too
+            mx = "%dx%d" % (max(w, 16), max(h, 16)) if seed % 3 else "64x48"
+            r = subprocess.run([exe, stream, "-fuzz", str(fuzz[0]), "-seed", str(seed),
+                                "-max", mx], capture_output=True, text=True)
+            return n, r.returncode, (r.stdout + r.stderr).strip().splitlines()[-1:]
+        for n in names:
+            make(n)
+        with concurrent.futures.ThreadPoolExecutor(4) as ex:
+            for n, rc, last in ex.map(one, names):
+                print("%-14s %s %s" % (n, "ok " if rc == 0 else "FAILED (%d)" % rc, " ".join(last)))
+                if rc:
+                    failed.append(n)
+        print("fuzz: %d of %d streams survived%s" % (len(names) - len(failed), len(names),
+                                                     "; failed: " + " ".join(failed) if failed else ""))
+        return
     for n in names:
         stream, yuv = make(n)
         if do_run:
             w, h = CASES[n][1], CASES[n][2]
             r = subprocess.run([exe, stream, yuv, "-q", "-size", "%dx%d" % (w, h),
-                                "-max", "%dx%d" % (max(w, 16), max(h, 16))],
+                                "-max", "%dx%d" % (max(w, 16), max(h, 16))] +
+                               (["-avcc"] if "--avcc" in sys.argv else []),
                                capture_output=True, text=True, timeout=600)
             line = (r.stdout.strip().splitlines() or ["(no output) " + r.stderr[-300:]])[-1]
             print("%-14s %s" % (n, line.replace(stream + ": ", "")))
