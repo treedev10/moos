@@ -363,6 +363,20 @@ def _():
     mp4box.write_file(p("extra.mp4"), boxes, old)
 
 
+@case("topmeta.mp4")
+def _():
+    # other top-level boxes between mdat and a moov at the end (meta with
+    # XMP, udta, free): a player that fetches the file in parts restarts
+    # mp4_find_moov at each of them
+    boxes, old = load("yt18_end.mp4")
+    i = [b.type for b in boxes].index(b"moov")
+    boxes[i:i] = [Box(b"meta", b"\0\0\0\0" + Box(b"hdlr", b"\0" * 8 + b"mdir" + b"\0" * 13).encode()
+                      + Box(b"XMP_", b"<x:xmpmeta/>").encode()),
+                  Box(b"udta", Box(b"name", b"title").encode()),
+                  Box(b"free", b"\0" * 7)]
+    mp4box.write_file(p("topmeta.mp4"), boxes, old)
+
+
 @case("oddedit.mp4", model=True)
 def _():
     # several edits: two empty ones, a real one, then a repeat (MOOS uses

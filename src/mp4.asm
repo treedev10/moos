@@ -188,10 +188,14 @@ mp4_boxtab:
     dd 'stsd', MP4SL_STSD, 'stts', MP4SL_STTS, 'ctts', MP4SL_CTTS, 'stss', MP4SL_STSS
     dd 'stsc', MP4SL_STSC, 'stsz', MP4SL_STSZ, 'stz2', MP4SL_STZ2, 'stco', MP4SL_STCO
     dd 'co64', MP4SL_CO64, 0, 0
-; box types a file may start with (anything else: not an MP4)
+; box types found at the top level of an MP4 / QuickTime file. The box
+; mp4_find_moov is given first must be one of them (anything else: not an
+; MP4); that is the file's first box, or the box after mdat when a player
+; fetches the file in parts and searches on from there.
 mp4_firsttab:
     dd 'ftyp', 'styp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pdin', 'uuid'
-    dd 'sidx', 'junk', 'pnot', 0
+    dd 'sidx', 'ssix', 'junk', 'pnot', 'meta', 'meco', 'udta', 'moof', 'mfra'
+    dd 'prft', 'emsg', 0
 ; AAC sampling frequencies by index (14496-3, Table 1.18)
 mp4_aacrate:
     dd 96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050
