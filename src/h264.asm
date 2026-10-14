@@ -62,6 +62,28 @@
 ; =============================================================================
 %include "src/module.inc"
 
+; DBG tag, a, b, c, d: a trace line through the C test's h264_dbg_print
+; (only when assembled with -DH264DEBUG for debugging; nothing otherwise)
+%ifdef H264DEBUG
+extern h264_dbg_print
+%macro DBG 5
+    pushad
+    pushfd
+    push dword %5
+    push dword %4
+    push dword %3
+    push dword %2
+    push dword %1
+    call h264_dbg_print
+    add esp, 20
+    popfd
+    popad
+%endmacro
+%else
+%macro DBG 5
+%endmacro
+%endif
+
 ; ---- the frame given out by h264_get_frame (H264FRAME) ----------------------
 H264F_Y         equ 0               ; luma of the top-left visible pixel
 H264F_U         equ 4               ; Cb
@@ -707,6 +729,10 @@ h264_get_frame:
     dec dword [h264_fifo_n]
     imul ebx, SL_SZ
     add ebx, h264_slots
+%ifdef NATIVE
+    mov eax, [ebx + SL_MOT]         ; (for h264_dbg_motion)
+    mov [h264_dbg_mot], eax
+%endif
     mov eax, [ebx + SL_FLAGS]
     and eax, ~F_FIFO
     or eax, F_LENT
@@ -757,6 +783,18 @@ h264_get_frame:
     mov eax, 1
 .out:
     CLEAVE
+
+%ifdef NATIVE
+; void *h264_dbg_motion(void): (native tests only) the motion data (MO_SZ
+; bytes per macroblock) of the frame h264_get_frame gave out last
+EXPORT(h264_dbg_motion)
+h264_dbg_motion:
+    mov eax, [h264_dbg_mot]
+    ret
+section .bss
+h264_dbg_mot    resd 1
+section .text
+%endif
 
 ; int h264_flush(ctx): end of the stream (or before a seek): the picture
 ; being decoded is finished and every frame still held is released for

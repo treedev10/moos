@@ -977,8 +977,12 @@ h264_direct:
     jne .sc
     movsx edx, byte [h264_refc + edi + 0]   ; (D)
 .sc:
+    push eax
+    mov eax, ecx
+    mov ecx, edx
     call h264_minpos                ; MinPositive(B, C)
-    xchg eax, ecx
+    mov ecx, eax
+    pop eax
     call h264_minpos                ; MinPositive(A, ...)
     test eax, eax                   ; (not available counts as -1)
     jns .sr1
@@ -1020,11 +1024,11 @@ h264_direct:
     cmp ebp, 2
     jb .smv
     ; per 4x4 block: zero where the co-located block hardly moves
-    mov eax, [h264_wtmp]
+    movzx eax, byte [h264_wtmp]     ; (the low byte: -1 -> 0xFF)
     mov ecx, 0x01010101
     imul eax, ecx
     mov [h264_dref0], eax
-    mov eax, [h264_wtmp + 4]
+    movzx eax, byte [h264_wtmp + 4]
     imul eax, ecx
     mov [h264_dref1], eax
     xor ebx, ebx                    ; EBX = block (raster)
@@ -1035,6 +1039,7 @@ h264_direct:
     cmp dword [h264_col_short], 0
     je .snocz
     call h264_col_block             ; EAX = refIdxCol, EDX = mvCol
+    xor ecx, ecx                    ; (ECX = its frame: not needed here)
     test eax, eax
     jnz .snocz
     movsx eax, dx

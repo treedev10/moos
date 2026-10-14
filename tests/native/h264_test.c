@@ -46,6 +46,7 @@ int h264_decode_nal(void *ctx, const uint8_t *nal, uint32_t len);
 int h264_get_frame(void *ctx, H264FRAME *f);
 int h264_flush(void *ctx);
 int h264_decode_avcc(void *ctx, const uint8_t *avcc, uint32_t len);
+void *h264_dbg_motion(void);
 
 typedef struct { const uint8_t *p; uint32_t len; } NAL;
 
@@ -110,6 +111,35 @@ static uint8_t *ref;
 static uint32_t reflen, refw, refh, nframes, bad_frames;
 static double psnr_sum, psnr_min = 99;
 static uint32_t frame_bytes;
+static int mv_frame = -1;                       /* -mv N */
+
+/* trace lines of a decoder assembled with -DH264DEBUG (DBG macro) */
+void h264_dbg_print(int tag, int a, int b, int c, int d)
+{
+    printf("dbg %d: %d %d %d %d (%08x %08x %08x %08x)\n", tag, a, b, c, d, a, b, c, d);
+}
+
+/* the decoder's motion data of a frame (MO_* in h264.asm), as ffmv prints
+   ffmpeg's: list (-1 / +1), 4 4, block centre, vector (quarter samples) */
+static void print_motion(const H264FRAME *f)
+{
+    const uint8_t *mo = h264_dbg_motion();
+    uint32_t mbw = (f->width + 15) / 16, mbh = (f->height + 15) / 16;
+    printf("F %u\n", nframes);
+    for (uint32_t m = 0; m < mbw * mbh; m++) {
+        const uint8_t *d = mo + m * 160;
+        if (*(const uint32_t *)(d + 144)) { printf("mb %u intra\n", m); continue; }
+        for (int l = 0; l < 2; l++)
+            for (int b = 0; b < 16; b++) {
+                int8_t r = d[128 + l * 4 + (b >> 3) * 2 + ((b & 3) >> 1)];
+                if (r < 0) continue;
+                const int16_t *v = (const int16_t *)(d + l * 64 + b * 4);
+                printf("%+d  4  4 %4u %4u %5d %5d  ref %d\n", l ? 1 : -1,
+                       (m % mbw) * 16 + (b & 3) * 4 + 2, (m / mbw) * 16 + (b >> 2) * 4 + 2,
+                       v[0], v[1], r);
+            }
+    }
+}
 
 static void check_frame(const H264FRAME *f)
 {
@@ -119,6 +149,7 @@ static void check_frame(const H264FRAME *f)
         for (uint32_t y = 0; y < h / 2; y++) fwrite(f->u + y * f->c_stride, 1, w / 2, dumpf);
         for (uint32_t y = 0; y < h / 2; y++) fwrite(f->v + y * f->c_stride, 1, w / 2, dumpf);
     }
+    if ((int)nframes == mv_frame) print_motion(f);
     if (!ref) { nframes++; return; }
     if (!refw) { refw = w; refh = h; frame_bytes = w * h * 3 / 2; }
     if (w != refw || h != refh) {
@@ -319,6 +350,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-max") && i + 1 < argc) sscanf(argv[++i], "%ux%u", &maxw, &maxh);
         else if (!strcmp(argv[i], "-size") && i + 1 < argc) sscanf(argv[++i], "%ux%u", &refw, &refh);
         else if (!strcmp(argv[i], "-dump") && i + 1 < argc) dumpf = fopen(argv[++i], "wb");
+        else if (!strcmp(argv[i], "-mv") && i + 1 < argc) mv_frame = atoi(argv[++i]);
         else if (argv[i][0] != '-') refname = argv[i];
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }

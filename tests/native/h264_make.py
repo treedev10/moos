@@ -28,6 +28,8 @@ OUT = os.path.join(ROOT, "build", "h264")
 REWRITE = os.path.join(ROOT, "tests", "native", "h264_rewrite.py")
 
 BASE = "-profile:v baseline -preset medium"
+# Main profile, CAVLC
+MAINC = "-profile:v main -x264-params cabac=0"
 
 
 def src(kind, w, h, rate=25):
@@ -45,6 +47,9 @@ def src(kind, w, h, rate=25):
     if kind == "cuts":        # scene cuts: alternate between sources
         return ("-f lavfi -i testsrc2=size={w}x{h}:rate={r} -f lavfi -i mandelbrot=size={w}x{h}:rate={r} "
                 "-filter_complex \"[0:v][1:v]blend=all_expr='if(lt(mod(N\\,20)\\,10)\\,A\\,B)'\"".format(w=w, h=h, r=rate))
+    if kind == "fade":        # fades in and out (weighted prediction)
+        return ("-f lavfi -i mandelbrot=size=%dx%d:rate=%d -vf "
+                "'fade=in:0:15,fade=out:20:15'" % (w, h, rate))
     if kind == "smpte":
         return "-f lavfi -i smptehdbars=size=%dx%d:rate=%d" % (w, h, rate)
     if kind == "life":
@@ -129,6 +134,22 @@ CASES = {
     "pcm":        ("synth", 96, 80, 8, "", "synth"),
     "yt360":      ("testsrc2", 640, 360, 300, "-level 3.0 -crf 23 -g 60", None),
     "yt360_noisy": ("noisy", 640, 360, 120, "-level 3.0 -crf 23 -g 60", None),
+    # Main profile with CAVLC (B slices, direct prediction, weighted
+    # prediction without CABAC)
+    "mc_b":       ("testsrc2", 176, 144, 30, MAINC, None),
+    "mc_b_noisy": ("noisy", 176, 144, 30, MAINC + ":bframes=3:b-adapt=2", None),
+    "mc_temporal": ("noisy", 176, 144, 30, MAINC + ":direct=temporal", None),
+    "mc_temporal_r": ("mandelbrot", 176, 144, 40, MAINC + ":direct=temporal:ref=4:bframes=5", None),
+    "mc_spatial": ("mandelbrot", 176, 144, 40, MAINC + ":direct=spatial:ref=4:bframes=5", None),
+    "mc_nopyr":   ("noisy", 176, 144, 30, MAINC + ":b-pyramid=none:weightb=0", None),
+    "mc_strict":  ("noisy", 176, 144, 30, MAINC + ":b-pyramid=strict", None),
+    "mc_bparts":  ("noisy", 176, 144, 30, MAINC + ":partitions=all:subme=9:me=umh:ref=3:bframes=4", None),
+    "mc_fade":    ("fade", 176, 144, 40, MAINC + ":weightp=2:weightb=1", None),
+    "mc_fadeb":   ("fade", 176, 144, 40, MAINC + ":weightp=1:weightb=1:bframes=4", None),
+    "mc_slices":  ("noisy", 176, 144, 20, MAINC + ":slices=3", None),
+    "mc_cuts":    ("cuts", 176, 144, 60, MAINC, None),
+    "mc_640":     ("testsrc2", 640, 360, 30, MAINC, None),
+    "mc_100x58":  ("noisy", 100, 58, 20, MAINC, None),
 }
 
 # "vbv" uses mandelbrot with VBV limits
