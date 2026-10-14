@@ -212,6 +212,7 @@ zero_bss:
 %ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/sound.asm"              ; sound cards (HDA, AC'97)
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif

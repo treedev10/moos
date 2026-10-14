@@ -1336,6 +1336,22 @@ snd_pci_d0:
     popad
     ret
 
+; snd_pci_on: EBX = PCI device -> its registers and DMA (bus mastering)
+; switched on, its interrupt line off (MOOS polls; the firmware owns the
+; interrupts)
+snd_pci_on:
+    pushad
+    call pci_enable
+    mov al, 0x04
+    call pci_read32
+    and eax, 0xFFFF                     ; (do not clear the status bits)
+    or eax, 1 << 10                     ; INTx disable
+    mov ecx, eax
+    mov al, 0x04
+    call pci_write32
+    popad
+    ret
+
 ; ---------------------------------------------------------------- timing
 ; snd_timer: ECX = ticks -> snd_late says "late" once that many whole
 ; ticks (1/100 s) have passed
@@ -1381,7 +1397,7 @@ hda_init:
     mov byte [esp + 28], R_BAR
     jc .fail
     mov [snd_mmio], eax
-    call pci_enable                     ; memory decoding, bus master
+    call snd_pci_on                     ; memory decoding, bus master
     cmp word [snd_vendev], 0x8086       ; Intel: traffic class 0 (TCSEL), as
     jne .tc                             ; other drivers do against crackles
     mov al, 0x44
@@ -1568,8 +1584,12 @@ hda_rings:
     mov word [esi + HDA_RINTCNT], 1
     mov dword [snd_rirb_rp], 0
     mov byte [esi + HDA_RIRBSTS], 0x05  ; (clear old status)
-    mov byte [esi + HDA_CORBCTL], 2     ; run both (no interrupts)
-    mov byte [esi + HDA_RIRBCTL], 2
+    ; Run both. The RIRB's "response interrupt" bit is set too, although
+    ; MOOS takes no interrupts (INTCTL stays 0, so none reaches the CPU):
+    ; some controllers (QEMU's) only set the response flag in RIRBSTS,
+    ; and go on with the next command once it is cleared, when it is on.
+    mov byte [esi + HDA_CORBCTL], 2
+    mov byte [esi + HDA_RIRBCTL], 3
 .done:
     popad
     ret
@@ -2576,7 +2596,7 @@ ac97_init:
     and eax, 0xFFFC
     jz .fail
     mov [snd_nabm], eax
-    call pci_enable
+    call snd_pci_on
     cmp word [snd_vendev], 0x8086       ; ICH4 and later: the I/O ports
     jne .io                             ; must be switched on (IOSE)
     mov al, 0x18

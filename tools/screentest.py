@@ -333,6 +333,12 @@ def main():
                     time.sleep(0.04)
                 time.sleep(0.5)
     finally:
+        if audio and proc.poll() is None:
+            try:                                  # (so that QEMU finishes
+                mon.cmd('quit')                   # the WAV file)
+                proc.wait(timeout=10)
+            except Exception:
+                pass
         if proc.poll() is None:
             proc.kill()
         proc.wait()
