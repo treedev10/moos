@@ -212,6 +212,7 @@ zero_bss:
 %ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/aac.asm"                ; AAC-LC audio decoder (self-contained module)
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif
