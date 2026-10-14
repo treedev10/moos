@@ -29,6 +29,7 @@ Needs the test data from tests/native/aac_make.py and a built image
 (python build.py).
 """
 import os
+import socket
 import struct
 import subprocess
 import sys
@@ -56,6 +57,9 @@ class Gdb(st.Gdb):
     def __init__(self, port):
         super().__init__(port)                  # (leaves the guest running)
         self.running = True
+        # small packets in both directions: without this, each one waits
+        # about 40 ms for a delayed TCP acknowledgement
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def stop(self):
         if self.running:
@@ -97,8 +101,14 @@ class Gdb(st.Gdb):
     def regs(self):
         return bytes.fromhex(self.packet('g').decode())
 
-    def set_regs(self, blob):
-        r = self.packet('G' + blob.hex())
+    def set_reg(self, n, value, size=8):
+        """write one register (number n of the 'g' layout). Not the whole
+        set with 'G': in 32-bit compatibility mode QEMU 8 reads some of the
+        segment and control registers in one size and writes them in
+        another, so a 'G' of what 'g' gave shifts CR0 into CR4 and turns
+        paging off."""
+        r = self.packet('P%x=%s' % (n, (value & ((1 << (8 * size)) - 1))
+                                    .to_bytes(size, 'little').hex()))
         if r != b'OK':
             raise RuntimeError('register write failed: %r' % r)
 
@@ -109,8 +119,20 @@ class Gdb(st.Gdb):
 
 
 # x86-64 'g' layout (QEMU): rax rbx rcx rdx rsi rdi rbp rsp r8-r15 rip
-# (8 bytes each), eflags, cs, ... (4 bytes each)
+# (8 bytes each), eflags, cs, ... (4 bytes each). Register numbers for 'P':
+# 0-7 rax..rsp, 16 rip, 17 eflags.
 R_RAX, R_RSP, R_RIP = 0, 7 * 8, 16 * 8
+N_RSP, N_RIP, N_EFLAGS = 7, 16, 17
+
+
+def restore(gdb, saved):
+    """put back the eight 32-bit registers, EIP and EFLAGS saved from 'g'
+    (the decoder changes nothing else: segments, control registers and the
+    FPU control words are as they were)"""
+    for n in range(8):
+        gdb.set_reg(n, struct.unpack_from('<Q', saved, n * 8)[0])
+    gdb.set_reg(N_RIP, struct.unpack_from('<Q', saved, R_RIP)[0])
+    gdb.set_reg(N_EFLAGS, struct.unpack_from('<I', saved, 17 * 8)[0], 4)
 
 
 class Kernel:
@@ -126,10 +148,8 @@ class Kernel:
         """C call: the arguments and the return address on our stack"""
         sp = self.buf + O_STACK - 64
         self.gdb.mem_write(sp, struct.pack('<%dI' % (len(args) + 1), self.buf + O_RET, *args))
-        regs = bytearray(self.saved)
-        struct.pack_into('<Q', regs, R_RSP, sp)
-        struct.pack_into('<Q', regs, R_RIP, self.base + self.syms[name])
-        self.gdb.set_regs(bytes(regs))
+        self.gdb.set_reg(N_RSP, sp)
+        self.gdb.set_reg(N_RIP, self.base + self.syms[name])
         if not self.gdb.cont():
             raise RuntimeError('%s did not return (crash or hang in the kernel)' % name)
         regs = self.gdb.regs()
@@ -138,6 +158,9 @@ class Kernel:
             raise RuntimeError('%s stopped at %#x' % (name, rip))
         if struct.unpack_from('<Q', regs, R_RSP)[0] != sp + 4:
             raise RuntimeError('%s returned with a different stack' % name)
+        for n, reg in ((1, 'EBX'), (4, 'ESI'), (5, 'EDI'), (6, 'EBP')):
+            if regs[n * 8:n * 8 + 4] != self.saved[n * 8:n * 8 + 4]:
+                raise RuntimeError('%s did not keep %s' % (name, reg))
         return struct.unpack_from('<i', regs, R_RAX)[0]
 
 
@@ -247,12 +270,17 @@ def main():
             print(line)
             failures += not line.startswith("ok")
         gdb.breakpoint(k.buf + O_RET, False)
-        gdb.set_regs(saved)                                  # MOOS carries on
+        restore(gdb, saved)                                  # MOOS carries on
         gdb.send('c')
         time.sleep(1)
+        # MOOS must still work: type a command and look for its output
+        for ch in "echo aac kernel test done\n":
+            mon.cmd('sendkey ' + st.key_for(ch))
+        time.sleep(2)
         rows = screen.text()
-        alive = any("MOOS" in r or ">" in r for r in rows)
-        print("%s MOOS still runs after the calls" % ("ok  " if alive else "FAIL"))
+        alive = "aac kernel test done" in rows
+        print("%s MOOS still runs after the calls (a typed echo command printed its text)"
+              % ("ok  " if alive else "FAIL"))
         failures += not alive
     finally:
         proc.kill()
