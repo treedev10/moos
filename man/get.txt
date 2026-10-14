@@ -4,7 +4,8 @@ NAME
 SYNOPSIS
     get <url>
     get <url> <file>
-    get [-k] [-v] [-i] [-r START-END] [-d DATA] <url|@file> [file]
+    get [-k] [-v] [-i] [-r START-END] [-d DATA] [-t TYPE]
+        [-H NAME:VALUE] [-A AGENT] <url|@file> [file]
 
 DESCRIPTION
     get downloads a URL and shows it (through the pager), or saves it to a
@@ -31,7 +32,15 @@ DESCRIPTION
         answers 206 with that part.
     -d DATA
         POST DATA (as application/x-www-form-urlencoded) instead of a GET,
-        like a web form, e.g.  get -d "q=moos&lang=en" http://host/search
+        like a web form, e.g.  get -d q=moos&lang=en http://host/search
+        (DATA is one word: it may not hold spaces)
+    -t TYPE
+        the Content-Type of -d's DATA, e.g.
+        get -t application/json -d {"q":"moos"} http://host/api
+    -H NAME:VALUE
+        send one more header line (no spaces); may be given several times
+    -A AGENT
+        say AGENT instead of "MOOS/1.2" in the User-Agent header
 
     get speaks HTTP/1.1. It says who it is ("User-Agent: MOOS/1.2"), sends
     the cookies the server set earlier (man net, COOKIES) and takes new

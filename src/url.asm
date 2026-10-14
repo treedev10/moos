@@ -69,12 +69,17 @@ get_file        resd 1
 get_range_s     resd 1
 get_range_e     resd 1
 get_data        resd 1
+get_type        resd 1                  ; get -t: the body's Content-Type
+get_agent       resd 1                  ; get -A: the User-Agent
+get_hdr_end     resd 1                  ; get -H: end of the lines in get_hdrs
 url_scheme      resb 1                  ; 0 = http, 1 = https
 url_insecure    resb 1                  ; 1 = skip the certificate check
 get_info        resb 1                  ; get -i: show the reply's headers
 url_host        resb HOST_MAX + 1
 url_path        resb URL_LIMIT + 4
 url_argbuf      resb URL_LIMIT + 4        ; a URL read from a file (@file)
+GET_HDRS_MAX    equ 1024
+get_hdrs        resb GET_HDRS_MAX + 4   ; get -H: the extra header lines
 
 section .data
 url_http        db "http://", 0
@@ -91,6 +96,7 @@ str_dash_v      db "-v", 0
 str_dash_i      db "-i", 0
 str_dash_r      db "-r", 0
 str_dash_d      db "-d", 0
+str_dash_t      db "-t", 0
 str_secure_http db "plain HTTP - not encrypted", 0
 str_secure_tls  db "HTTPS, TLS 1.3", 0
 
@@ -381,7 +387,8 @@ url_arg:
     ret
 
 ; ----------------------------------------------------- the "get" command
-; get [-k] [-v] [-i] [-r START-END] [-d DATA] <url|@file> [file]
+; get [-k] [-v] [-i] [-r START-END] [-d DATA] [-t TYPE] [-H NAME:VALUE]
+;     [-A AGENT] <url|@file> [file]
 cmd_get:
     mov byte [url_insecure], 0
     mov byte [tls_debug], 0
@@ -389,6 +396,10 @@ cmd_get:
     mov dword [get_range_s], -1
     mov dword [get_range_e], -1
     mov dword [get_data], 0
+    mov dword [get_type], 0
+    mov dword [get_agent], 0
+    mov dword [get_hdr_end], get_hdrs
+    mov byte [get_hdrs], 0
     mov ebx, 1                          ; argument index
 .opt:
     cmp ebx, [argc]
@@ -439,12 +450,56 @@ cmd_get:
 .not_r:
     mov edi, str_dash_d
     call str_icmp
-    jne .args
+    jne .not_d
     inc ebx                             ; -d DATA: POST it
     cmp ebx, [argc]
     jae .usage
     mov eax, [argv + ebx * 4]
     mov [get_data], eax
+    inc ebx
+    jmp .opt
+.not_d:
+    mov edi, str_dash_t
+    call str_icmp
+    jne .not_t
+    inc ebx                             ; -t TYPE: the body's Content-Type
+    cmp ebx, [argc]
+    jae .usage
+    mov eax, [argv + ebx * 4]
+    mov [get_type], eax
+    inc ebx
+    jmp .opt
+.not_t:
+    cmp word [esi], '-A'                ; -A AGENT: the User-Agent
+    jne .not_a
+    cmp byte [esi + 2], 0
+    jne .not_a
+    inc ebx
+    cmp ebx, [argc]
+    jae .usage
+    mov eax, [argv + ebx * 4]
+    mov [get_agent], eax
+    inc ebx
+    jmp .opt
+.not_a:
+    cmp word [esi], '-H'                ; -H NAME:VALUE: one more header
+    jne .args                           ;   line (may be given again)
+    cmp byte [esi + 2], 0
+    jne .args
+    inc ebx
+    cmp ebx, [argc]
+    jae .usage
+    mov esi, [argv + ebx * 4]
+    call str_len
+    mov edi, [get_hdr_end]
+    lea eax, [edi + ecx + 2]
+    cmp eax, get_hdrs + GET_HDRS_MAX
+    ja .usage
+    call str_copy_noterm
+    mov word [edi], 0x0A0D              ; CR LF
+    mov byte [edi + 2], 0
+    add edi, 2
+    mov [get_hdr_end], edi
     inc ebx
     jmp .opt
 .args:
@@ -479,7 +534,15 @@ cmd_get:
     mov [url_body], esi
     call str_len
     mov [url_body_len], ecx
+    mov eax, [get_type]
+    mov [url_body_type], eax
 .no_data:
+    cmp byte [get_hdrs], 0
+    je .no_hdrs
+    mov dword [url_headers], get_hdrs
+.no_hdrs:
+    mov eax, [get_agent]
+    mov [url_agent], eax
     mov esi, [get_url]
     call url_fetch
     pushfd
@@ -541,7 +604,7 @@ cmd_get:
     PRINTF `(TLS alert %d from the server)\n`, dword [tls_alert]
 .r: ret
 .usage:
-    PRINTF `Usage: \x01wget\x01n [-k] [-v] [-i] [-r START-END] [-d DATA] <url|@file> [file]\n       e.g.  get https://example.com/\n`
+    PRINTF `Usage: \x01wget\x01n [-k] [-v] [-i] [-r START-END] [-d DATA] [-t TYPE]\n           [-H NAME:VALUE] [-A AGENT] <url|@file> [file]\n       e.g.  get https://example.com/\n`
     ret
 
 ; http_print_info: print what the last reply's headers said (get -i)

@@ -214,6 +214,24 @@ def t_post(m, s, H, S):
 
 
 @test
+def t_post_json(m, s, H, S):
+    # the way the browser's YouTube code asks: a JSON body, its own headers
+    # and User-Agent (url_body_type, url_headers, url_agent), over HTTP and
+    # HTTPS
+    body = '{"context":{"client":{"clientName":"MOOS","v":[1,true,null]}},"id":"x-y_z"}'
+    for base, k in ((H, ''), (S, '-k ')):
+        out = m.run('get %s-t application/json -H X-Moos-Test:42 -H X-Goog-Visitor-Id:abc '
+                    '-A Mozilla/5.0(MOOS) -d %s %s/echo' % (k, body, base))
+        ok, why = expect(out, 'method=POST', 'ctype=application/json', 'len=%d' % len(body),
+                         'sha256=' + sha(body.encode()), 'agent=Mozilla/5.0(MOOS)',
+                         'x-moos-test=42', 'x-goog-visitor-id=abc')
+        if not ok:
+            return ok, base + ': ' + why
+    out = m.run('get -d a=1 %s/echo' % H)     # the options were put back
+    return expect(out, 'ctype=application/x-www-form-urlencoded', 'agent=MOOS/1.2')
+
+
+@test
 def t_post_big(m, s, H, S):
     n = 300000
     m.run('nettest -p %d %s/echo' % (n, H), timeout=120)
@@ -393,16 +411,28 @@ def t_big(m, s, H, S):
     out = m.run('nettest %s/file/big.bin' % H, timeout=300)
     sp = re.search(r'Done: (\d+) bytes in ([\d.]+) s = ([\d.]+) MB/s', out)
     print('SPEED http 20 MB (with SHA-256):', sp.group(0) if sp else '?')
-    return nettest_ok(out, data)
+    ok, why = nettest_ok(out, data)
+    if not ok:
+        return ok, why
+    start = 1234567                     # a Range of it, as a player asks
+    out = m.run('nettest -r %d- %s/file/big.bin' % (start, H), timeout=300)
+    ok, why = nettest_ok(out, data[start:])
+    if not ok:
+        return ok, 'range: ' + why
+    return expect(out, 'HTTP 206', 'total %d' % len(data))
 
 
 @test
 def t_big_tls(m, s, H, S):
     data = open(os.path.join(DATA, 'big.bin'), 'rb').read()
-    out = m.run('nettest -k -n %s/file/big.bin' % S, timeout=400)
+    start = 777
+    out = m.run('nettest -k -r %d- %s/file/big.bin' % (start, S), timeout=400)
     sp = re.search(r'Done: (\d+) bytes in ([\d.]+) s = ([\d.]+) MB/s', out)
-    print('SPEED https 20 MB (no hash):', sp.group(0) if sp else out[-300:])
-    return (bool(sp) and int(sp.group(1)) == len(data), '' if sp else 'failed')
+    print('SPEED https 20 MB (Range, with SHA-256):', sp.group(0) if sp else out[-300:])
+    ok, why = nettest_ok(out, data[start:])
+    if not ok:
+        return ok, why
+    return expect(out, 'HTTP 206', 'total %d' % len(data))
 
 
 @test

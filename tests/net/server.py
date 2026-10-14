@@ -22,7 +22,8 @@ http://10.9.N.1:PORT/ with run.py --tap):
     /continue              an interim "100 Continue" before the real reply
     /headers               the request's head, echoed back as text
     /echo                  POST: method, Content-Type, length and SHA-256 of
-                           the body, and its first 64 bytes
+                           the body, its first 64 bytes, the User-Agent
+                           and every X-... header
     /redirect?to=URL       302 to URL (&code=301/303/307/308)
     /longurl/N             a redirect to /headers?x=AAAA... (N bytes in all)
     /cookies/set           Set-Cookie: several, with attributes
@@ -180,9 +181,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not chunk:
                 break
             body += chunk
-        out = ('method=POST\nctype=%s\nlen=%d\nsha256=%s\nstart=%r\n' % (
+        out = ('method=POST\nctype=%s\nlen=%d\nsha256=%s\nstart=%r\nagent=%s\n' % (
             self.headers.get('Content-Type'), len(body), hashlib.sha256(body).hexdigest(),
-            body[:64])).encode()
+            body[:64], self.headers.get('User-Agent'))).encode()
+        for k, v in self.headers.items():        # the caller's own headers
+            if k.lower().startswith('x-'):
+                out += ('%s=%s\n' % (k.lower(), v)).encode()
         print('   POST body', len(body), 'bytes, sha256', hashlib.sha256(body).hexdigest(), flush=True)
         if self.route().startswith('/redirect'):
             self.send_response(int(self.query().get('code', '303')))
