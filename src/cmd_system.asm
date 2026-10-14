@@ -93,6 +93,20 @@ total_ram_kb:
 
 ; ------------------------------------------------------------------------ mem
 cmd_mem:
+%ifdef FULL
+    cmp dword [argc], 2             ; "mem take <MB>" / "mem give"
+    jb .show
+    mov esi, [argv + 4]
+    mov edi, mem_s_take
+    call str_icmp
+    je mem_take
+    mov edi, mem_s_give
+    call str_icmp
+    je mem_give
+    PRINTF `Usage: mem   |   mem take <MB>   |   mem give\n`
+    ret
+.show:
+%endif
     call total_ram_kb
     mov ebx, eax
     shr ebx, 10
@@ -127,6 +141,11 @@ cmd_mem:
     PRINTF `  Desktop browser .... 0x%08x - 0x%08x  (2 MB)\n`, BR_BASE, eax
 %endif
     PRINTF `  Used by MOOS ....... about %d KB in total - the rest is free\n`, KMEM_SIZE / 1024
+%ifdef FULL
+    mov eax, [big_total]
+    shr eax, 10
+    PRINTF `  Big blocks ......... %d KB taken from the firmware now\n`, eax
+%endif
 .storage:
     call fs_stats
     mov ebx, FS_MAX_FILES
@@ -148,6 +167,65 @@ cmd_mem:
     shr ecx, 12
     PRINTF `  Free ............... %d bytes (%d empty slots of 4096 bytes)\n`, ebx, ecx
     ret
+
+%ifdef FULL
+; mem take <MB>: ask the firmware for a big block (big_alloc) of that many
+; megabytes and keep it - a way to try out the big memory that video,
+; pictures and sound use, and the Task Manager. In the desktop's Terminal
+; the block belongs to the Terminal (so the Task Manager counts it there,
+; and End task gives it back); on the text console to OWN_SHELL.
+mem_take:
+    cmp dword [argc], 3
+    jb .usage
+    mov esi, [argv + 8]
+    call parse_uint
+    jc .usage
+    test eax, eax
+    jz .usage
+    cmp eax, 1024                   ; (at most 1 GB at a time)
+    ja .usage
+    mov ebx, eax                    ; EBX = MB
+    shl eax, 20
+    mov ecx, eax
+    call mem_owner
+    call big_alloc
+    test eax, eax
+    jz .fail
+    mov ecx, [big_total]
+    shr ecx, 10
+    PRINTF `Took %d MB at 0x%08x from the firmware (big blocks now: %d KB).\n`, ebx, eax, ecx
+    ret
+.fail:
+    PRINTF `\x01rThe firmware has no %d MB block free\x01n (or this is not a UEFI PC).\n`, ebx
+    ret
+.usage:
+    PRINTF `Usage: mem take <MB>   (1 - 1024)\n`
+    ret
+
+; mem give: give back every block "mem take" took (on this console)
+mem_give:
+    call mem_owner
+    mov eax, [big_total]
+    call big_free_owner
+    sub eax, [big_total]
+    shr eax, 10
+    PRINTF `Gave back %d KB.\n`, eax
+    ret
+
+; mem_owner: -> EDX = whose blocks "mem take" makes: the Terminal's when
+; the command runs in the desktop, OWN_SHELL on the text console
+mem_owner:
+    mov edx, OWN_SHELL
+    cmp byte [gui_active], 0
+    je .r
+    mov edx, APP_TERM
+.r: ret
+
+section .data
+mem_s_take  db "take", 0
+mem_s_give  db "give", 0
+section .text
+%endif
 
 ; -------------------------------------------------------------------- sysinfo
 cpu_detect:

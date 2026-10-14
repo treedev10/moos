@@ -213,6 +213,7 @@ OWN_SOUND   equ 16                      ; these the rest of the system
 OWN_NET     equ 17
 OWN_MEDIA   equ 18
 OWN_IMAGES  equ 19
+OWN_SHELL   equ 20                      ; "mem take" on the text console
 
 section .bss
 alignb 4

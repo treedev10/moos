@@ -163,7 +163,7 @@ tk_s_focus  db "focused", 0
 tk_s_run    db "running", 0
 tk_s_min    db "minimized", 0
 tk_s_desk   db "Desktop", 0
-tk_s_dwork  db "drawing", 0
+tk_s_dwork  db "system", 0
 tk_end_l    db "End task", 0
 tk_end_s    db "End", 0
 tk_t_cpu    db "CPU", 0
@@ -200,6 +200,7 @@ tk_own_snd  db "  sound", 0
 tk_own_net  db "  network", 0
 tk_own_med  db "  video / audio", 0
 tk_own_img  db "  pictures", 0
+tk_own_shell db "  shell (mem take)", 0
 tk_own_sys  db "  system", 0
 tk_own_app  db "  app ", 0
 tk_own_pre  db "  ", 0
@@ -1581,6 +1582,9 @@ tk_draw_mem:
     je .name
     mov esi, tk_own_img
     cmp ebp, OWN_IMAGES
+    je .name
+    mov esi, tk_own_shell
+    cmp ebp, OWN_SHELL
     je .name
     mov esi, tk_own_app             ; (an owner MOOS has no name for yet)
     call sb_str
