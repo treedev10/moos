@@ -464,7 +464,8 @@ pl_present:
     je .no
     test ecx, ecx
     jz .yes
-    lea edx, [eax + ecx]
+    mov edx, eax
+    add edx, ecx
     jc .no
     cmp edx, [pl_fsize]
     ja .no
@@ -714,7 +715,8 @@ pl_find_index:
 .found:
     cmp edx, PL_MAXMOOV
     ja .noindex
-    lea ecx, [eax + edx]
+    mov ecx, eax
+    add ecx, edx
     jc .noindex
     cmp ecx, [pl_fsize]
     ja .noindex

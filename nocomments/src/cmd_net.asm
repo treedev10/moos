@@ -9,6 +9,8 @@ str_selftest db "selftest", 0
 str_cards   db "cards", 0
 str_native  db "native", 0
 str_firmware db "firmware", 0
+str_cookies db "cookies", 0
+str_loss    db "loss", 0
 drv_names   dd drv_none, drv_rtl8139, drv_e1000, drv_rtl8168, drv_snp
 drv_none    db "no MOOS driver", 0
 drv_rtl8139 db "MOOS driver: rtl8139", 0
@@ -65,6 +67,12 @@ cmd_net:
     mov edi, str_cards
     call str_icmp
     je net_cards
+    mov edi, str_cookies
+    call str_icmp
+    je .cookies
+    mov edi, str_loss
+    call str_icmp
+    je .loss
 .status:
     cmp byte [net_up], 0
     je .not_up
@@ -178,17 +186,28 @@ cmd_net:
     mov esi, [argv + 8]
     call parse_ipv4
     jc .http_usage
-    mov [http_test_ip], eax
     mov esi, [argv + 12]
     call parse_uint
     jc .http_usage
-    mov [http_test_port], ax
-    PRINTF `Downloading...\n`
-    mov eax, [http_test_ip]
-    mov bx, [http_test_port]
+    mov edi, url_argbuf
+    mov esi, url_http
+    call str_copy_noterm
     mov esi, [argv + 8]
-    mov edi, [argv + 16]
-    call http_get
+    call str_copy_noterm
+    mov byte [edi], ':'
+    inc edi
+    mov esi, [argv + 12]
+    call str_copy_noterm
+    mov esi, [argv + 16]
+    cmp byte [esi], '/'
+    je .http_path
+    mov byte [edi], '/'
+    inc edi
+.http_path:
+    call str_copy
+    PRINTF `Downloading...\n`
+    mov esi, url_argbuf
+    call url_fetch
     jc .http_fail
     PRINTF `\x01gHTTP %d\x01n, %d bytes. Date: %s\n`, dword [http_status], dword [pkg_len], http_date
     mov esi, PKG_BUF
@@ -204,7 +223,7 @@ cmd_net:
     PRINTF `\n`
     ret
 .http_fail:
-    PRINTF `\x01rCould not connect to the server.\x01n\n`
+    PRINTF `\x01rerror:\x01n %s\n`, dword [url_err]
     ret
 .selftest:
     call crypto_selftest
@@ -212,12 +231,42 @@ cmd_net:
 .http_usage:
     PRINTF `Usage: net http <ip> <port> <path>   (example: net http 10.0.2.2 8000 /hi.txt)\n`
     ret
-
-section .bss
-alignb 4
-http_test_ip    resd 1
-http_test_port  resw 1
-section .text
+.cookies:
+    cmp dword [argc], 3
+    jb .ck_list
+    mov esi, [argv + 8]
+    mov edi, str_clear
+    call str_icmp
+    jne .ck_usage
+    call cookie_clear
+    PRINTF `All cookies forgotten.\n`
+    ret
+.ck_list:
+    PRINTF `\x01wCookies\x01n (kept until MOOS restarts):\n`
+    call cookie_list
+    ret
+.ck_usage:
+    PRINTF `Usage: net cookies [clear]\n`
+    ret
+.loss:
+    cmp dword [argc], 3
+    jb .loss_usage
+    mov esi, [argv + 8]
+    call parse_uint
+    jc .loss_usage
+    cmp eax, 50
+    ja .loss_usage
+    mov [tcp_loss], al
+    test eax, eax
+    jz .loss_off
+    PRINTF `\x01yTesting:\x01n TCP now throws away %d%% of the segments it sends and\nreceives, to check that lost data is sent again. "net loss 0" stops it.\n`, eax
+    ret
+.loss_off:
+    PRINTF `TCP loss test off.\n`
+    ret
+.loss_usage:
+    PRINTF `Usage: net loss <percent>   (0-50; 0 = off)\n`
+    ret
 
 mac_print:
     push eax
@@ -347,3 +396,283 @@ nc_name     resd 1
 nc_drv      resd 1
 nc_sub      resb 1
 section .text
+
+NT_BUF      equ SCRATCH
+NT_BUF_SIZE equ SCRATCH_SIZE
+
+section .bss
+alignb 4
+nt_url      resd 1
+nt_rs       resd 1
+nt_re       resd 1
+nt_t0       resd 1
+nt_t1       resd 1
+nt_shown    resd 1
+nt_keyt     resd 1
+nt_bytes    resd 1
+nt_post     resd 1
+nt_nohash   resb 1
+alignb 4
+nt_sha      resb SHA_CTX
+nt_digest   resb 32
+
+section .data
+str_dash_n  db "-n", 0
+str_dash_p  db "-p", 0
+nt_octets   db "application/octet-stream", 0
+nt_hex      db "0123456789abcdef"
+
+section .text
+
+cmd_nettest:
+    mov byte [url_insecure], 0
+    mov byte [nt_nohash], 0
+    mov dword [nt_rs], -1
+    mov dword [nt_re], -1
+    mov dword [nt_post], 0
+    mov ebx, 1
+.opt:
+    cmp ebx, [argc]
+    jae .usage
+    mov esi, [argv + ebx * 4]
+    mov edi, str_dash_k
+    call str_icmp
+    jne .not_k
+    mov byte [url_insecure], 1
+    inc ebx
+    jmp .opt
+.not_k:
+    mov edi, str_dash_n
+    call str_icmp
+    jne .not_n
+    mov byte [nt_nohash], 1
+    inc ebx
+    jmp .opt
+.not_n:
+    mov edi, str_dash_p
+    call str_icmp
+    jne .not_p
+    inc ebx
+    cmp ebx, [argc]
+    jae .usage
+    mov esi, [argv + ebx * 4]
+    call parse_uint
+    jc .usage
+    cmp eax, PKG_BUF_SIZE
+    ja .usage
+    mov [nt_post], eax
+    inc ebx
+    jmp .opt
+.not_p:
+    mov edi, str_dash_r
+    call str_icmp
+    jne .url
+    inc ebx
+    cmp ebx, [argc]
+    jae .usage
+    mov esi, [argv + ebx * 4]
+    call parse_uint_partial
+    jc .usage
+    mov [nt_rs], eax
+    cmp byte [esi], '-'
+    jne .usage
+    inc esi
+    cmp byte [esi], 0
+    je .r_open
+    call parse_uint_partial
+    jc .usage
+    mov [nt_re], eax
+.r_open:
+    inc ebx
+    jmp .opt
+.url:
+    call url_arg
+    jc .fail
+    mov [nt_url], esi
+    cmp byte [url_insecure], 0
+    je .open
+    PRINTF `\x01yWarning:\x01n -k: the server's certificate is not checked.\n`
+.open:
+    PRINTF `Opening %s ...\n`, dword [nt_url]
+    mov eax, [nt_rs]
+    mov [url_range_start], eax
+    mov eax, [nt_re]
+    mov [url_range_end], eax
+    mov ecx, [nt_post]
+    jecxz .get
+    xor ebx, ebx
+.pat:
+    imul eax, ebx, 2654435761
+    shr eax, 24
+    mov [PKG_BUF + ebx], al
+    inc ebx
+    cmp ebx, ecx
+    jb .pat
+    mov dword [url_method], 1
+    mov dword [url_body], PKG_BUF
+    mov [url_body_len], ecx
+    mov dword [url_body_type], nt_octets
+.get:
+    mov eax, [ticks]
+    mov [nt_t0], eax
+    mov esi, [nt_url]
+    call hs_open
+    pushfd
+    call url_options_reset
+    mov byte [url_insecure], 0
+    popfd
+    jc .fail
+    mov eax, [ticks]
+    sub eax, [nt_t0]
+    imul eax, 10
+    PRINTF `\x01gHTTP %d\x01n, Content-Length %d, Content-Range total %d (headers after %d ms)\n`, dword [hs_status], dword [hs_clen], dword [hs_total], eax
+    cmp byte [http_ctype], 0
+    je .ct
+    PRINTF `Content-Type: %s\n`, http_ctype
+.ct:
+    CCALL sha256_init, nt_sha
+    mov dword [nt_bytes], 0
+    mov eax, [ticks]
+    mov [nt_t1], eax
+    mov [nt_shown], eax
+    mov [nt_keyt], eax
+.loop:
+    mov edi, NT_BUF
+    mov ecx, NT_BUF_SIZE
+    call hs_read
+    test eax, eax
+    jg .data
+    jl .end
+    mov eax, [ticks]
+    cmp eax, [nt_keyt]
+    je .idle
+    mov [nt_keyt], eax
+    call kbd_poll
+    cmp eax, 27
+    je .stopped
+    cmp eax, 3
+    je .stopped
+.idle:
+    call nt_progress
+    call net_idle
+    jmp .loop
+.data:
+    add [nt_bytes], eax
+    cmp byte [nt_nohash], 0
+    jne .shown
+    CCALL sha256_update, nt_sha, NT_BUF, eax
+.shown:
+    call nt_progress
+    jmp .loop
+.stopped:
+    call hs_close
+    call nt_line_start
+    PRINTF `Stopped after %d bytes.\n`, dword [nt_bytes]
+    ret
+.end:
+    push eax
+    call nt_line_start
+    pop eax
+    cmp eax, -1
+    jne .broke
+    call nt_report
+    call hs_close
+    ret
+.broke:
+    PRINTF `\x01rerror:\x01n %s (after %d bytes)\n`, dword [url_err], dword [nt_bytes]
+    call hs_close
+    ret
+.fail:
+    PRINTF `\x01rerror:\x01n %s\n`, dword [url_err]
+    ret
+.usage:
+    PRINTF `Usage: \x01wnettest\x01n [-k] [-n] [-r START-END] [-p SIZE] <url|@file>\n`
+    ret
+
+nt_line_start:
+    cmp byte [gui_capture], 0
+    jne .r
+    mov dword [cur_x], 0
+.r: ret
+
+nt_progress:
+    pushad
+    cmp byte [gui_capture], 0
+    jne .r
+    mov eax, [ticks]
+    sub eax, [nt_shown]
+    cmp eax, 100
+    jb .r
+    mov eax, [ticks]
+    mov [nt_shown], eax
+    call nt_line_start
+    mov eax, [nt_bytes]
+    shr eax, 10
+    call nt_speed
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov ecx, [nt_bytes]
+    shr ecx, 10
+    PRINTF `  %d KB  %d.%02d MB/s      `, ecx, eax, edx
+    call screen_present
+.r: popad
+    ret
+
+nt_speed:
+    push ecx
+    push edx
+    mov ecx, [ticks]
+    sub ecx, [nt_t1]
+    jnz .t
+    inc ecx
+.t: mov eax, [nt_bytes]
+    mov edx, 100
+    mul edx
+    cmp edx, ecx
+    jb .div
+    mov eax, 0xFFFFFFFF
+    jmp .mb
+.div:
+    div ecx
+.mb:
+    mov edx, 100
+    mul edx
+    shrd eax, edx, 20
+    pop edx
+    pop ecx
+    ret
+
+nt_report:
+    pushad
+    mov eax, [ticks]
+    sub eax, [nt_t1]
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov ebx, eax
+    mov ebp, edx
+    call nt_speed
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    PRINTF `\x01gDone:\x01n %d bytes in %d.%02d s = %d.%02d MB/s\n`, dword [nt_bytes], ebx, ebp, eax, edx
+    cmp byte [nt_nohash], 0
+    jne .r
+    CCALL sha256_final, nt_sha, nt_digest
+    PRINTF `SHA-256: `
+    xor ebx, ebx
+.h: movzx eax, byte [nt_digest + ebx]
+    mov edx, eax
+    shr eax, 4
+    mov al, [nt_hex + eax]
+    call out_char
+    and edx, 15
+    mov al, [nt_hex + edx]
+    call out_char
+    inc ebx
+    cmp ebx, 32
+    jb .h
+    PRINTF `\n`
+.r: popad
+    ret

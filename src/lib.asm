@@ -90,6 +90,22 @@ str_copy:
     pop eax
     ret
 
+; str_copy_noterm: copy zero-terminated ESI to EDI without the 0; EDI is
+; left just past the copy (ESI kept)
+str_copy_noterm:
+    push eax
+    push esi
+.l: mov al, [esi]
+    test al, al
+    jz .e
+    mov [edi], al
+    inc edi
+    inc esi
+    jmp .l
+.e: pop esi
+    pop eax
+    ret
+
 ; str_append: append the string ESI to the end of the string at EDI
 str_append:
     push eax

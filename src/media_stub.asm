@@ -2,24 +2,12 @@
 ;  media_stub.asm - STAND-INS, to be replaced
 ;
 ;  The browser's picture cache, video player and YouTube pages call the
-;  streaming HTTP client, the H.264 / AAC / JPEG / PNG / GIF decoders and
-;  the sound driver. Until those modules are added, these
+;  H.264 / AAC / JPEG / PNG / GIF decoders and the sound driver. Until those modules are added, these
 ;  stand-ins let the kernel assemble: every one of them reports failure, so
 ;  pictures show their alt text and a video says it could not be loaded.
 ; =============================================================================
 section .bss
 alignb 4
-hs_status   resd 1
-hs_clen     resd 1
-hs_total    resd 1
-url_range_start resd 1
-url_range_end resd 1
-url_method  resd 1
-url_body    resd 1
-url_body_len resd 1
-url_body_type resd 1
-url_headers resd 1
-url_agent   resd 1
 section .text
 H264F_Y     equ 0
 H264F_U     equ 4
@@ -29,14 +17,6 @@ H264F_CS    equ 16
 H264F_W     equ 20
 H264F_H     equ 24
 H264F_POC   equ 28
-hs_open:
-    stc
-    ret
-hs_read:
-    mov eax, -2
-    ret
-hs_close:
-    ret
 snd_init:
 snd_open:
     stc

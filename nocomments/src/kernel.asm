@@ -25,7 +25,8 @@ BOUNCE_OFF   equ 0x480000
 %define NET_RING     KV(0xF30000)
 %define TLS_BASE     KV(0xF40000)
 %define BR_BASE      KV(0xF60000)
-KMEM_END     equ 0x1160000
+%define NET_STREAM   KV(0x1160000)
+KMEM_END     equ 0x11E0000
 KERNEL_LIMIT equ 0x400000
 PKG_BUF_SIZE equ 0x400000
 %else
@@ -40,6 +41,7 @@ BOUNCE_OFF   equ 0xA0000
 %define OUTBUF       KV(0x210000)
 %define NET_BUF      KV(0x220000)
 %define PKG_BUF      KV(0x230000)
+%define NET_STREAM   KV(0x2B0000)
 %define NET_RING     KV(0x7B0000)
 %define TLS_BASE     KV(0x7C0000)
 KMEM_END     equ 0x7E0000
@@ -115,6 +117,7 @@ kernel_entry_uefi:
     PRINTF `\x01g[ OK ]\x01n Graphics %dx%d, keyboard and timer through the firmware\n`, dword [bootinfo + BI.fb_width], dword [bootinfo + BI.fb_height]
 
 kernel_common:
+    call cookie_clear
     call fs_init
     call clk_init
     call signin_maybe

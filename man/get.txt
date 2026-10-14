@@ -4,7 +4,8 @@ NAME
 SYNOPSIS
     get <url>
     get <url> <file>
-    get [-k] [-v] <url> [file]
+    get [-k] [-v] [-i] [-r START-END] [-d DATA] [-t TYPE]
+        [-H NAME:VALUE] [-A AGENT] <url|@file> [file]
 
 DESCRIPTION
     get downloads a URL and shows it (through the pager), or saves it to a
@@ -16,11 +17,39 @@ DESCRIPTION
         save a file from a plain-HTTP server to notes.txt
 
     URLs may start with https:// (encrypted, checked) or http:// (neither).
-    Without either, http:// is assumed. Saved files are limited to 4096
-    bytes, like every MOOS file.
+    Without either, http:// is assumed. They may be up to 4096 characters
+    long; for one longer than a command line, put it in a file and give
+    @file instead (the file's first line is the URL).
 
     -k  do not check the server's certificate (see below)
     -v  show each TLS record and handshake message (for debugging)
+    -i  show the reply's headers (Content-Type, Content-Length, the total
+        size from Content-Range, Transfer-Encoding, Content-Encoding,
+        Location, Date); without a file, only those are shown
+    -r START-END
+        ask for part of the file (an HTTP Range): bytes START to END,
+        counting from 0; -r 1000- is from byte 1000 to the end. The server
+        answers 206 with that part.
+    -d DATA
+        POST DATA (as application/x-www-form-urlencoded) instead of a GET,
+        like a web form, e.g.  get -d q=moos&lang=en http://host/search
+        (DATA is one word: it may not hold spaces)
+    -t TYPE
+        the Content-Type of -d's DATA, e.g.
+        get -t application/json -d {"q":"moos"} http://host/api
+    -H NAME:VALUE
+        send one more header line (no spaces); may be given several times
+    -A AGENT
+        say AGENT instead of "MOOS/1.2" in the User-Agent header
+
+    get speaks HTTP/1.1. It says who it is ("User-Agent: MOOS/1.2"), sends
+    the cookies the server set earlier (man net, COOKIES) and takes new
+    ones, and decodes "chunked" replies. It does not follow redirects: it
+    shows the 3xx status (use -i to see the Location).
+
+    Replies are read into the download buffer: 512 KB on a BIOS PC, 4 MB
+    on UEFI. A larger reply is cut there (get says so). Saved files are
+    limited to 4096 bytes, like every MOOS file.
 
 HTTPS IN MOOS
     MOOS speaks TLS 1.3 itself, written from scratch:
@@ -47,6 +76,15 @@ HTTPS IN MOOS
     "net selftest" checks the crypto code against known answers.
 
 MESSAGES
+    the server closed the connection before the whole reply came
+        The reply was shorter than its Content-Length said (or a chunked
+        reply ended early): the server or the network broke off.
+    the download stalled (nothing came for too long)
+        Nothing arrived for 20 seconds.
+    the connection was lost (no answer to retransmissions)
+        MOOS sent its data 8 times and nothing acknowledged it.
+    the reply's headers are too large (over 32 KB)
+    the request is too large (address, headers and cookies over 16 KB)
     a certificate is not valid now (expired, or the clock is wrong)
         Run "clock sync" (it works without HTTPS), then try again.
     the certificate is for a different site name

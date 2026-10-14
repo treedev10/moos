@@ -447,6 +447,25 @@ yt_page:
     call str_len
     ret
 
+; yt_secure: -> EAX = 1 if the API was asked over HTTPS (for the
+; browser's lock), 0 if yt.cfg pointed it at a plain HTTP server
+yt_secure:
+    push esi
+    push edi
+    mov edi, yt_api
+    mov esi, yt_https
+    call str_iprefix
+    mov eax, 0
+    jne .r
+    inc eax
+.r: pop edi
+    pop esi
+    ret
+
+section .data
+yt_https    db "https:", 0
+section .text
+
 ; yt_tokens: the JSON answer in PKG_BUF (pkg_len) -> tokens (yt_toks,
 ; yt_ntok); CF=1 if it is not JSON (or there is no memory)
 yt_tokens:

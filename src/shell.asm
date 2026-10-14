@@ -1,10 +1,10 @@
 ; =============================================================================
 ;  shell.asm - the command line: parsing, command table, help and man
 ; =============================================================================
-MAX_ARGS    equ 8
+MAX_ARGS    equ 16                  ; (get -H ... -d ... needs more than 8)
 
 section .bss
-parse_buf   resb 128
+parse_buf   resb 256                ; (a copy of line_buf: as long)
 alignb 4
 argc        resd 1
 argv        resd MAX_ARGS
@@ -54,6 +54,7 @@ cmd_table:
     COMMAND "net",      cmd_net,      "connect to the network",     man_net
     COMMAND "apt",      cmd_apt_top,  "install packages",           man_apt
     COMMAND "get",      cmd_get,      "download a web page (https)", man_get
+    COMMAND "nettest",  cmd_nettest,  "time a download, SHA-256",   man_net
     COMMAND "uptime",   cmd_uptime,   "time since start-up",        man_uptime
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
     COMMAND "sysinfo",  cmd_sysinfo,  "system and CPU details",     man_sysinfo

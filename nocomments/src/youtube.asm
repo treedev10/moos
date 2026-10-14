@@ -409,6 +409,23 @@ yt_page:
     call str_len
     ret
 
+yt_secure:
+    push esi
+    push edi
+    mov edi, yt_api
+    mov esi, yt_https
+    call str_iprefix
+    mov eax, 0
+    jne .r
+    inc eax
+.r: pop edi
+    pop esi
+    ret
+
+section .data
+yt_https    db "https:", 0
+section .text
+
 yt_tokens:
     pushad
     cmp dword [yt_toks], 0

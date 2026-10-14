@@ -26,6 +26,7 @@
 ;    0x200000  scratch buffer (64 KB) - text being written / copied / edited
 ;    0x210000  output buffer (60 KB) - text shown by the pager
 ;    0x220000  network buffers, downloads, HTTPS
+;    0x2B0000  TCP receive/send rings, HTTP headers, cookie jar (512 KB)
 ;
 ;  Two kernels are built from this source:
 ;    BIOS  (the boot sector loads it): the text system, in the map above. It
@@ -63,7 +64,8 @@ BOUNCE_OFF   equ 0x480000
 %define NET_RING     KV(0xF30000)    ; NIC receive ring: 32K + wrap room
 %define TLS_BASE     KV(0xF40000)    ; HTTPS buffers (128K, see tls.asm)
 %define BR_BASE      KV(0xF60000)    ; web browser (2M, see html.asm)
-KMEM_END     equ 0x1160000
+%define NET_STREAM   KV(0x1160000)   ; TCP rings, HTTP, cookies (512K, net_tcp.asm)
+KMEM_END     equ 0x11E0000
 KERNEL_LIMIT equ 0x400000           ; (build.py checks the kernel fits)
 PKG_BUF_SIZE equ 0x400000
 %else
@@ -78,6 +80,7 @@ BOUNCE_OFF   equ 0xA0000
 %define OUTBUF       KV(0x210000)
 %define NET_BUF      KV(0x220000)    ; NIC DMA buffers + network scratch (64K)
 %define PKG_BUF      KV(0x230000)    ; downloaded package (512K, under KMEM)
+%define NET_STREAM   KV(0x2B0000)    ; TCP rings, HTTP, cookies (512K, net_tcp.asm)
 %define NET_RING     KV(0x7B0000)    ; NIC receive ring: 32K + wrap room
 %define TLS_BASE     KV(0x7C0000)    ; HTTPS buffers (128K, see tls.asm)
 KMEM_END     equ 0x7E0000
@@ -157,6 +160,7 @@ kernel_entry_uefi:
     PRINTF `\x01g[ OK ]\x01n Graphics %dx%d, keyboard and timer through the firmware\n`, dword [bootinfo + BI.fb_width], dword [bootinfo + BI.fb_height]
 
 kernel_common:
+    call cookie_clear               ; (the jar's memory is not zeroed)
     call fs_init
     call clk_init
     call signin_maybe

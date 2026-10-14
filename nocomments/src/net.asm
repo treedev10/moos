@@ -762,6 +762,8 @@ ip_checksum:
 %include "src/net_dhcp.asm"
 %include "src/net_dns.asm"
 %include "src/net_tcp.asm"
+%include "src/net_http.asm"
+%include "src/net_cookie.asm"
 
 net_up_bring:
     cmp byte [net_present], 0
