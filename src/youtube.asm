@@ -671,7 +671,7 @@ yt_load_clients:
     mov edi, yt_img
     call str_copy
     mov esi, yt_cfg_name            ; yt.cfg: "client NAME NUM VER UA..."
-    call fs_find
+    call fs_find_top
     jc .builtin
     mov ecx, [edi + DE_SIZE]
     call fs_slot                    ; ESI = its text

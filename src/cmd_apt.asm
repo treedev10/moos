@@ -168,6 +168,10 @@ cmd_apt:
     call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .list_n
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .list_n
+    cmp byte [edi + DE_PARENT], 0   ; (the records are at the top level)
+    jne .list_n
     mov esi, edi                    ; entry ptr = name ptr (DE_NAME = 0)
     call ends_with_inst             ; preserves ESI
     jc .list_n

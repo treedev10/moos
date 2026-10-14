@@ -453,7 +453,9 @@ cmd_rename:
     je .rename
     call fs_rename
     jc print_fs_error
-    PRINTF `Moved %s into \x01b%s\x01n.\n`, dword [argv + 4], esi
+    mov edi, fc_path                ; say where it is now
+    call fs_entry_path
+    PRINTF `Moved %s to \x01w%s\x01n.\n`, dword [argv + 4], edi
     ret
 .rename:
     call fs_rename

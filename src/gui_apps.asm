@@ -37,8 +37,8 @@ section .data
 term_welcome db "MOOS terminal - type a command and press Enter.", 10
              db "Commands that take over the screen (edit, write, gui) are", 10
              db "not available here; use ls, cat, calc, net, apt, time...", 10, 10, 0
-ide_file     db "script.ms", 0
-edit_file    db "notes.txt", 0
+ide_file     db "/script.ms", 0           ; (whatever the current folder is)
+edit_file    db "/notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
 edit_hint    db "Ctrl+S = Save", 0
 bl_edit      db "edit", 0
