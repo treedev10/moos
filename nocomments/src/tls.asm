@@ -1,5 +1,3 @@
-TLS_RX      equ TLS_BASE + 0x00000
-TLS_RX_CAP  equ 0x8000
 TLS_REC     equ TLS_BASE + 0x08000
 TLS_HS      equ TLS_BASE + 0x0C800
 TLS_HS_CAP  equ 0x8000
@@ -48,6 +46,7 @@ tls_verify      resb 1
 tls_debug       resb 1
 tls_got_ver     resb 1
 tls_got_ks      resb 1
+tls_live        resb 1
 alignb 4
 tls_rlen        resd 1
 tls_hs_len      resd 1
@@ -66,6 +65,9 @@ tls_cert_len    resd 1
 tls_cv_msg      resd 1
 tls_cv_len      resd 1
 tls_cv_hash     resb 32
+tls_pt_ptr      resd 1
+tls_pt_len      resd 1
+tls_ku_msg      resb 8
 
 section .data
 hrr_random  db 0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02
@@ -102,43 +104,31 @@ te_finished db "the server's Finished check failed (connection tampered?)", 0
 te_bigmsg   db "handshake too large", 0
 te_clientcert db "the server wants a client certificate (not supported)", 0
 te_nocert   db "the server sent no certificate", 0
+te_trunc    db "the connection ended in the middle of a TLS record", 0
+te_send     db "could not send to the server", 0
+lbl_upd     db "traffic upd", 0
+tls_cn_alert db 1, 0
 
 section .text
 
 tls_rx_need:
     CENTER
     mov eax, ARG(0)
-    mov [tls_need], eax
-.l: mov eax, [tcp_dst_len]
-    cmp eax, [tls_need]
-    jae .ok
-    cmp byte [tcp_closed], 0
-    jne .closed
-    mov eax, [ticks]
-    add eax, 1500
-    call tcp_pump
-    jnc .l
-    mov dword [tls_err], te_timeout
-    xor eax, eax
-    CLEAVE
-.closed:
+    mov edx, 1500
+    call tcp_wait_avail
+    jnc .ok
     mov dword [tls_err], te_closed
+    cmp eax, -1
+    je .no
+    mov dword [tls_err], te_timeout
+    cmp byte [tcp_reset], 0
+    je .no
+    mov dword [tls_err], te_closed
+.no:
     xor eax, eax
     CLEAVE
 .ok:
     mov eax, 1
-    CLEAVE
-
-tls_rx_consume:
-    CENTER
-    mov ebx, ARG(0)
-    mov ecx, [tcp_dst_len]
-    sub ecx, ebx
-    mov [tcp_dst_len], ecx
-    mov esi, TLS_RX
-    add esi, ebx
-    mov edi, TLS_RX
-    rep movsb
     CLEAVE
 
 tls_make_nonce:
@@ -170,16 +160,18 @@ tls_read_record:
     CCALL tls_rx_need, 5
     test eax, eax
     jnz .hdr
-    cmp dword [tcp_dst_len], 0
-    jne .fail
+    call tcp_avail
+    test eax, eax
+    jnz .fail
+    cmp byte [tcp_fin_in], 0
+    je .fail
     mov byte [tls_eof], 1
     jmp .fail
 .hdr:
-    mov eax, [TLS_RX]
-    mov [tls_hdr], eax
-    mov al, [TLS_RX + 4]
-    mov [tls_hdr + 4], al
-    movzx ebx, word [TLS_RX + 3]
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_peek
+    movzx ebx, word [tls_hdr + 3]
     xchg bl, bh
     cmp ebx, REC_MAX
     ja .badrec
@@ -187,9 +179,71 @@ tls_read_record:
     CCALL tls_rx_need, eax
     test eax, eax
     jz .fail
-    CCALL c_memcpy, TLS_REC, TLS_RX + 5, ebx
+    call tls_take_record
+    CLEAVE
+.badrec:
+    mov dword [tls_err], te_record
+.fail:
+    xor eax, eax
+    CLEAVE
+
+tls_try_record:
+    CENTER
+    call tcp_avail
+    mov esi, eax
+    cmp esi, 5
+    jb .short
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_peek
+    movzx ebx, word [tls_hdr + 3]
+    xchg bl, bh
+    cmp ebx, REC_MAX
+    ja .badrec
     lea eax, [ebx + 5]
-    CCALL tls_rx_consume, eax
+    cmp esi, eax
+    jb .short
+    call tls_take_record
+    test eax, eax
+    jz .err
+    CLEAVE
+.short:
+    cmp byte [tcp_fin_in], 0
+    jne .ended
+    cmp byte [tcp_reset], 0
+    jne .closed
+    cmp byte [tcp_on], 0
+    je .closed
+    xor eax, eax
+    CLEAVE
+.ended:
+    test esi, esi
+    jnz .trunc
+    mov byte [tls_eof], 1
+    mov eax, -1
+    CLEAVE
+.trunc:
+    mov dword [tls_err], te_trunc
+    jmp .err
+.closed:
+    mov dword [tls_err], te_closed
+    jmp .err
+.badrec:
+    mov dword [tls_err], te_record
+.err:
+    mov eax, -2
+    CLEAVE
+
+tls_take_record:
+    CENTER
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_read
+    movzx ebx, word [tls_hdr + 3]
+    xchg bl, bh
+    mov edi, TLS_REC
+    mov ecx, ebx
+    call tcp_read
     mov al, [tls_hdr]
     mov [tls_rtype], al
     mov [tls_rlen], ebx
@@ -229,10 +283,6 @@ tls_read_record:
     CLEAVE
 .badmac:
     mov dword [tls_err], te_mac
-    jmp .fail
-.badrec:
-    mov dword [tls_err], te_record
-.fail:
     xor eax, eax
     CLEAVE
 
@@ -270,7 +320,12 @@ tls_send_record:
     lea ecx, [ebx + 5 + 16]
 .send:
     mov esi, TLS_TXB
-    call tcp_send_all
+    call tcp_send
+    mov eax, 1
+    jnc .sent
+    mov dword [tls_err], te_send
+    xor eax, eax
+.sent:
     CLEAVE
 
 tls_transcript:
@@ -492,6 +547,8 @@ tls_connect:
     jc .named
     mov byte [tls_sni], 0
 .named:
+    mov byte [tls_live], 0
+    mov dword [tls_pt_len], 0
     mov eax, ARG(1)
     mov ebx, ARG(2)
     call tcp_connect
@@ -499,9 +556,6 @@ tls_connect:
     mov dword [tls_err], te_connect
     jmp .fail
 .tcp_ok:
-    mov edi, TLS_RX
-    mov ecx, TLS_RX_CAP
-    call tcp_set_dst
     CCALL rand_bytes, tls_crandom, 32
     CCALL rand_bytes, tls_sid, 32
     CCALL rand_bytes, tls_priv, 32
@@ -618,20 +672,26 @@ tls_connect:
 
     mov esi, ccs_record
     mov ecx, 6
-    call tcp_send_all
+    call tcp_send
     CCALL hkdf_expand_label, tls_c_hs, lbl_finished, tls_zero, 0, tls_fkey, 32
     CCALL hmac_sha256, tls_fkey, 32, tls_hash, 32, tls_finmsg + 4
     mov dword [tls_finmsg], 0x20000014
     mov byte [tls_wkey_on], 1
     CCALL tls_send_record, 22, tls_finmsg, 36
+    test eax, eax
+    jz .fail
     CCALL tls_key_install, tls_wkey, tls_c_ap
     CCALL tls_key_install, tls_rkey, tls_s_ap
+    mov dword [tls_hs_len], 0
+    mov dword [tls_hs_pos], 0
+    mov dword [tls_pt_len], 0
+    mov byte [tls_live], 1
     mov eax, 1
     CLEAVE
 .badfin:
     mov dword [tls_err], te_finished
 .fail:
-    call tcp_close
+    call tcp_abort
     xor eax, eax
     CLEAVE
 
@@ -649,76 +709,140 @@ tls_write:
     push ecx
     CCALL tls_send_record, 23, esi, ecx
     pop ecx
+    test eax, eax
+    jz .fail
     add esi, ecx
     jmp .l
 .done:
+    mov eax, 1
+.fail:
     CLEAVE
 
-https_get:
+tls_close_notify:
     CENTER
-    CCALL tls_connect, dword ARG(0), dword ARG(1), dword ARG(2)
-    test eax, eax
-    jz .fail
-    mov edi, SCRATCH
-    mov esi, http_get_str
-    call str_copy_noterm
-    mov esi, ARG(3)
-    call str_copy_noterm
-    mov esi, http_ver_str
-    call str_copy_noterm
-    mov esi, ARG(0)
-    call str_copy_noterm
-    mov esi, http_tail_str
-    call str_copy_noterm
-    mov ecx, edi
-    sub ecx, SCRATCH
-    CCALL tls_write, SCRATCH, ecx
-    mov dword [pkg_len], 0
-    call http_complete_reset
-.read:
-    call tls_read_record
-    test eax, eax
-    jz .end
+    cmp byte [tls_live], 0
+    je .r
+    mov byte [tls_live], 0
+    cmp byte [tcp_reset], 0
+    jne .r
+    CCALL tls_send_record, 21, tls_cn_alert, 2
+.r: CLEAVE
+
+tls_recv:
+    CENTER
+.l: mov ecx, [tls_pt_len]
+    test ecx, ecx
+    jz .record
+    cmp dword ARG(1), 0
+    je .zero
+    cmp ecx, ARG(1)
+    jbe .n
+    mov ecx, ARG(1)
+.n: mov esi, [tls_pt_ptr]
+    mov edi, ARG(0)
+    mov eax, ecx
+    call net_copy
+    mov [tls_pt_ptr], esi
+    sub [tls_pt_len], eax
+    CLEAVE
+.zero:
+    xor eax, eax
+    CLEAVE
+.record:
+    cmp byte [tls_eof], 0
+    jne .eof
+    call tls_try_record
+    cmp eax, 1
+    jne .r
     mov al, [tls_rtype]
+    cmp al, 23
+    je .data
     cmp al, 21
     je .alert
-    cmp al, 23
-    jne .read
-    mov ecx, [tls_rlen]
-    mov edi, [pkg_len]
-    mov eax, PKG_BUF_SIZE - 1
-    sub eax, edi
-    cmp ecx, eax
-    jbe .fits
-    mov ecx, eax
-.fits:
-    add [pkg_len], ecx
-    add edi, PKG_BUF
-    mov esi, TLS_REC
-    rep movsb
-    mov esi, PKG_BUF
-    mov ecx, [pkg_len]
-    call http_is_complete
-    jc .read
-    jmp .done
+    cmp al, 22
+    jne .l
+    call tls_post_handshake
+    test eax, eax
+    jnz .l
+    mov eax, -2
+    CLEAVE
+.data:
+    mov dword [tls_pt_ptr], TLS_REC
+    mov eax, [tls_rlen]
+    mov [tls_pt_len], eax
+    jmp .l
 .alert:
     cmp dword [tls_alert], 0
-    je .done
+    jne .bad_alert
+    mov byte [tls_eof], 1
+.eof:
+    mov eax, -1
+    CLEAVE
+.bad_alert:
     mov dword [tls_err], te_alert
-    jmp .fail
-.end:
-    cmp byte [tls_eof], 0
-    jne .done
-    cmp dword [pkg_len], 0
-    je .fail
-.done:
-    call tcp_close
-    mov edi, [pkg_len]
-    mov byte [PKG_BUF + edi], 0
-    call http_parse
+    mov eax, -2
+.r: CLEAVE
+
+tls_post_handshake:
+    CENTER
+    mov ecx, [tls_rlen]
+    mov edi, [tls_hs_len]
+    lea eax, [edi + ecx]
+    cmp eax, TLS_HS_CAP
+    ja .big
+    mov [tls_hs_len], eax
+    add edi, TLS_HS
+    mov esi, TLS_REC
+    call net_copy
+.msg:
+    mov eax, [tls_hs_len]
+    cmp eax, 4
+    jb .keep
+    movzx ecx, byte [TLS_HS + 1]
+    shl ecx, 8
+    mov cl, [TLS_HS + 2]
+    shl ecx, 8
+    mov cl, [TLS_HS + 3]
+    add ecx, 4
+    cmp eax, ecx
+    jb .keep
+    cmp byte [TLS_HS], 24
+    jne .drop
+    cmp ecx, 5
+    jne .bad
+    movzx ebx, byte [TLS_HS + 4]
+    cmp ebx, 1
+    ja .bad
+    push ecx
+    CCALL hkdf_expand_label, tls_s_ap, lbl_upd, tls_zero, 0, tls_s_ap, 32
+    CCALL tls_key_install, tls_rkey, tls_s_ap
+    pop ecx
+    test ebx, ebx
+    jz .drop
+    push ecx
+    mov dword [tls_ku_msg], 0x01000018
+    mov byte [tls_ku_msg + 4], 0
+    CCALL tls_send_record, 22, tls_ku_msg, 5
+    CCALL hkdf_expand_label, tls_c_ap, lbl_upd, tls_zero, 0, tls_c_ap, 32
+    CCALL tls_key_install, tls_wkey, tls_c_ap
+    pop ecx
+.drop:
+    mov eax, [tls_hs_len]
+    sub eax, ecx
+    mov [tls_hs_len], eax
+    lea esi, [TLS_HS + ecx]
+    mov edi, TLS_HS
+    mov ecx, eax
+    rep movsb
+    jmp .msg
+.keep:
     mov eax, 1
     CLEAVE
-.fail:
-    call tcp_close
+.big:
+    mov dword [tls_err], te_bigmsg
+    xor eax, eax
+    CLEAVE
+.bad:
+    mov dword [tls_err], te_unexp
     xor eax, eax
     CLEAVE

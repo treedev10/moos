@@ -176,6 +176,118 @@ efi_mouse_init:
     mov [mouse_y], eax
     ret
 
+BIG_MAX     equ 64
+OWN_SYSTEM  equ 0
+OWN_SOUND   equ 16
+OWN_NET     equ 17
+OWN_MEDIA   equ 18
+OWN_IMAGES  equ 19
+
+section .bss
+alignb 4
+big_addr    resd BIG_MAX
+big_size    resd BIG_MAX
+big_owner   resd BIG_MAX
+big_total   resd 1
+section .text
+
+big_alloc:
+    pushad
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    jne .fail
+    test ecx, ecx
+    jz .fail
+    xor esi, esi
+.slot:
+    cmp dword [big_addr + esi * 4], 0
+    je .have_slot
+    inc esi
+    cmp esi, BIG_MAX
+    jb .slot
+    jmp .fail
+.have_slot:
+    lea ebx, [ecx + 4095]
+    shr ebx, 12
+    mov eax, efi_allocpages64
+    call efi64
+    test eax, eax
+    jz .fail
+    mov [big_addr + esi * 4], eax
+    mov ecx, ebx
+    shl ecx, 12
+    mov [big_size + esi * 4], ecx
+    mov [big_owner + esi * 4], edx
+    add [big_total], ecx
+    mov edi, eax
+    shr ecx, 2
+    push eax
+    xor eax, eax
+    rep stosd
+    pop eax
+    mov [esp + 28], eax
+    popad
+    ret
+.fail:
+    popad
+    xor eax, eax
+    ret
+
+big_free:
+    pushad
+    test eax, eax
+    jz .done
+    xor esi, esi
+.find:
+    cmp [big_addr + esi * 4], eax
+    je .found
+    inc esi
+    cmp esi, BIG_MAX
+    jb .find
+    jmp .done
+.found:
+    mov ebx, eax
+    mov ecx, [big_size + esi * 4]
+    sub [big_total], ecx
+    shr ecx, 12
+    mov dword [big_addr + esi * 4], 0
+    mov eax, efi_freepages64
+    call efi64
+.done:
+    popad
+    ret
+
+big_free_owner:
+    pushad
+    xor esi, esi
+.l: mov eax, [big_addr + esi * 4]
+    test eax, eax
+    jz .n
+    cmp [big_owner + esi * 4], edx
+    jne .n
+    call big_free
+.n: inc esi
+    cmp esi, BIG_MAX
+    jb .l
+    popad
+    ret
+
+big_owned:
+    push ecx
+    push esi
+    xor eax, eax
+    xor esi, esi
+.l: cmp dword [big_addr + esi * 4], 0
+    je .n
+    cmp [big_owner + esi * 4], edx
+    jne .n
+    add eax, [big_size + esi * 4]
+.n: inc esi
+    cmp esi, BIG_MAX
+    jb .l
+    pop esi
+    pop ecx
+    ret
+
 efi_mouse_poll:
     cmp byte [mouse_ok], 0
     je .r
@@ -202,6 +314,33 @@ bits 64
 efi_tick:
     inc dword [rel ticks]
     ret
+
+efi_allocpages64:
+    ENTER64
+    mov eax, 0xFFFFFFFF
+    mov [rel efi_tmp], rax
+    mov rax, [rel bootinfo + BI.bs]
+    mov ecx, 1
+    mov edx, 2
+    mov r8d, ebx
+    lea r9, [rel efi_tmp]
+    call [rax + 40]
+    test rax, rax
+    jnz .no
+    mov rax, [rel efi_tmp]
+    LEAVE64
+.no:
+    xor eax, eax
+    LEAVE64
+
+efi_freepages64:
+    ENTER64
+    mov edx, ecx
+    mov ecx, ebx
+    mov rax, [rel bootinfo + BI.bs]
+    call [rax + 48]
+    xor eax, eax
+    LEAVE64
 
 efi_readkey64:
     ENTER64
@@ -261,7 +400,7 @@ efi_disk64:
     jz .error
     cmp ebx, 2
     je .flush
-    lea rdi, [rel kbase + 0x90000]
+    lea rdi, [rel kbase + BOUNCE_OFF - 0x10000]
     cmp ebx, 1
     jne .read
     mov rsi, r15
@@ -272,7 +411,7 @@ efi_disk64:
     mov edx, [rax]
     mov r8, r14
     mov r9, r13
-    lea rax, [rel kbase + 0x90000]
+    lea rax, [rel kbase + BOUNCE_OFF - 0x10000]
     mov [rsp + 32], rax
     call [r12 + 32]
     test rax, rax
@@ -284,12 +423,12 @@ efi_disk64:
     mov edx, [rax]
     mov r8, r14
     mov r9, r13
-    lea rax, [rel kbase + 0x90000]
+    lea rax, [rel kbase + BOUNCE_OFF - 0x10000]
     mov [rsp + 32], rax
     call [r12 + 24]
     test rax, rax
     jnz .error
-    lea rsi, [rel kbase + 0x90000]
+    lea rsi, [rel kbase + BOUNCE_OFF - 0x10000]
     mov rdi, r15
     mov rcx, r13
     rep movsb

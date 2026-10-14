@@ -80,6 +80,20 @@ str_copy:
     pop eax
     ret
 
+str_copy_noterm:
+    push eax
+    push esi
+.l: mov al, [esi]
+    test al, al
+    jz .e
+    mov [edi], al
+    inc edi
+    inc esi
+    jmp .l
+.e: pop esi
+    pop eax
+    ret
+
 str_append:
     push eax
     push esi
