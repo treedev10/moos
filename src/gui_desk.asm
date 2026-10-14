@@ -1732,14 +1732,14 @@ desk_draw:
     add edx, 12
     TEXT ecx, edx, gui_sub, 0xD8E4EA, -1
     add dword [iv_ly], 30 + 10
-    xor ebp, ebp
+    xor edi, edi                    ; (EDI: TEXT changes EBP)
 .hint:
-    mov esi, [dk_hints + ebp * 4]
+    mov esi, [dk_hints + edi * 4]
     test esi, esi
     jz .mouse
     TEXT [iv_lx], [iv_ly], esi, 0xD8E4EA, -1
     add dword [iv_ly], 18
-    inc ebp
+    inc edi
     jmp .hint
 .mouse:
     cmp byte [mouse_ok], 0

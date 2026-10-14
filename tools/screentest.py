@@ -79,7 +79,10 @@ def kernel_symbols(names):
         for line in open(os.path.join(tmp, 'k.map')):
             parts = line.split()
             if len(parts) == 3 and parts[2] in names:
-                found[parts[2]] = int(parts[0], 16)
+                try:
+                    found[parts[2]] = int(parts[0], 16)
+                except ValueError:      # (a heading line of the map)
+                    pass
         return found
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
