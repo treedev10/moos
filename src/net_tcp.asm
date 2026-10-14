@@ -12,7 +12,9 @@
 ;             segment that arrives after a gap is put straight into its place
 ;             in the ring and remembered as a range (up to 8 ranges); a
 ;             duplicate ACK goes back at once, so the sender soon resends the
-;             missing part. When the gap is filled, the ranges join on.
+;             missing part; when the server takes SACK (RFC 2018), the ACK
+;             also lists the ranges we hold, so it resends only what is
+;             missing. When the gap is filled, the ranges join on.
 ;             Data is acknowledged every second full segment, and at the end
 ;             of each batch of frames.
 ;  Sending    Our bytes wait in a 64 KB ring (TCP_SBUF) until they are
@@ -23,8 +25,8 @@
 ;             again and the timeout doubles; after 8 tries the connection has
 ;             failed. Our FIN is retransmitted the same way, and a zero window
 ;             is probed with one byte.
-;  Opening    SYN with our MSS (1460) and a window scale, sent up to 4 times
-;             (waiting 1, 2, 4, 4 s).
+;  Opening    SYN with our MSS (1460), a window scale and SACK-permitted,
+;             sent up to 4 times (waiting 1, 2, 4, 4 s).
 ;  Closing    The server's FIN ends its data; tcp_close queues ours.
 ;             tcp_abort sends a RST (when we stop reading early).
 ;  Checking   IP and TCP checksums, addresses and ports of every segment. A
@@ -92,6 +94,7 @@ rcv_adv         resd 1                  ; window last advertised, in bytes
 fin_seq         resd 1                  ; where the server's FIN is (fin_known)
 ack_owed        resd 1                  ; bytes taken but not yet acknowledged
 ooo_n           resd 1                  ; out-of-order ranges [start, end)
+ooo_recent      resd 1                  ; start of the segment that came last
 ooo_s           resd OOO_MAX + 1
 ooo_e           resd OOO_MAX + 1
 ; --- timers
@@ -133,11 +136,12 @@ rtt_on          resb 1
 rtt_have        resb 1                  ; tcp_srtt8 holds a measurement
 snd_shift       resb 1                  ; the server's window scale
 rcv_shift       resb 1                  ; ours (0 unless the server agreed)
+sack_ok         resb 1                  ; the server takes SACK blocks
 ack_now         resb 1                  ; send an ACK before returning
 tcp_force       resb 1                  ; tcp_output may probe a zero window
 tcp_opt_len     resb 1                  ; options for the next segment sent
 tcp_loss        resb 1                  ; "net loss": percent of segments lost
-tcp_opts        resb 12
+tcp_opts        resb 40
 alignb 4
 tcp_lrand       resd 1                  ; its random numbers
 
@@ -426,6 +430,7 @@ tcp_send_ack:
     push eax
     push ebx
     push ecx
+    call tcp_sack_opts                  ; (what came after a gap)
     mov al, TCP_ACK
     mov ebx, [snd_nxt]
     xor ecx, ecx
@@ -437,12 +442,75 @@ tcp_send_ack:
     pop eax
 .r: ret
 
-; tcp_send_syn: (re)send our SYN with the MSS and window-scale options
+; tcp_sack_opts: if the server takes SACK and data is waiting after a gap,
+; tcp_opts = SACK blocks for the next segment (RFC 2018): up to 4 ranges we
+; hold, the one the latest segment went into first, then the others in
+; order of position
+tcp_sack_opts:
+    cmp byte [sack_ok], 0
+    je .r
+    cmp dword [ooo_n], 0
+    je .r
+    pushad
+    mov dword [tcp_opts], 0x00050101    ; NOP, NOP, kind 5 (length below)
+    mov edi, tcp_opts + 4
+    xor edx, edx                        ; EDX = blocks written
+    mov ebp, -1                         ; EBP = the range written first
+    mov eax, [ooo_recent]
+    xor ebx, ebx
+.find:                                  ; the range holding the latest data
+    cmp ebx, [ooo_n]
+    jae .rest
+    mov ecx, eax
+    sub ecx, [ooo_s + ebx * 4]
+    js .fnext                           ; (it starts after that)
+    mov ecx, eax
+    sub ecx, [ooo_e + ebx * 4]
+    jns .fnext                          ; (it ends before that)
+    call .block
+    mov ebp, ebx
+    jmp .rest
+.fnext:
+    inc ebx
+    jmp .find
+.rest:
+    xor ebx, ebx
+.l: cmp ebx, [ooo_n]
+    jae .done
+    cmp edx, 4
+    jae .done
+    cmp ebx, ebp
+    je .n
+    call .block
+.n: inc ebx
+    jmp .l
+.done:
+    lea eax, [edx * 8 + 2]
+    mov [tcp_opts + 3], al              ; the option's length
+    add eax, 2
+    mov [tcp_opt_len], al
+    popad
+.r: ret
+; .block: range EBX as a block (two big-endian sequence numbers) at EDI
+.block:
+    mov ecx, [ooo_s + ebx * 4]
+    bswap ecx
+    mov [edi], ecx
+    mov ecx, [ooo_e + ebx * 4]
+    bswap ecx
+    mov [edi + 4], ecx
+    add edi, 8
+    inc edx
+    ret
+
+; tcp_send_syn: (re)send our SYN with the MSS, window-scale and
+; SACK-permitted options
 tcp_send_syn:
     pushad
     mov dword [tcp_opts], 0xB4050402    ; MSS = 1460 (02 04 05 B4)
     mov dword [tcp_opts + 4], RCV_WSHIFT << 24 | 0x030301   ; NOP, window scale
-    mov byte [tcp_opt_len], 8
+    mov dword [tcp_opts + 8], 0x02040101    ; NOP, NOP, SACK-permitted (4, 2)
+    mov byte [tcp_opt_len], 12
     mov al, TCP_SYN
     mov ebx, [snd_iss]
     xor ecx, ecx
@@ -700,6 +768,7 @@ tcp_connect:
     mov byte [rtt_have], 0
     mov byte [snd_shift], 0
     mov byte [rcv_shift], 0
+    mov byte [sack_ok], 0
     mov byte [ack_now], 0
     mov byte [tcp_force], 0
     mov byte [tcp_estab], 0
@@ -1259,7 +1328,8 @@ tcp_in_synsent:
     call tcp_rst_reply
 .r: ret
 
-; tcp_parse_opts: read the SYN-ACK's options (seg_hdr): MSS and window scale
+; tcp_parse_opts: read the SYN-ACK's options (seg_hdr): MSS, window scale
+; and SACK-permitted
 tcp_parse_opts:
     pushad
     mov esi, [seg_hdr]
@@ -1298,6 +1368,11 @@ tcp_parse_opts:
     mov [snd_mss], eax
     jmp .next
 .not_mss:
+    cmp al, 4                           ; SACK-permitted
+    jne .not_sack
+    mov byte [sack_ok], 1
+    jmp .next
+.not_sack:
     cmp al, 3                           ; window scale
     jne .next
     cmp ecx, 3
@@ -1516,6 +1591,7 @@ tcp_in_estab:
 ; list is full.
 ooo_add:
     pushad
+    mov [ooo_recent], ebx               ; (SACK lists its range first)
     mov ebp, [rcv_nxt]
     sub ebx, ebp                        ; work with offsets from rcv_nxt
     sub eax, ebp

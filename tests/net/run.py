@@ -5,11 +5,14 @@ starts tests/net/server.py on free ports, types commands and checks what
 MOOS prints (and what the server saw).
 
     python3 tests/net/run.py [--uefi] [--nic MODEL] [--native] [--keep]
-                             [--pcap FILE] [--list] [TEST ...]
+                             [--pcap FILE] [--tap] [--list] [TEST ...]
 
 With no TEST names every test runs. --native makes "net up native" (under
 --uefi the firmware's own driver is used otherwise). --list shows the tests.
 --pcap FILE records every frame (look at it with tests/net/pcap.py).
+--tap connects QEMU to this computer's own TCP/IP stack through a tap
+device (tap.py; needs root) instead of QEMU's user networking, so MOOS's
+TCP is tested against Linux's (window scaling, SACK, fast retransmit).
 Each test prints PASS or FAIL; on a failure the screen is shown.
 Results of the speed tests are printed as "SPEED ...".
 """
@@ -50,7 +53,7 @@ def unwrap(rows):
 
 
 class Moos:
-    def __init__(self, uefi, nic, image, pcap=None):
+    def __init__(self, uefi, nic, image, pcap=None, netdev='user,id=n0'):
         self.tmp = tempfile.mkdtemp(prefix='moosnet')
         disk = os.path.join(self.tmp, 'disk.img')
         shutil.copy(image, disk)
@@ -59,7 +62,7 @@ class Moos:
         cmd = [qemu_path(), '-drive', 'file=%s,format=raw,index=0,media=disk' % disk,
                '-m', str(mem), '-rtc', 'base=utc', '-display', 'none', '-cpu', 'max',
                '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port,
-               '-netdev', 'user,id=n0', '-device', nic + ',netdev=n0']
+               '-netdev', netdev, '-device', nic + ',netdev=n0']
         if pcap:            # every frame MOOS sends and gets (tests/net/pcap.py)
             cmd += ['-object', 'filter-dump,id=f0,netdev=n0,file=' + pcap]
         if uefi:
@@ -170,7 +173,7 @@ def t_hello(m, s, H, S):
 def t_headers(m, s, H, S):
     out = m.run('get %s/headers' % H)
     port = H.rsplit(':', 1)[1]
-    return expect(out, 'GET /headers HTTP/1.1', 'Host: 10.0.2.2:%s' % port, 'User-Agent: MOOS/1.2',
+    return expect(out, 'GET /headers HTTP/1.1', 'Host: %s' % H.split('//')[1], 'User-Agent: MOOS/1.2',
                   'Accept: */*', 'Connection: close')
 
 
@@ -353,7 +356,7 @@ def t_longurl(m, s, H, S):
         return False, 'the server did not see the long URL'
     out = m.run('get @long.url')                 # from a file
     m_ = re.search(r'path-length=(\d+)', out)
-    want = 3900 - len('http://10.0.2.2:%s' % H.rsplit(':', 1)[1])
+    want = 3900 - len(H)
     if not m_ or int(m_.group(1)) != want:
         return False, 'long URL from a file not sent whole: %s (want %d)' % (
             m_.group(0) if m_ else '?', want)
@@ -410,30 +413,39 @@ def t_fetch_big(m, s, H, S):
 
 @test
 def t_loss(m, s, H, S):
-    m.run('net loss 10')
+    # QEMU's user networking does TCP itself, simply: it resends only after
+    # a timeout (1.5 s, doubling), so heavy loss makes it crawl. Through
+    # --tap the server is Linux (fast retransmit, SACK) and takes more.
+    pct, down, up, tls = (10, 1500000, 200000, 800000) if TAP else (3, 400000, 100000, 200000)
+    m.run('net loss %d' % pct)
     try:
-        out = m.run('nettest %s/gen/1500000' % H, timeout=240)
-        ok, why = nettest_ok(out, gen_bytes(1500000))
+        t0 = time.time()
+        out = m.run('nettest %s/gen/%d' % (H, down), timeout=300)
+        ok, why = nettest_ok(out, gen_bytes(down))
+        print('   %d%% loss: %d bytes in %.1f s' % (pct, down, time.time() - t0))
         if not ok:
             return ok, 'download: ' + why
-        n = 200000
-        m.run('nettest -p %d %s/echo' % (n, H), timeout=240)
-        want = 'POST body %d bytes, sha256 %s' % (n, sha(pattern(n)))
+        m.run('nettest -p %d %s/echo' % (up, H), timeout=300)
+        want = 'POST body %d bytes, sha256 %s' % (up, sha(pattern(up)))
         if want not in s.text():
             return False, 'upload under loss: the server did not get the right body'
-        out = m.run('nettest -k %s/gen/800000' % S, timeout=240)
-        ok, why = nettest_ok(out, gen_bytes(800000))
+        out = m.run('nettest -k %s/gen/%d' % (S, tls), timeout=300)
+        ok, why = nettest_ok(out, gen_bytes(tls))
         if not ok:
             return ok, 'https: ' + why
-        out = m.run('get %s/chunked/100000 lc.bin' % H, timeout=120)
+        out = m.run('get %s/chunked/100000 lc.bin' % H, timeout=200)
         return expect(out, 'HTTP 200, 100000 bytes')
     finally:
         m.run('net loss 0')
 
 
+TAP = False
+
+
 def main():
     args = sys.argv[1:]
     uefi, nic, native, keep, image, pcap = False, 'rtl8139', False, False, IMAGE, None
+    use_tap = False
     while args and args[0].startswith('--'):
         a = args.pop(0)
         if a == '--uefi':
@@ -451,11 +463,20 @@ def main():
             image = args.pop(0)
         elif a == '--pcap':
             pcap = args.pop(0)
+        elif a == '--tap':
+            use_tap = True
     names = args or [n for n, _ in TESTS]
     os.makedirs(DATA, exist_ok=True)
     srv = Server()
-    H = 'http://10.0.2.2:%d' % srv.port
-    S = 'https://10.0.2.2:%d' % srv.tls_port
+    tap, netdev, host = None, 'user,id=n0', '10.0.2.2'
+    if use_tap:             # MOOS <-> this computer's own TCP (tap.py)
+        global TAP
+        TAP = True
+        import tap as tapmod
+        tap = tapmod.Tap(srv.port % 200 + 20)
+        netdev, host = tap.qemu_netdev(), tap.host
+    H = 'http://%s:%d' % (host, srv.port)
+    S = 'https://%s:%d' % (host, srv.tls_port)
     # files for the long-URL test, put into a copy of the image
     img = os.path.join(DATA, 'seeded-%d.img' % srv.port)
     long_url = '%s/headers?x=' % H
@@ -465,7 +486,7 @@ def main():
     failed = []
     m = None
     try:
-        m = Moos(uefi, nic, img, pcap)
+        m = Moos(uefi, nic, img, pcap, netdev)
         out = m.run('net up native' if native else 'net up', timeout=60)
         print(out.split('\n')[1:6] if 'Connected' not in out else 'network up')
         if 'Connected' not in out:
@@ -487,6 +508,8 @@ def main():
         if m:
             m.close()
         srv.close()
+        if tap:
+            tap.close()
         if not keep:
             os.remove(img)
     print('%d passed, %d failed %s' % (len(names) - len(failed), len(failed), ' '.join(failed)))

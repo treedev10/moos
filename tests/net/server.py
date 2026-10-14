@@ -4,7 +4,8 @@ Test web server for MOOS's network stack (HTTP/1.1 and HTTPS).
 
     python3 tests/net/server.py [--port 8080] [--tls-port 8443] [--big MB]
 
-Serves, from the QEMU guest's point of view at http://10.0.2.2:PORT/ :
+Serves, from the QEMU guest's point of view at http://10.0.2.2:PORT/ (or
+http://10.9.N.1:PORT/ with run.py --tap):
 
     /hello                 a short text
     /file/NAME             a file from build/nettest/ (Range requests: 206 +
@@ -313,9 +314,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def r_longurl(self, parts, q):
         n = int(parts[0])
-        base = 'http://10.0.2.2:%d/headers?x=' % self.server.server_port
+        host = self.headers.get('Host', '10.0.2.2:%d' % self.server.server_port)
+        base = 'http://%s/headers?x=' % host
         if getattr(self.server, 'tls', False):
-            base = 'https://10.0.2.2:%d/headers?x=' % self.server.server_port
+            base = 'https://%s/headers?x=' % host
         loc = base + 'A' * max(0, n - len(base))
         self.send_response(302)
         self.send_header('Location', loc)
@@ -324,10 +326,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def r_cookies(self, parts, q):
         what = parts[0] if parts else ''
+        host = self.headers.get('Host', '10.0.2.2').split(':')[0]
         if what == 'set':
             hdrs = [('Set-Cookie', 'plain=1'),
                     ('Set-Cookie', 'withpath=2; Path=/cookies/sub'),
-                    ('Set-Cookie', 'domain=3; Domain=10.0.2.2'),
+                    ('Set-Cookie', 'domain=3; Domain=' + host),
                     ('Set-Cookie', 'session=abc def; HttpOnly'),
                     ('Set-Cookie', 'secure=4; Secure'),
                     ('Set-Cookie', 'maxage=5; Max-Age=3600'),

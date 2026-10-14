@@ -92,6 +92,7 @@ def main():
     t0 = None
     base = {}            # (ip, port) -> its initial sequence number
     stats = {}
+    moos_ip = None
     for s in segments(path):
         t, sip, sp, dip, dp, seq, ack, fl, win, ln, opts = s
         if port and port not in (sp, dp):
@@ -99,7 +100,9 @@ def main():
         if t0 is None:
             t0 = t
         rel = t - t0
-        moos = sip[3] == 15            # QEMU gives the guest 10.0.2.15
+        if fl & 18 == 2 and moos_ip is None:
+            moos_ip = sip               # MOOS is the side that sends a SYN
+        moos = sip == moos_ip if moos_ip else sip[3] in (2, 15)
         key = (sp, dp) if moos else (dp, sp)   # (MOOS port, server port)
         me = (sip, sp)
         if fl & 2:
