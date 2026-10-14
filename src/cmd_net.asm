@@ -409,13 +409,14 @@ nc_sub      resb 1
 section .text
 
 ; ------------------------------------------------------------- nettest
-; nettest [-k] [-n] [-r START-END] <url|@file>
+; nettest [-k] [-n] [-r START-END] [-p SIZE] <url|@file>
 ; Downloads a URL with the stream API (hs_open, then hs_read until the end),
 ; the way a media player reads a video, and reports the size, the time, the
 ; speed and the SHA-256 of what came - compare it with "sha256sum" of the
 ; server's copy. -k skips the certificate check (testing only), -n skips
-; the hash (to time the network alone), -r asks for a part of the file.
-; Esc stops it.
+; the hash (to time the network alone), -r asks for a part of the file,
+; -p POSTs SIZE bytes of a test pattern first (byte i is the top 8 bits of
+; i x 2654435761, as 32-bit arithmetic), to test sending. Esc stops it.
 NT_BUF      equ SCRATCH                 ; each hs_read goes here
 NT_BUF_SIZE equ SCRATCH_SIZE
 
@@ -429,6 +430,7 @@ nt_t1       resd 1
 nt_shown    resd 1                      ;   last progress line,
 nt_keyt     resd 1                      ;   last look at the keyboard
 nt_bytes    resd 1
+nt_post     resd 1                      ; -p SIZE (0 = a GET)
 nt_nohash   resb 1
 alignb 4
 nt_sha      resb SHA_CTX
@@ -436,6 +438,8 @@ nt_digest   resb 32
 
 section .data
 str_dash_n  db "-n", 0
+str_dash_p  db "-p", 0
+nt_octets   db "application/octet-stream", 0
 nt_hex      db "0123456789abcdef"
 
 section .text
@@ -445,6 +449,7 @@ cmd_nettest:
     mov byte [nt_nohash], 0
     mov dword [nt_rs], -1
     mov dword [nt_re], -1
+    mov dword [nt_post], 0
     mov ebx, 1                          ; argument index
 .opt:
     cmp ebx, [argc]
@@ -464,6 +469,21 @@ cmd_nettest:
     inc ebx
     jmp .opt
 .not_n:
+    mov edi, str_dash_p
+    call str_icmp
+    jne .not_p
+    inc ebx                             ; -p SIZE
+    cmp ebx, [argc]
+    jae .usage
+    mov esi, [argv + ebx * 4]
+    call parse_uint
+    jc .usage
+    cmp eax, PKG_BUF_SIZE
+    ja .usage
+    mov [nt_post], eax
+    inc ebx
+    jmp .opt
+.not_p:
     mov edi, str_dash_r
     call str_icmp
     jne .url
@@ -498,6 +518,21 @@ cmd_nettest:
     mov [url_range_start], eax
     mov eax, [nt_re]
     mov [url_range_end], eax
+    mov ecx, [nt_post]                  ; -p: the body to send
+    jecxz .get
+    xor ebx, ebx
+.pat:
+    imul eax, ebx, 2654435761           ; (the test pattern)
+    shr eax, 24
+    mov [PKG_BUF + ebx], al
+    inc ebx
+    cmp ebx, ecx
+    jb .pat
+    mov dword [url_method], 1
+    mov dword [url_body], PKG_BUF
+    mov [url_body_len], ecx
+    mov dword [url_body_type], nt_octets
+.get:
     mov eax, [ticks]
     mov [nt_t0], eax
     mov esi, [nt_url]
@@ -571,7 +606,7 @@ cmd_nettest:
     PRINTF `\x01rerror:\x01n %s\n`, dword [url_err]
     ret
 .usage:
-    PRINTF `Usage: \x01wnettest\x01n [-k] [-n] [-r START-END] <url|@file>\n`
+    PRINTF `Usage: \x01wnettest\x01n [-k] [-n] [-r START-END] [-p SIZE] <url|@file>\n`
     ret
 
 ; nt_line_start: back to the start of the progress line (text screen only)

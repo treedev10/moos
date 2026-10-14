@@ -107,6 +107,7 @@ hx_up           resb 1                  ; 1 = a request's connection is open
 hs_state        resb 1                  ; HS_*
 hb_done         resb 1                  ; 1 = all of the body has been read
 http_has_clen   resb 1                  ; 1 = the reply had a Content-Length
+http_loc_long   resb 1                  ; 1 = its Location was over 4 KB
 url_truncated   resb 1                  ; 1 = url_fetch cut the body to fit
 url_probe       resb 1                  ; (url_fetch: is there more?)
 http_date       resb 40                 ; Date:
@@ -727,6 +728,7 @@ http_reply_reset:
     mov [http_total], eax
     mov [hb_pre_len], eax
     mov [http_has_clen], al
+    mov [http_loc_long], al
     mov [http_date], al
     mov [http_ctype], al
     mov [http_cenc], al
@@ -1111,6 +1113,13 @@ hd_on_tenc:
     jmp hd_copy
 
 hd_on_loc:
+    mov eax, edx                        ; too long to follow? then it is
+    sub eax, esi                        ; left out (http_loc_long says so)
+    cmp eax, 4096
+    jb .copy
+    mov byte [http_loc_long], 1
+    ret
+.copy:
     mov edi, http_location
     mov ecx, 4096
     jmp hd_copy
@@ -1562,6 +1571,8 @@ hs_open:
     cmp eax, 308
     jne .opened
 .redirect:
+    cmp byte [http_loc_long], 0         ; (a Location over 4 KB)
+    jne .toolong
     cmp byte [http_location], 0
     je .opened
     cmp dword [hs_redirs], HS_REDIRS
@@ -1596,6 +1607,8 @@ hs_open:
     popad
     clc
     ret
+.toolong:
+    call http_abort
 .badloc:
     mov dword [url_err], he_badloc
 .fail:
