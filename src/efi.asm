@@ -47,6 +47,9 @@ efi_far     resd 2                      ; far pointer: 64-bit routine
 efi_cur_bio resq 1                      ; Block I/O used by efi_read/write
 efi_time    resb 16                     ; EFI_TIME
 efi_key     resd 1                      ; EFI_INPUT_KEY
+efi_keyst   resd 2                      ; ... and EFI_KEY_STATE (ReadKeyStrokeEx)
+efi_keyex   resq 1                      ; Simple Text Input Ex (0 = none)
+key_mods    resd 1                      ; Shift/Ctrl/Alt with the last key
 efi_index   resq 1
 efi_tmp     resq 2
 fw_name     resb 48
@@ -90,6 +93,9 @@ guid_dev_path   dd 0x09576E91
 guid_abs_ptr    dd 0x8D59D32B
                 dw 0xC655, 0x4AE9
                 db 0x9B, 0x15, 0xF2, 0x59, 0x04, 0x99, 0x2A, 0x43
+guid_text_ex    dd 0xDD9E7534
+                dw 0x7762, 0x4698
+                db 0x8C, 0x14, 0xF5, 0x85, 0x17, 0xA6, 0x25, 0xAA
 guid_simple_ptr dd 0x31878C87
                 dw 0x0B75, 0x11D5
                 db 0x9A, 0x4F, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D
@@ -185,7 +191,10 @@ efi_list_disks:
     ret
 
 ; efi_mouse_init: find the pointer devices. mouse_ok = 1 if there is one.
+; (Also starts reading keys with their Shift / Ctrl / Alt state.)
 efi_mouse_init:
+    mov eax, efi_keyinit64
+    call efi64
     mov eax, efi_ptrinit64
     call efi64
     test eax, eax
@@ -417,9 +426,43 @@ efi_readkey64:
     xor eax, eax
     ret
 
-; efi_keypoll64: non-blocking key read -> EAX = scan<<16 | char, 0 if none
+; efi_keypoll64: non-blocking key read -> EAX = scan<<16 | char, 0 if none.
+; Through Simple Text Input Ex when the firmware has it (efi_keyinit64), so
+; that key_mods says whether Shift / Ctrl / Alt were held (for Shift+F10
+; and Ctrl+Esc on the desktop); otherwise key_mods stays 0.
 efi_keypoll64:
     ENTER64
+    mov rcx, [rel efi_keyex]
+    test rcx, rcx
+    jz .plain
+    lea rdx, [rel efi_key]
+    xor eax, eax
+    mov [rdx], eax
+    mov [rdx + 4], rax                  ; (EFI_KEY_STATE)
+    call [rcx + 8]                      ; ReadKeyStrokeEx
+    test rax, rax
+    jnz .none
+    xor edx, edx                        ; KeyShiftState -> key_mods
+    mov eax, [rel efi_keyst]
+    test eax, eax
+    jns .mods                           ; (bit 31 = the state is valid)
+    test eax, 3                         ; right / left Shift
+    jz .m1
+    or edx, KMOD_SHIFT
+.m1:
+    test eax, 0x0C                      ; right / left Ctrl
+    jz .m2
+    or edx, KMOD_CTRL
+.m2:
+    test eax, 0x30                      ; right / left Alt
+    jz .mods
+    or edx, KMOD_ALT
+.mods:
+    mov [rel key_mods], edx
+    mov eax, [rel efi_key]
+    rol eax, 16
+    LEAVE64
+.plain:
     mov rcx, [rel bootinfo + BI.conin]
     lea rdx, [rel efi_key]
     mov dword [rdx], 0
@@ -430,6 +473,26 @@ efi_keypoll64:
     rol eax, 16
     LEAVE64
 .none:
+    xor eax, eax
+    LEAVE64
+
+; efi_keyinit64: find Simple Text Input Ex on the console's input handle
+; -> efi_keyex (0 if the firmware does not offer it)
+efi_keyinit64:
+    ENTER64
+    mov qword [rel efi_keyex], 0
+    mov rcx, [rel bootinfo + BI.systab]
+    mov rcx, [rcx + 40]                 ; ConsoleInHandle
+    lea rdx, [rel guid_text_ex]
+    lea r8, [rel efi_tmp]
+    mov qword [r8], 0
+    mov rax, [rel bootinfo + BI.bs]
+    call [rax + 152]                    ; HandleProtocol
+    test rax, rax
+    jnz .done
+    mov rax, [rel efi_tmp]
+    mov [rel efi_keyex], rax
+.done:
     xor eax, eax
     LEAVE64
 
@@ -851,8 +914,8 @@ ptr_abs_apply:
     mov r10d, [rel gfx_h]
     call .map
     mov [rel mouse_y], eax
-    mov eax, [rel ptr_state + 24]       ; ActiveButtons (bit 0 = touch / left)
-    and eax, 1
+    mov eax, [rel ptr_state + 24]       ; ActiveButtons: bit 0 = touch / left,
+    and eax, 3                          ; bit 1 = the second (right) button
     mov [rel mouse_btn], eax
     mov rax, [rcx + 16]                 ; a wheel: MinZ < MaxZ
     cmp rax, [rcx + 40]
@@ -910,8 +973,12 @@ ptr_rel_apply:
     mov r10d, [rel gfx_h]
     call .clamp
     mov [rel mouse_y], eax
-    movzx eax, byte [rel ptr_state + 12] ; LeftButton
+    movzx eax, byte [rel ptr_state + 13] ; RightButton -> bit 1,
     and eax, 1
+    add eax, eax
+    movzx edx, byte [rel ptr_state + 12] ; LeftButton -> bit 0
+    and edx, 1
+    or eax, edx
     mov [rel mouse_btn], eax
     mov eax, [rel ptr_state + 8]        ; the wheel (RelativeMovementZ)
     add [rel mouse_wheel], eax
