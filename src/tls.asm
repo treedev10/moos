@@ -12,10 +12,16 @@
 ;    check the Finished MAC, the certificate chain and the signature
 ;    -> {Finished}  then application data with the traffic keys.
 ;
+;  Records come out of the TCP receive ring (net_tcp.asm) whole: a record
+;  (up to 16 KB + 256 bytes) is taken only when all of it has arrived, then
+;  decrypted in place in TLS_REC. tls_read_record waits for one (the
+;  handshake); tls_try_record and tls_recv never wait, so a stream can be
+;  read a little at a time while the records straddle the reads (hs_read in
+;  net_http.asm). After the handshake the server may send NewSessionTicket
+;  (ignored) and KeyUpdate (the read key moves on; if asked, so does ours).
+;
 ;  C-style calls (CCALL) throughout; see macros.inc.
 ; =============================================================================
-TLS_RX      equ TLS_BASE + 0x00000      ; TCP byte stream from the server (32K)
-TLS_RX_CAP  equ 0x8000
 TLS_REC     equ TLS_BASE + 0x08000      ; one record, decrypted in place
 TLS_HS      equ TLS_BASE + 0x0C800      ; the server's handshake messages (32K)
 TLS_HS_CAP  equ 0x8000
@@ -64,6 +70,7 @@ tls_verify      resb 1                  ; 1 = check the certificate
 tls_debug       resb 1                  ; 1 = print each record (get -v)
 tls_got_ver     resb 1
 tls_got_ks      resb 1
+tls_live        resb 1                  ; 1 = application keys are in use
 alignb 4
 tls_rlen        resd 1
 tls_hs_len      resd 1
@@ -82,6 +89,9 @@ tls_cert_len    resd 1
 tls_cv_msg      resd 1                  ; the CertificateVerify message
 tls_cv_len      resd 1
 tls_cv_hash     resb 32                 ; transcript hash it signs
+tls_pt_ptr      resd 1                  ; application data not yet read:
+tls_pt_len      resd 1                  ;   where it is in TLS_REC, how much
+tls_ku_msg      resb 8                  ; our KeyUpdate message
 
 section .data
 hrr_random  db 0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02
@@ -119,46 +129,34 @@ te_finished db "the server's Finished check failed (connection tampered?)", 0
 te_bigmsg   db "handshake too large", 0
 te_clientcert db "the server wants a client certificate (not supported)", 0
 te_nocert   db "the server sent no certificate", 0
+te_trunc    db "the connection ended in the middle of a TLS record", 0
+te_send     db "could not send to the server", 0
+lbl_upd     db "traffic upd", 0
+tls_cn_alert db 1, 0                    ; warning, close_notify
 
 section .text
 
 ; ------------------------------------------------------------ the stream
-; tls_rx_need(n) -> EAX = 1 once n bytes are buffered, 0 on close/timeout
+; tls_rx_need(n) -> EAX = 1 once n bytes are waiting in the TCP ring, 0 if
+; the connection ended or 15 s passed with nothing arriving (tls_err set)
 tls_rx_need:
     CENTER
     mov eax, ARG(0)
-    mov [tls_need], eax
-.l: mov eax, [tcp_dst_len]
-    cmp eax, [tls_need]
-    jae .ok
-    cmp byte [tcp_closed], 0
-    jne .closed
-    mov eax, [ticks]
-    add eax, 1500                       ; 15 s
-    call tcp_pump
-    jnc .l
-    mov dword [tls_err], te_timeout
-    xor eax, eax
-    CLEAVE
-.closed:
+    mov edx, 1500                       ; 15 s
+    call tcp_wait_avail
+    jnc .ok
     mov dword [tls_err], te_closed
+    cmp eax, -1
+    je .no
+    mov dword [tls_err], te_timeout
+    cmp byte [tcp_reset], 0
+    je .no
+    mov dword [tls_err], te_closed
+.no:
     xor eax, eax
     CLEAVE
 .ok:
     mov eax, 1
-    CLEAVE
-
-; tls_rx_consume(n): drop n bytes from the front of the stream buffer
-tls_rx_consume:
-    CENTER
-    mov ebx, ARG(0)
-    mov ecx, [tcp_dst_len]
-    sub ecx, ebx
-    mov [tcp_dst_len], ecx
-    mov esi, TLS_RX
-    add esi, ebx
-    mov edi, TLS_RX
-    rep movsb
     CLEAVE
 
 ; tls_make_nonce(key): tls_nonce = IV xor record counter
@@ -189,22 +187,25 @@ tls_key_install:
 
 ; ------------------------------------------------------------- records
 ; tls_read_record -> EAX = 1 with a record in TLS_REC (tls_rtype, tls_rlen;
-; decrypted when the read key is on), 0 on error / end (tls_err, tls_eof)
+; decrypted when the read key is on), 0 on error / end (tls_err, tls_eof).
+; Waits for it (up to 15 s of silence).
 tls_read_record:
     CENTER
     CCALL tls_rx_need, 5
     test eax, eax
     jnz .hdr
-    cmp dword [tcp_dst_len], 0          ; closed between records: clean end
-    jne .fail
+    call tcp_avail                      ; closed between records: clean end
+    test eax, eax
+    jnz .fail
+    cmp byte [tcp_fin_in], 0
+    je .fail
     mov byte [tls_eof], 1
     jmp .fail
 .hdr:
-    mov eax, [TLS_RX]
-    mov [tls_hdr], eax
-    mov al, [TLS_RX + 4]
-    mov [tls_hdr + 4], al
-    movzx ebx, word [TLS_RX + 3]        ; record length (big-endian)
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_peek
+    movzx ebx, word [tls_hdr + 3]       ; record length (big-endian)
     xchg bl, bh
     cmp ebx, REC_MAX
     ja .badrec
@@ -212,9 +213,76 @@ tls_read_record:
     CCALL tls_rx_need, eax
     test eax, eax
     jz .fail
-    CCALL c_memcpy, TLS_REC, TLS_RX + 5, ebx
+    call tls_take_record
+    CLEAVE
+.badrec:
+    mov dword [tls_err], te_record
+.fail:
+    xor eax, eax
+    CLEAVE
+
+; tls_try_record -> EAX = 1 with a record (as tls_read_record), 0 if a whole
+; record has not arrived yet, -1 at a clean end (tls_eof), -2 on an error
+; (tls_err). Never waits.
+tls_try_record:
+    CENTER
+    call tcp_avail
+    mov esi, eax                        ; ESI = bytes waiting
+    cmp esi, 5
+    jb .short
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_peek
+    movzx ebx, word [tls_hdr + 3]
+    xchg bl, bh
+    cmp ebx, REC_MAX
+    ja .badrec
     lea eax, [ebx + 5]
-    CCALL tls_rx_consume, eax
+    cmp esi, eax
+    jb .short
+    call tls_take_record
+    test eax, eax
+    jz .err
+    CLEAVE
+.short:                                 ; not all here: will more come?
+    cmp byte [tcp_fin_in], 0
+    jne .ended
+    cmp byte [tcp_reset], 0
+    jne .closed
+    cmp byte [tcp_on], 0
+    je .closed
+    xor eax, eax
+    CLEAVE
+.ended:
+    test esi, esi
+    jnz .trunc
+    mov byte [tls_eof], 1               ; the server closed between records
+    mov eax, -1
+    CLEAVE
+.trunc:
+    mov dword [tls_err], te_trunc
+    jmp .err
+.closed:
+    mov dword [tls_err], te_closed
+    jmp .err
+.badrec:
+    mov dword [tls_err], te_record
+.err:
+    mov eax, -2
+    CLEAVE
+
+; tls_take_record -> EAX = 1 ok, 0 bad (tls_err): take the record (all of
+; it is in the ring) into TLS_REC and decrypt it
+tls_take_record:
+    CENTER
+    mov edi, tls_hdr
+    mov ecx, 5
+    call tcp_read
+    movzx ebx, word [tls_hdr + 3]
+    xchg bl, bh
+    mov edi, TLS_REC
+    mov ecx, ebx
+    call tcp_read
     mov al, [tls_hdr]
     mov [tls_rtype], al
     mov [tls_rlen], ebx
@@ -254,15 +322,11 @@ tls_read_record:
     CLEAVE
 .badmac:
     mov dword [tls_err], te_mac
-    jmp .fail
-.badrec:
-    mov dword [tls_err], te_record
-.fail:
     xor eax, eax
     CLEAVE
 
-; tls_send_record(type, data, len): one record, encrypted once the write key
-; is on (len <= 16384)
+; tls_send_record(type, data, len) -> EAX = 1 sent, 0 if the connection
+; broke. One record, encrypted once the write key is on (len <= 16384).
 tls_send_record:
     CENTER
     mov ebx, ARG(2)
@@ -297,7 +361,12 @@ tls_send_record:
     lea ecx, [ebx + 5 + 16]
 .send:
     mov esi, TLS_TXB
-    call tcp_send_all
+    call tcp_send
+    mov eax, 1
+    jnc .sent
+    mov dword [tls_err], te_send
+    xor eax, eax
+.sent:
     CLEAVE
 
 ; tls_transcript(out32): hash of the handshake so far
@@ -529,6 +598,8 @@ tls_connect:
     jc .named
     mov byte [tls_sni], 0
 .named:
+    mov byte [tls_live], 0
+    mov dword [tls_pt_len], 0
     mov eax, ARG(1)                     ; TCP connection
     mov ebx, ARG(2)
     call tcp_connect
@@ -536,9 +607,6 @@ tls_connect:
     mov dword [tls_err], te_connect
     jmp .fail
 .tcp_ok:
-    mov edi, TLS_RX
-    mov ecx, TLS_RX_CAP
-    call tcp_set_dst
     CCALL rand_bytes, tls_crandom, 32   ; fresh randomness and key pair
     CCALL rand_bytes, tls_sid, 32
     CCALL rand_bytes, tls_priv, 32
@@ -655,24 +723,31 @@ tls_connect:
     ; --- our Finished
     mov esi, ccs_record
     mov ecx, 6
-    call tcp_send_all
+    call tcp_send
     CCALL hkdf_expand_label, tls_c_hs, lbl_finished, tls_zero, 0, tls_fkey, 32
     CCALL hmac_sha256, tls_fkey, 32, tls_hash, 32, tls_finmsg + 4
     mov dword [tls_finmsg], 0x20000014  ; finished, length 32
     mov byte [tls_wkey_on], 1
     CCALL tls_send_record, 22, tls_finmsg, 36
+    test eax, eax
+    jz .fail
     CCALL tls_key_install, tls_wkey, tls_c_ap
     CCALL tls_key_install, tls_rkey, tls_s_ap
+    mov dword [tls_hs_len], 0           ; (TLS_HS now gathers post-handshake
+    mov dword [tls_hs_pos], 0           ; messages)
+    mov dword [tls_pt_len], 0
+    mov byte [tls_live], 1
     mov eax, 1
     CLEAVE
 .badfin:
     mov dword [tls_err], te_finished
 .fail:
-    call tcp_close
+    call tcp_abort
     xor eax, eax
     CLEAVE
 
-; tls_write(data, len): send application data
+; tls_write(data, len) -> EAX = 1 sent, 0 if the connection broke: send
+; application data (in records of up to 16000 bytes)
 tls_write:
     CENTER
     mov esi, ARG(0)
@@ -687,80 +762,150 @@ tls_write:
     push ecx
     CCALL tls_send_record, 23, esi, ecx
     pop ecx
+    test eax, eax
+    jz .fail
     add esi, ecx
     jmp .l
 .done:
+    mov eax, 1
+.fail:
     CLEAVE
 
-; ---------------------------------------------------------------- HTTPS
-; https_get(host, ip, port, path) -> EAX = 1 with the response body in
-; PKG_BUF (pkg_len, http_status, http_date like http_get), 0 on failure
-https_get:
+; tls_close_notify: tell the server we are done (the close_notify alert)
+tls_close_notify:
     CENTER
-    CCALL tls_connect, dword ARG(0), dword ARG(1), dword ARG(2)
-    test eax, eax
-    jz .fail
-    mov edi, SCRATCH                    ; the request
-    mov esi, http_get_str
-    call str_copy_noterm
-    mov esi, ARG(3)
-    call str_copy_noterm
-    mov esi, http_ver_str
-    call str_copy_noterm
-    mov esi, ARG(0)
-    call str_copy_noterm
-    mov esi, http_tail_str
-    call str_copy_noterm
-    mov ecx, edi
-    sub ecx, SCRATCH
-    CCALL tls_write, SCRATCH, ecx
-    mov dword [pkg_len], 0
-    call http_complete_reset
-.read:
-    call tls_read_record
-    test eax, eax
-    jz .end                             ; closed (or error: judged below)
-    mov al, [tls_rtype]
-    cmp al, 21
-    je .alert
-    cmp al, 23
-    jne .read                           ; tickets etc.: ignore
-    mov ecx, [tls_rlen]
-    mov edi, [pkg_len]
-    mov eax, PKG_BUF_SIZE - 1
-    sub eax, edi
-    cmp ecx, eax
-    jbe .fits
-    mov ecx, eax
-.fits:
-    add [pkg_len], ecx
-    add edi, PKG_BUF
-    mov esi, TLS_REC
-    rep movsb
-    mov esi, PKG_BUF
-    mov ecx, [pkg_len]
-    call http_is_complete
-    jc .read
-    jmp .done
-.alert:
-    cmp dword [tls_alert], 0            ; close_notify = normal end
-    je .done
-    mov dword [tls_err], te_alert
-    jmp .fail
-.end:
-    cmp byte [tls_eof], 0               ; a clean close is fine
-    jne .done
-    cmp dword [pkg_len], 0              ; got something before it broke?
-    je .fail
-.done:
-    call tcp_close
-    mov edi, [pkg_len]
-    mov byte [PKG_BUF + edi], 0
-    call http_parse
-    mov eax, 1
+    cmp byte [tls_live], 0
+    je .r
+    mov byte [tls_live], 0
+    cmp byte [tcp_reset], 0
+    jne .r
+    CCALL tls_send_record, 21, tls_cn_alert, 2
+.r: CLEAVE
+
+; tls_recv(buf, max) -> EAX = bytes of application data copied (> 0), 0 if
+; none has arrived yet, -1 at the end (close_notify, or the server closed
+; between records), -2 on an error (tls_err). Never waits. Records may
+; straddle calls: a record is decrypted once all of it is in, and what does
+; not fit in buf is kept for the next call.
+tls_recv:
+    CENTER
+.l: mov ecx, [tls_pt_len]
+    test ecx, ecx
+    jz .record
+    cmp dword ARG(1), 0                 ; (asked for nothing)
+    je .zero
+    cmp ecx, ARG(1)
+    jbe .n
+    mov ecx, ARG(1)
+.n: mov esi, [tls_pt_ptr]
+    mov edi, ARG(0)
+    mov eax, ecx
+    call net_copy
+    mov [tls_pt_ptr], esi
+    sub [tls_pt_len], eax
     CLEAVE
-.fail:
-    call tcp_close
+.zero:
     xor eax, eax
     CLEAVE
+.record:
+    cmp byte [tls_eof], 0
+    jne .eof
+    call tls_try_record
+    cmp eax, 1
+    jne .r                              ; 0 (not yet), -1, -2
+    mov al, [tls_rtype]
+    cmp al, 23                          ; application data
+    je .data
+    cmp al, 21
+    je .alert
+    cmp al, 22
+    jne .l                              ; (anything else: ignored)
+    call tls_post_handshake
+    test eax, eax
+    jnz .l
+    mov eax, -2
+    CLEAVE
+.data:
+    mov dword [tls_pt_ptr], TLS_REC
+    mov eax, [tls_rlen]
+    mov [tls_pt_len], eax
+    jmp .l
+.alert:
+    cmp dword [tls_alert], 0            ; close_notify: the normal end
+    jne .bad_alert
+    mov byte [tls_eof], 1
+.eof:
+    mov eax, -1
+    CLEAVE
+.bad_alert:
+    mov dword [tls_err], te_alert
+    mov eax, -2
+.r: CLEAVE
 
+; tls_post_handshake -> EAX = 1 ok, 0 bad: handle the handshake record in
+; TLS_REC after the handshake. Messages are gathered in TLS_HS (they may be
+; split over records); NewSessionTicket is ignored, KeyUpdate moves the
+; read key on (and ours too, when the server asks).
+tls_post_handshake:
+    CENTER
+    mov ecx, [tls_rlen]
+    mov edi, [tls_hs_len]
+    lea eax, [edi + ecx]
+    cmp eax, TLS_HS_CAP
+    ja .big
+    mov [tls_hs_len], eax
+    add edi, TLS_HS
+    mov esi, TLS_REC
+    call net_copy
+.msg:
+    mov eax, [tls_hs_len]               ; a whole message there?
+    cmp eax, 4
+    jb .keep
+    movzx ecx, byte [TLS_HS + 1]        ; 24-bit length
+    shl ecx, 8
+    mov cl, [TLS_HS + 2]
+    shl ecx, 8
+    mov cl, [TLS_HS + 3]
+    add ecx, 4
+    cmp eax, ecx
+    jb .keep
+    cmp byte [TLS_HS], 24               ; KeyUpdate
+    jne .drop
+    cmp ecx, 5
+    jne .bad
+    movzx ebx, byte [TLS_HS + 4]        ; request_update
+    cmp ebx, 1
+    ja .bad
+    push ecx
+    CCALL hkdf_expand_label, tls_s_ap, lbl_upd, tls_zero, 0, tls_s_ap, 32
+    CCALL tls_key_install, tls_rkey, tls_s_ap
+    pop ecx
+    test ebx, ebx
+    jz .drop
+    push ecx                            ; the server asked: update ours too
+    mov dword [tls_ku_msg], 0x01000018  ; KeyUpdate, length 1,
+    mov byte [tls_ku_msg + 4], 0        ;   update_not_requested
+    CCALL tls_send_record, 22, tls_ku_msg, 5
+    CCALL hkdf_expand_label, tls_c_ap, lbl_upd, tls_zero, 0, tls_c_ap, 32
+    CCALL tls_key_install, tls_wkey, tls_c_ap
+    pop ecx
+.drop:                                  ; take the message off the front
+    mov eax, [tls_hs_len]
+    sub eax, ecx
+    mov [tls_hs_len], eax
+    lea esi, [TLS_HS + ecx]
+    mov edi, TLS_HS
+    mov ecx, eax
+    rep movsb
+    jmp .msg
+.keep:
+    mov eax, 1
+    CLEAVE
+.big:
+    mov dword [tls_err], te_bigmsg
+    xor eax, eax
+    CLEAVE
+.bad:
+    mov dword [tls_err], te_unexp
+    xor eax, eax
+    CLEAVE
