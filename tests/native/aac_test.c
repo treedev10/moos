@@ -37,6 +37,38 @@ uint32_t aac_ctx_size(void);
 int aac_init(void *ctx, const uint8_t *asc, uint32_t asclen);
 int aac_info(void *ctx, uint32_t *rate, uint32_t *channels);
 int aac_decode(void *ctx, const uint8_t *frame, uint32_t len, int16_t *out);
+extern uint32_t aac_stats[64];      /* event counters (NATIVE builds, see AAC_STAT) */
+
+/* names of the counters in aac.asm (AAC_S_*) */
+static const char *stat_name[64] = {
+    [0] = "frames", [1] = "SCE", [2] = "CPE", [3] = "CCE", [4] = "LFE", [5] = "DSE",
+    [6] = "PCE", [7] = "FIL", [8] = "ONLY_LONG", [9] = "LONG_START", [10] = "EIGHT_SHORT",
+    [11] = "LONG_STOP", [12] = "KBD shape", [13] = "grouped short", [14] = "common_window",
+    [15] = "separate windows", [16] = "ms_mask 1", [17] = "ms_mask 2", [18] = "pulse data",
+    [19] = "TNS long", [20] = "TNS short", [21] = "TNS compressed", [22] = "TNS downwards",
+    [23] = "TNS order 9-12", [24] = "escapes", [25] = "intensity bands",
+    [26] = "intensity inverted", [27] = "noise bands", [28] = "noise pair (M/S)",
+    [29] = "M/S bands", [30] = "|q| >= 1024", [31] = "FIL with SBR",
+    [32] = "book 0", [33] = "book 1", [34] = "book 2", [35] = "book 3", [36] = "book 4",
+    [37] = "book 5", [38] = "book 6", [39] = "book 7", [40] = "book 8", [41] = "book 9",
+    [42] = "book 10", [43] = "book 11", [45] = "book 13 (noise)",
+    [46] = "book 14 (intensity)", [47] = "book 15 (intensity)", [48] = "DSE aligned",
+    [49] = "explicit rate", [50] = "PCE config", [51] = "HE-AAC config",
+};
+static uint64_t stat_total[64];
+
+/* add the decoder's counters to the totals (and print them with -v) */
+static void take_stats(const char *name, int print)
+{
+    if (print) {
+        printf("     %s:", name);
+        for (int i = 0; i < 64; i++)
+            if (aac_stats[i] && stat_name[i]) printf(" %s=%u", stat_name[i], aac_stats[i]);
+        printf("\n");
+    }
+    for (int i = 0; i < 64; i++) stat_total[i] += aac_stats[i];
+    memset(aac_stats, 0, sizeof aac_stats);
+}
 
 static int verbose;
 static const char *dir = "build/aac";
@@ -272,7 +304,7 @@ static int run_case(const char *name, const char *mode, const char *arg, double 
     char detail[200] = "";
     if (!strcmp(mode, "snr") || !strcmp(mode, "same")) {
         double want = !strcmp(mode, "same") ? 70 : atof(arg);
-        double worst = 99;
+        double worst = 1e9;
         for (uint32_t c = 0; c < ch; c++) {         /* each channel on its own too */
             double se = 0, ee = 0;
             for (size_t i = c; i < nsamp; i += ch) {
@@ -298,6 +330,7 @@ static int run_case(const char *name, const char *mode, const char *arg, double 
     double dur = (double)n * 1024 / rate;
     printf("%s %-26s %-6s %s  %4.0fx realtime\n", ok ? "ok  " : "FAIL", name, mode, detail,
            dur / secs);
+    take_stats(name, verbose);
     *dec_time += secs;
     *audio_time += dur;
     free(pcm);
@@ -510,6 +543,20 @@ int main(int argc, char **argv)
     printf("%d of %d cases passed; %.1f s of audio decoded in %.2f s (%.0fx realtime)\n",
            passed, total, audt, dect, audt / dect);
     if (passed != total) mt_failures++;
+    /* what the test data exercised: every tool of the decoder must have
+       been reached by some case (when all cases ran) */
+    printf("decoder events over all cases:\n");
+    int col = 0;
+    for (int i = 0; i < 64; i++) {
+        if (!stat_name[i]) continue;
+        printf("  %-20s %9llu%s", stat_name[i], (unsigned long long)stat_total[i],
+               ++col % 3 ? "" : "\n");
+    }
+    if (col % 3) printf("\n");
+    if (!nonly)
+        for (int i = 0; i < 64; i++)
+            MT_CHECK(!stat_name[i] || stat_total[i] > 0, "no test case reaches: %s",
+                     stat_name[i]);
     if (!nofuzz && !nonly) {
         const char *fz[] = {"music_44100_s", "speech_64k_m", "clicks_128k", "is_wide_64k",
                             "pns_pink_64k", "tns_clicks", "music_96000_s", "music_8000_s",

@@ -167,6 +167,53 @@ AAC_E_MS        equ 31              ; reserved ms_mask_present
     jmp aac_abort
 %endmacro
 
+;  Event counters for the native test (tests/native/aac_test.c), which
+;  checks that its test data reaches every part of the decoder. Only in
+;  NATIVE builds; in the kernel AAC_STAT is nothing. (inc changes the flags
+;  except CF: used only where no flags are pending.)
+AAC_S_FRAMES    equ 0               ; frames decoded
+AAC_S_ELEMENT   equ 1               ; 1-7: SCE CPE CCE LFE DSE PCE FIL
+AAC_S_SEQ       equ 8               ; 8-11: window sequences 0-3
+AAC_S_KBD       equ 12              ; ics_info with the KBD shape
+AAC_S_GROUPED   equ 13              ; eight short windows in 2-7 groups
+AAC_S_COMMON    equ 14              ; CPE with common_window 1
+AAC_S_SEPARATE  equ 15              ; CPE with common_window 0
+AAC_S_MS1       equ 16              ; ms_mask_present 1
+AAC_S_MS2       equ 17              ; ms_mask_present 2
+AAC_S_PULSE     equ 18              ; pulse_data_present
+AAC_S_TNS_LONG  equ 19              ; TNS filters (order > 0), long windows
+AAC_S_TNS_SHORT equ 20              ; ... short windows
+AAC_S_TNS_COMPR equ 21              ; ... with coef_compress
+AAC_S_TNS_DOWN  equ 22              ; ... running downwards
+AAC_S_TNS_HIGH  equ 23              ; ... of order 9-12
+AAC_S_ESCAPE    equ 24              ; escape sequences
+AAC_S_IS_BANDS  equ 25              ; intensity bands applied
+AAC_S_IS_INV    equ 26              ; ... inverted by ms_used
+AAC_S_PNS       equ 27              ; noise bands (per window)
+AAC_S_PNS_PAIR  equ 28              ; noise bands shared by a pair (M/S)
+AAC_S_MS_BANDS  equ 29              ; bands M/S was applied to
+AAC_S_BIG       equ 30              ; |q| >= 1024
+AAC_S_SBR       equ 31              ; FIL elements carrying SBR data
+AAC_S_BOOK      equ 32              ; 32-47: bands coded with codebook 0-15
+AAC_S_DSE_ALIGN equ 48              ; DSE with data_byte_align_flag
+AAC_S_EXPLICIT  equ 49              ; aac_init: explicit sampling rate
+AAC_S_PCE_CFG   equ 50              ; aac_init: channelConfiguration 0 (PCE)
+AAC_S_SBR_CFG   equ 51              ; aac_init: HE-AAC object type 5 / 29
+AAC_S_COUNT     equ 64
+%ifdef NATIVE
+%macro AAC_STAT 1
+    inc dword [aac_stats + (%1) * 4]
+%endmacro
+%macro AAC_STATR 2                  ; counter %1 + register %2
+    inc dword [aac_stats + (%1) * 4 + %2 * 4]
+%endmacro
+%else
+%macro AAC_STAT 1
+%endmacro
+%macro AAC_STATR 2
+%endmacro
+%endif
+
 ; fail with error %1 if the reads went past the end of the data
 %macro AAC_CHECK 1
     push eax
@@ -254,6 +301,10 @@ aac_fb_w        resd 1
 aac_lists       resd 1              ; CCE
 aac_ind         resd 1
 aac_tmp         resd 4
+%ifdef NATIVE
+EXPORT(aac_stats)
+aac_stats       resd AAC_S_COUNT    ; (see AAC_STAT)
+%endif
 
 section .data
 align 16
@@ -364,6 +415,7 @@ aac_init:
     cmp eax, 96000
     ja .bad_rate
     mov [ebx + AAC_C_RATE], eax
+    AAC_STAT AAC_S_EXPLICIT
     xor ecx, ecx                    ; the tables of the nearest rate
 .limit:
     cmp eax, [aac_rate_limits + ecx * 4]
@@ -388,6 +440,7 @@ aac_init:
     cmp eax, 29
     jne .core
 .sbr:
+    AAC_STAT AAC_S_SBR_CFG
     AAC_GET 4                       ; extensionSamplingFrequencyIndex
     cmp eax, 15
     jne .sbr_rate
@@ -414,6 +467,7 @@ aac_init:
     rep stosb
     cmp dword [ebx + AAC_C_CHCFG], 0
     jne .default
+    AAC_STAT AAC_S_PCE_CFG
     call aac_pce_map
     jmp .mapped
 .default:
@@ -731,11 +785,13 @@ aac_decode:
     AAC_GET 3                       ; id_syn_ele
     cmp eax, 7                      ; END
     je .end
+    AAC_STATR AAC_S_ELEMENT, eax
     call [aac_elements + eax * 4]
     AAC_CHECK AAC_E_OVERRUN
     jmp .element
 .end:
     call aac_output
+    AAC_STAT AAC_S_FRAMES
     mov eax, 1024
     AAC_LEAVE
 .no_ctx:
@@ -944,6 +1000,11 @@ aac_el_cpe:
     mov [aac_slot], eax
     AAC_GET 1                       ; common_window
     mov [aac_common], eax
+%ifdef NATIVE
+    mov ecx, AAC_S_SEPARATE
+    sub ecx, eax                    ; 1: AAC_S_COMMON
+    inc dword [aac_stats + ecx * 4]
+%endif
     mov dword [aac_ms_present], 0
     test eax, eax
     jz .channels
@@ -957,6 +1018,12 @@ aac_el_cpe:
     cmp eax, 3
     je .bad_ms
     mov [aac_ms_present], eax
+%ifdef NATIVE
+    test eax, eax
+    jz .ms_counted
+    AAC_STATR AAC_S_MS1 - 1, eax
+.ms_counted:
+%endif
     mov edi, aac_ms_used            ; 2: every band; 0, 1: none yet
     mov ecx, 128 / 4
     cmp eax, 2
@@ -1067,7 +1134,8 @@ aac_el_cce:
     jae .next_g
     mov edi, edx
     shl edi, 4
-    cmp byte [ebp + AAC_I_BT + edi + ebx], 0
+    add edi, ebx
+    cmp byte [ebp + AAC_I_BT + edi], 0
     je .next_b
     call aac_huff_sf                ; dpcm_gain_element
 .next_b:
@@ -1097,6 +1165,7 @@ aac_el_dse:
 .count:
     test edx, edx
     jz .skip
+    AAC_STAT AAC_S_DSE_ALIGN
     call aac_align
 .skip:
     lea ecx, [eax * 8]
@@ -1141,6 +1210,22 @@ aac_el_fil:
     AAC_GET 8                       ; esc_count
     add eax, 14
 .skip:
+%ifdef NATIVE
+    test eax, eax
+    jz .counted
+    push eax
+    call aac_peek32
+    shr eax, 28                     ; extension_type 13 / 14: SBR
+    cmp eax, 13
+    je .sbr
+    cmp eax, 14
+    jne .not_sbr
+.sbr:
+    AAC_STAT AAC_S_SBR
+.not_sbr:
+    pop eax
+.counted:
+%endif
     lea ecx, [eax * 8]
     call aac_skip
     ret
@@ -1206,6 +1291,21 @@ aac_ics_info:
     mov eax, [ebp + AAC_I_MAXSFB]
     cmp eax, [ebp + AAC_I_NSWB]
     ja .too_many
+%ifdef NATIVE
+    mov eax, [ebp + AAC_I_SEQ]
+    AAC_STATR AAC_S_SEQ, eax
+    cmp dword [ebp + AAC_I_SHAPE], 0
+    je .counted_shape
+    AAC_STAT AAC_S_KBD
+.counted_shape:
+    mov eax, [ebp + AAC_I_NGRP]
+    cmp eax, 1
+    je .counted
+    cmp eax, 8
+    je .counted
+    AAC_STAT AAC_S_GROUPED
+.counted:
+%endif
     ret
 .reserved:
     AAC_FAIL AAC_E_RESERVED
@@ -1280,6 +1380,9 @@ aac_sections:
     dec ecx
     jmp .fill
 .filled:
+%ifdef NATIVE
+    add [aac_stats + AAC_S_BOOK * 4 + esi * 4], edi
+%endif
     add ebx, edi
     jmp .section
 .next_group:
@@ -1385,6 +1488,7 @@ aac_side_data:
     jz .tns
     cmp dword [ebp + AAC_I_SEQ], AAC_EIGHT_SHORT
     je .bad_pulse                   ; (long windows only)
+    AAC_STAT AAC_S_PULSE
     AAC_GET 2
     inc eax
     mov [ebp + AAC_I_NP], eax
@@ -1464,9 +1568,34 @@ aac_tns_data:
     test eax, eax
     jz .next_filter
     mov ecx, eax                    ; coefficients to read
+%ifdef NATIVE
+    cmp eax, 8
+    jbe .not_high
+    AAC_STAT AAC_S_TNS_HIGH
+.not_high:
+    cmp dword [ebp + AAC_I_SEQ], AAC_EIGHT_SHORT
+    je .short_filter
+    AAC_STAT AAC_S_TNS_LONG
+    jmp .counted
+.short_filter:
+    AAC_STAT AAC_S_TNS_SHORT
+.counted:
+%endif
     AAC_GET 1                       ; direction
     mov [ebp + AAC_I_TDIR + edi * 4], eax
+%ifdef NATIVE
+    test eax, eax
+    jz .up
+    AAC_STAT AAC_S_TNS_DOWN
+.up:
+%endif
     AAC_GET 1                       ; coef_compress
+%ifdef NATIVE
+    test eax, eax
+    jz .uncompressed
+    AAC_STAT AAC_S_TNS_COMPR
+.uncompressed:
+%endif
     mov edx, [ebp + AAC_I_CRES + ebx * 4]
     add edx, 3
     sub edx, eax                    ; bits per coefficient: 2-4
@@ -1516,7 +1645,8 @@ aac_spectral:
     jae .next_group
     mov edx, [aac_g]
     shl edx, 4
-    movzx eax, byte [ebp + AAC_I_BT + edx + ebx]
+    add edx, ebx
+    movzx eax, byte [ebp + AAC_I_BT + edx]
     test eax, eax
     jz .next_band
     cmp eax, 11
@@ -1731,6 +1861,7 @@ aac_escape:
     ja .too_long
     jmp .prefix
 .word:
+    AAC_STAT AAC_S_ESCAPE
     call aac_getbits                ; ECX = N + 4 bits
     bts eax, ecx
     pop ecx
@@ -1869,9 +2000,11 @@ aac_dequant:
     jnz .value
     jmp .next_window
 .big:
+    AAC_STAT AAC_S_BIG
     call aac_pow43_big
     jmp .scaled
 .noise:
+    AAC_STAT AAC_S_PNS
     call aac_noise
 .next_window:
     inc dword [aac_w]
@@ -1980,7 +2113,9 @@ aac_stereo:
     je .is_go
     movss xmm1, [aac_signs]         ; (inverted by ms_used)
     xorps xmm0, xmm1
+    AAC_STAT AAC_S_IS_INV
 .is_go:
+    AAC_STAT AAC_S_IS_BANDS
     call .windows_start
 .is_window:
     call aac_band_ptrs
@@ -2004,6 +2139,7 @@ aac_stereo:
     jae .next_band
     cmp byte [aac_ics0 + AAC_I_BT + edx], 13
     jae .next_band
+    AAC_STAT AAC_S_MS_BANDS
     call .windows_start
 .ms_window:
     call aac_band_ptrs
@@ -2073,6 +2209,7 @@ aac_pns_pair:
     mov eax, [aac_ics1 + AAC_I_SF + edx * 4]
     sub eax, [aac_ics0 + AAC_I_SF + edx * 4]
     call aac_exp2q                  ; right energy / left energy, as gain
+    AAC_STAT AAC_S_PNS_PAIR
     call aac_stereo.windows_start
 .window:
     call aac_band_ptrs
