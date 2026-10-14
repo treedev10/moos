@@ -14,7 +14,10 @@
 ;             duplicate ACK goes back at once, so the sender soon resends the
 ;             missing part; when the server takes SACK (RFC 2018), the ACK
 ;             also lists the ranges we hold, so it resends only what is
-;             missing. When the gap is filled, the ranges join on.
+;             missing. When the gap is filled, the ranges join on; if a
+;             later gap is left, that ACK goes out four times (three
+;             duplicates), so a sender without SACK resends the next lost
+;             segment at once instead of after its timeout.
 ;             Data is acknowledged every second full segment, and at the end
 ;             of each batch of frames.
 ;  Sending    Our bytes wait in a 64 KB ring (TCP_SBUF) until they are
@@ -138,6 +141,7 @@ snd_shift       resb 1                  ; the server's window scale
 rcv_shift       resb 1                  ; ours (0 unless the server agreed)
 sack_ok         resb 1                  ; the server takes SACK blocks
 ack_now         resb 1                  ; send an ACK before returning
+ack_dup         resb 1                  ;   and three copies of it
 tcp_force       resb 1                  ; tcp_output may probe a zero window
 tcp_opt_len     resb 1                  ; options for the next segment sent
 tcp_loss        resb 1                  ; "net loss": percent of segments lost
@@ -770,6 +774,7 @@ tcp_connect:
     mov byte [rcv_shift], 0
     mov byte [sack_ok], 0
     mov byte [ack_now], 0
+    mov byte [ack_dup], 0
     mov byte [tcp_force], 0
     mov byte [tcp_estab], 0
     mov dword [tcp_err], TE_NONE
@@ -1554,7 +1559,10 @@ tcp_in_estab:
     je .ackcount
     call ooo_merge                      ; a gap filled: join the ranges on
     mov byte [ack_now], 1
-.ackcount:
+    cmp dword [ooo_n], 0                ; another gap after it (lost in the
+    je .ackcount                        ; same burst): this ACK goes out four
+    mov byte [ack_dup], 1               ; times, so a sender without SACK
+.ackcount:                              ; resends that part now (3 dup ACKs)
     cmp dword [ack_owed], 2 * TCP_MSS   ; acknowledge every second segment
     jb .data_done
     mov byte [ack_now], 1
@@ -1581,6 +1589,12 @@ tcp_in_estab:
 .finish:
     cmp byte [ack_now], 0
     je .out
+    call tcp_send_ack
+    cmp byte [ack_dup], 0
+    je .out
+    mov byte [ack_dup], 0
+    call tcp_send_ack
+    call tcp_send_ack
     call tcp_send_ack
 .out:
     call tcp_output                     ; the window may have opened

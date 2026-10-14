@@ -437,7 +437,8 @@ def t_big_tls(m, s, H, S):
 
 @test
 def t_fetch_big(m, s, H, S):
-    out = m.run('get -i %s/gen/600000' % H, timeout=120)
+    # larger than url_fetch's buffer: 512 KB on BIOS, 4 MB on UEFI
+    out = m.run('get -i %s/gen/%d' % (H, 4500000 if UEFI else 600000), timeout=120)
     return expect(out, 'HTTP 200', 'The reply was cut')
 
 
@@ -470,6 +471,7 @@ def t_loss(m, s, H, S):
 
 
 TAP = False
+UEFI = False
 
 
 def main():
@@ -479,6 +481,8 @@ def main():
     while args and args[0].startswith('--'):
         a = args.pop(0)
         if a == '--uefi':
+            global UEFI
+            UEFI = True
             uefi = True
         elif a == '--nic':
             nic = args.pop(0)
