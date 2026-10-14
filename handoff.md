@@ -35,8 +35,18 @@ each step. The installer and disk persistence were verified across reboots.
   wc, hexdump, echo, calc, run, clear, color, time, clock, net, apt, get, uptime, mem,
   sysinfo, history, login, format, reboot, shutdown, help, man, gui, install. Plus aliases
   (dir, del, nano, grep, wget, curl, …). Every command has a `man` page.
-- **Networking** (`net`): Ethernet/ARP, IPv4, UDP, DHCP, DNS, a small TCP client, HTTP GET.
-  `net up [firmware|native]/status/cards/test/selftest/http`. Network cards, all polled:
+- **Networking** (`net`): Ethernet/ARP, IPv4, UDP, DHCP, DNS, TCP, HTTP/1.1.
+  `net up [firmware|native]/status/cards/test/selftest/http/cookies/loss`, `nettest`.
+  - **TCP** (`src/net_tcp.asm`): 256 KB receive ring with window scaling, out-of-order
+    segments kept (8 ranges) with SACK, RFC 6298 retransmission of our data and FIN,
+    zero-window probes. Tested at 10% random loss against Linux's TCP (`run.py --tap`).
+  - **HTTP/1.1** (`src/net_http.asm`): GET/POST/HEAD, chunked bodies decoded here (callers
+    get plain bodies), Range, 100-continue, cookie jar (`src/net_cookie.asm`). Request
+    options `url_method/body/body_len/body_type/headers/agent/range_start/range_end`
+    (url.asm's header); `url_fetch` (whole body into PKG_BUF) and the stream API
+    `hs_open/hs_read/hs_close` + `hs_status/hs_clen/hs_total` for media, over HTTP and
+    HTTPS. 20 MB: ~70 MB/s HTTP, ~2.4 MB/s HTTPS (AES-GCM bound) in QEMU.
+  Network cards, all polled:
   - **UEFI firmware driver** (`src/nic_snp.asm`): the Simple Network Protocol, so on a UEFI
     PC any wired card the firmware can network-boot from works. Tried first on UEFI.
   - **Intel e1000 / e1000e** (`src/nic_e1000.asm`): 8254x, 8257x, I217/I218/I219.
@@ -130,7 +140,15 @@ python tools/screentest.py "net selftest\n" @wait=8 @screen        # crypto know
 python tools/screentest.py "get https://raw.githubusercontent.com/treedev10/moos/HEAD/README.md\n" @wait=20 @screen
 python tools/screentest.py "apt install /treedev10/moos\n" @wait=20 @screen
 python packages/serve.py          # local package repo on :8000 (apt repo http://10.0.2.2:8000)
+python tests/net/run.py [--uefi] [--nic e1000] [--native] [--tap] [TEST ...]
 ```
+
+`tests/net/run.py` is the network test suite: it starts `tests/net/server.py` (HTTP and
+HTTPS with a self-signed cert: chunked, Range, POST echo, cookies, slow/stalling/closing
+servers, redirects, a 20 MB file) on free ports, types commands into MOOS and checks the
+results (SHA-256 of what `nettest` read with `hs_read`). `--tap` runs MOOS against this
+computer's own TCP through a tap device (needs root) instead of SLIRP, whose own TCP
+resends only on timeouts; `--pcap FILE` records the frames (`tests/net/pcap.py`).
 
 For TLS debugging, `get -v` prints every record and handshake message and the handshake
 secret; compare with a local Python TLS 1.3 server that writes an SSLKEYLOGFILE
@@ -149,7 +167,7 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Firmware bridge | `src/efi.asm` (64-bit calls into UEFI: keyboard, disk, clock, reset, mouse, graphics) |
 | Drivers | `src/vga.asm`, `src/idt.asm`, `src/kbd.asm`, `src/rtc.asm`, `src/ata.asm`, `src/bios.asm`, `src/acpi.asm` |
 | File system | `src/fs.asm`; installer `src/installer.asm` |
-| Networking | `src/net.asm` (PCI scan, card table, dispatch, RTL8139), `src/nic_e1000.asm`, `src/nic_rtl8168.asm`, `src/nic_snp.asm`, `src/net_arp.asm`, `src/net_ip.asm`, `src/net_dhcp.asm`, `src/net_dns.asm`, `src/net_tcp.asm`, `src/cmd_net.asm` |
+| Networking | `src/net.asm` (PCI scan, card table, dispatch, RTL8139), `src/nic_e1000.asm`, `src/nic_rtl8168.asm`, `src/nic_snp.asm`, `src/net_arp.asm`, `src/net_ip.asm`, `src/net_dhcp.asm`, `src/net_dns.asm`, `src/net_tcp.asm`, `src/net_http.asm`, `src/net_cookie.asm`, `src/cmd_net.asm` |
 | Crypto | `src/crypto.asm` (SHA-256, HMAC, HKDF, RNG), `src/sha512.asm`, `src/aes.asm` (AES-128, GCM), `src/x25519.asm`, `src/rsa.asm`, `src/selftest.asm`; tables `src/crypto_tables.inc` (tools/gen_tables.py), test vectors `src/selftest_vectors.inc` (tools/gen_vectors.py) |
 | HTTPS | `src/tls.asm` (TLS 1.3 client, https_get), `src/x509.asm` (certificate checks), `src/roots.bin` (tools/gen_roots.py), `src/url.asm` (url_fetch, `get`) |
 | Shell + commands | `src/shell.asm`, `src/readline.asm`, `src/pager.asm`, `src/cmd_files.asm`, `src/cmd_system.asm`, `src/cmd_clock.asm`, `src/cmd_apt.asm`, `src/cmd_login.asm` |
@@ -240,15 +258,16 @@ The commented source is canonical.
   network adapters except through the UEFI firmware driver. The RTL8168 and I217/I219
   paths have not been run on real hardware; on such PCs the firmware driver is the safer
   route (enable "Network Stack" in the firmware setup).
-- **Networking** uses one card at a time, one ARP cache, no IP fragmentation, and a TCP client
-  that assumes in-order, lossless delivery and retransmits nothing but its SYN (3 tries) —
-  fine behind QEMU's SLIRP, which does the real TCP; fragile on a real lossy network. Downloads are limited to the
-  512 KB package buffer; saved files to 4 KB (the MOOSFS limit).
+- **Networking** uses one card at a time, one ARP cache, no IP fragmentation, and one TCP
+  connection at a time (a `url_fetch` while a stream is open breaks the stream off; its
+  owner reopens it with a Range). No congestion control of our own sending (we mostly
+  receive). `url_fetch` downloads are limited to the package buffer (512 KB BIOS, 4 MB
+  UEFI; `hs_read` streams have no limit); saved files to 4 KB (the MOOSFS limit).
 - **GUI apps are deliberately simple**: the editor is append/backspace/enter (no mid-line
   cursor). One window per app.
 - **Browser limits**: no CSS (beyond a few inline properties: display/visibility, colour,
-  bold, italic, centring), no JavaScript, no images (alt text shown), no cookies, GET forms
-  only, no text selection/copy, HTTP/1.0 with `User-Agent: MOOS`. Pages are cut at the
+  bold, italic, centring), no JavaScript, no images (alt text shown), GET forms
+  only, no text selection/copy. HTTP/1.1 through net_http.asm (cookies kept by the jar). Pages are cut at the
   512 KB download buffer, 24,576 display items and 512 open elements. Tables are lined up
   only when simple (no nested tables/blocks in cells, at most 16 columns, fits the width);
   otherwise cells flow one after another. Characters outside CP437 show as a small box.
@@ -275,11 +294,11 @@ The commented source is canonical.
 
 - Confirm the mouse (and wheel) on real PCs.
 - Browser: images (PNG/GIF/JPEG decoders + fetching them), a little CSS (at least
-  `display`, margins and colours from `<style>`), cookies, POST forms, text selection,
+  `display`, margins and colours from `<style>`), POST forms, text selection,
   fetching without blocking the desktop, a page cache for Back.
 - A fuller GUI text editor (cursor movement, selection) reusing `src/editor.asm` logic.
 - BIOS graphics (VBE) so the desktop runs on old PCs too.
 - Confirm the RTL8168 driver on a real board; a virtio-net driver for BIOS-mode VMs.
 - ECDSA (P-256/P-384) certificate verification, to reach ECDSA-only sites.
-- TCP retransmission and a receive window that tracks free buffer space.
+- Faster AES-GCM (HTTPS streams are CPU-bound at ~2.4 MB/s in QEMU).
 - A larger file system (MOOSFS files are 4 KB), so bigger packages and downloads fit.
