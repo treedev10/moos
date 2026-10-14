@@ -35,6 +35,8 @@ STEP is either text to type (use \\n for Enter) or a command:
                     Several in a row make a drag.
     @wheel=N        turn MOOS's mouse wheel N notches (+ = away from you)
     @mon=COMMAND    run a QEMU monitor command and print its answer
+    @where          print where the CPU is in the kernel (label + offset),
+                    e.g. to see where MOOS hangs
     @exit           check that QEMU has exited (after "shutdown")
 
 The image is copied first, so tests never touch your real disk image.
@@ -321,6 +323,20 @@ def main():
                     gdb.write(base + syms['mouse_x'],
                               b''.join(int(x).to_bytes(4, 'little') for x in v[:3]))
                 time.sleep(0.15)
+            elif step == '@where':
+                class Every:
+                    def __contains__(self, name):
+                        return True
+                if 'all' not in globals():
+                    globals()['all_syms'] = kernel_symbols(Every())
+                allsyms = globals()['all_syms']
+                out = mon.cmd('info registers').decode('utf-8', 'replace')
+                eip = int(out.split('EIP=')[1][:8], 16)
+                base = screen.addr - 16 - allsyms['screen_magic']
+                rel = eip - base
+                best = max(((a, n) for n, a in allsyms.items() if a <= rel),
+                           default=(0, '?'))
+                print('EIP %#x = %s+%#x' % (eip, best[1], rel - best[0]))
             elif step == '@click':
                 mon.cmd('mouse_button 1')
                 time.sleep(0.2)

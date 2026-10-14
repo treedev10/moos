@@ -12,17 +12,23 @@
 ;  in the back buffer and only those two small areas are copied to the
 ;  screen, so the cursor stays smooth even on big screens.
 ;
-;  Keys: F1-F5 (or 1-5 on the empty desktop) open an app; F6 switches
+;  Keys: F1-F5 (or 1-6 on the empty desktop) open an app; F6 switches
 ;  windows; F7 / F8 move / resize one with the arrow keys; F9 / F10
 ;  minimize / maximize; Esc closes the window, and Esc on the empty desktop
-;  leaves. So the desktop works without a mouse too.
+;  leaves. F12 or Ctrl+Esc opens the Start menu; the desktop's icons take
+;  the arrows, Enter, F2, Delete and Shift+F10 (gui_desk.asm). So the
+;  desktop works without a mouse too.
+;
+;  The mouse: bit 0 of mouse_btn is the left button (clicks, drags), bit 1
+;  the right one (a right press opens a menu, gui_rpress). Menus and
+;  message boxes (gui_menu.asm) are drawn over everything else.
 ; =============================================================================
 TASKBAR_H   equ 34
 CUR_W       equ 24                  ; the area the mouse cursor covers
 CUR_H       equ 20
 CUR_DX      equ 6                   ; (it starts this far left of the tip)
-TB_N        equ 6                   ; taskbar buttons: 5 apps + Quit
-TB_QUIT     equ 5
+TB_N        equ 7                   ; taskbar buttons: 6 apps + Quit
+TB_QUIT     equ 6                   ; (and Start, left of them: TB_START)
 
 ; RECT x,y,w,h,rgb  (immediate or register expressions)
 %macro RECT 5
@@ -70,24 +76,27 @@ section .data
 desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
-gui_hint1   db "Click an app on the taskbar, or press its key:", 0
-gui_hint2   db "F1 Terminal   F2 Editor   F3 Script IDE   F4 Browser   F5 Settings", 0
-gui_hint3   db "Drag a title bar to move a window, an edge or corner to resize it.", 0
-gui_hint4   db "Keys: F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
-gui_hint5   db "Esc closes a window. Esc on the empty desktop leaves.", 0
-gui_nomouse db "No mouse found - the PC's firmware offers none. Use the keys above.", 0
+gui_hint1   db "Start menu: the Start button, F12 or Ctrl+Esc.", 0
+gui_hint2   db "F1 Terminal  F2 Editor  F3 Script IDE  F4 Browser  F5 Settings", 0
+gui_hint3   db "F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
+gui_hint4   db "Right-click the desktop (or Shift+F10) for New folder / file.", 0
+gui_hint5   db "Esc closes a window; Esc on the empty desktop leaves.", 0
+gui_nomouse db "No mouse found (the firmware has none): use the keys.", 0
 ga_term     db "term", 0
 ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
 ga_settings db "settings", 0
-tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_quit
-tb_lens     db 8, 6, 10, 7, 8, 4
+ga_files    db "files", 0
+tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_files
+            dd tb_l_quit
+tb_lens     db 8, 6, 10, 7, 8, 5, 4
 tb_l_term   db "Terminal", 0
 tb_l_edit   db "Editor", 0
 tb_l_ide    db "Script IDE", 0
 tb_l_brow   db "Browser", 0
 tb_l_set    db "Settings", 0
+tb_l_files  db "Files", 0
 tb_l_quit   db "Quit", 0
 ; desktop colours (Settings, item 6); desk_color picks one
 DESK_NCOLORS equ 8
@@ -129,19 +138,7 @@ gui_wallpaper:
     mov edi, [gfx_h]
     sub edi, TASKBAR_H
     call gfx_fillrect
-    mov dword [gfx_scale], 3
-    TEXT 40, 26, gui_title, 0xF4F0E6, -1
-    mov dword [gfx_scale], 1
-    TEXT 40, 74, gui_sub, 0xD8E4EA, -1
-    TEXT 40, 120, gui_hint1, 0xD8E4EA, -1
-    TEXT 40, 140, gui_hint2, 0xFFFFFF, -1
-    TEXT 40, 166, gui_hint3, 0xD8E4EA, -1
-    TEXT 40, 186, gui_hint4, 0xD8E4EA, -1
-    TEXT 40, 206, gui_hint5, 0xD8E4EA, -1
-    cmp byte [mouse_ok], 0
-    jne .done
-    TEXT 40, 242, gui_nomouse, 0xFFD27A, -1
-.done:
+    call desk_draw                  ; the icons and hints (gui_desk.asm)
     popad
     ret
 
@@ -256,8 +253,9 @@ gui_cursor_update:
     ret
 
 ; ---------------------------------------------------------------- taskbar
-; Buttons left to right, Quit on the far right, the clock left of Quit.
-; Their edges are kept in tb_x0 / tb_x1 for tb_hit.
+; Start at the left end, then the app buttons left to right, Quit on the
+; far right, the clock left of Quit. Their edges are kept in tb_x0 / tb_x1
+; for tb_hit.
 gui_taskbar:
     pushad
     mov edx, [gfx_h]
@@ -267,7 +265,8 @@ gui_taskbar:
     mov edx, [tb_top]
     RECT 0, edx, [gfx_w], 2, 0x4A5A6A
     mov dword [gfx_scale], 1
-    mov dword [tb_cx], 8
+    call start_draw
+    mov dword [tb_cx], START_X + START_W + 8
     mov dword [tb_i], 0
 .btn:
     mov ecx, [tb_i]
@@ -349,14 +348,22 @@ gui_taskbar:
     popad
     ret
 
-; tb_hit -> EAX = the taskbar button under the mouse (0-4 apps, TB_QUIT),
-; or -1 if none
+; tb_hit -> EAX = the taskbar button under the mouse (0-5 apps, TB_QUIT,
+; TB_START), or -1 if none
 tb_hit:
     push ecx
     mov eax, [gfx_h]
     sub eax, TASKBAR_H
     cmp [mouse_y], eax
     jb .none
+    mov eax, [mouse_x]
+    sub eax, START_X
+    cmp eax, START_W
+    jae .apps
+    mov eax, TB_START
+    pop ecx
+    ret
+.apps:
     xor ecx, ecx
 .l: mov eax, [mouse_x]
     cmp eax, [tb_x0 + ecx * 4]
@@ -375,9 +382,14 @@ tb_hit:
     pop ecx
     ret
 
-; gui_hover_check: light up the taskbar button under the mouse
+; gui_hover_check: light up the taskbar button under the mouse (and the
+; menu item under it, if a menu is open)
 gui_hover_check:
     push eax
+    cmp dword [mn_open], 0
+    je .bar
+    call menu_hover
+.bar:
     call tb_hit
     cmp eax, [tb_hover]
     je .same
@@ -474,6 +486,8 @@ gui_redraw:
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
+    call menu_draw                  ; (menus and message boxes go on top)
+    call mb_draw
     call gui_cursor_show
     test byte [gui_dirty], 1
     jz .bar
@@ -513,6 +527,7 @@ cmd_gui:
     call efi_mouse_init
     mov byte [gui_quit], 0
     call wm_reset
+    call desk_reset
     mov dword [tb_hover], -1
     mov dword [prev_btn], 0
     mov eax, [mouse_x]
@@ -544,6 +559,10 @@ cmd_gui:
     je .open
     mov eax, APP_SETTINGS
     mov edi, ga_settings
+    call str_icmp
+    je .open
+    mov eax, APP_FILES
+    mov edi, ga_files
     call str_icmp
     je .open
     mov eax, APP_BROWSER
@@ -589,8 +608,13 @@ cmd_gui:
     call vid_reset                  ; (no sound left playing, and the
     call imgc_reset                 ; browser's memory given back)
     mov dword [br_loaded], 0
-    ; return to the text console
+    ; return to the text console (and restart or switch off, if asked
+    ; for in the Start menu)
     call gui_restore_console
+    cmp byte [gui_quit], 2
+    je cmd_reboot
+    cmp byte [gui_quit], 3
+    je cmd_shutdown
     ret
 
 gui_restore_console:
@@ -608,3 +632,5 @@ gui_restore_console:
     ret
 
 %include "src/gui_win.asm"
+%include "src/gui_menu.asm"
+%include "src/gui_desk.asm"

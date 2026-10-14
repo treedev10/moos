@@ -40,16 +40,18 @@ MB_W_MIN    equ 340
 MB_BTN_W    equ 84
 MB_BTN_H    equ 26
 
-; MI label, hint, action, flags - one menu item (label / hint: strings or 0)
+; MI label, hint, action, flags - one menu item (the hint: a string, or 0
+; for none). The strings go to .data; the tables themselves are kept in
+; .text, so that the strings do not land in the middle of them.
 %macro MI 4
     [section .data]
     %%l: db %1, 0
-    %if %2 != 0
+    %ifstr %2
     %%h: db %2, 0
     %endif
     __SECT__
     dd %%l
-    %if %2 != 0
+    %ifstr %2
     dd %%h
     %else
     dd 0
@@ -218,6 +220,7 @@ menu_open:
     mov [mn_y], edx
     mov dword [mn_open], 1
     mov dword [mn_sel], -1
+    mov dword [mn_start], 0         ; (start_open sets it after)
     pop eax
     test eax, MO_KEYS
     jz .done
@@ -276,6 +279,17 @@ mn_measure:
     jge .wok
     mov eax, MN_MIN_W
 .wok:
+    cmp dword [mn_head], 0          ; wide enough for the header too
+    je .wset
+    push esi
+    mov esi, [mn_head]
+    call str_len
+    lea ecx, [ecx * 8 + 14 + 4 * 16 + 14 + 16]
+    pop esi
+    cmp eax, ecx
+    jge .wset
+    mov eax, ecx
+.wset:
     mov [mn_w], eax
     test edx, edx                   ; hints line up at the right edge
     jz .done

@@ -461,6 +461,16 @@ efi_keypoll64:
     mov [rel key_mods], edx
     mov eax, [rel efi_key]
     rol eax, 16
+    test edx, KMOD_CTRL             ; Ctrl + a letter: the control code
+    jz .ex_done                     ; (1-26), as ReadKeyStroke gives it
+    mov edx, eax
+    and edx, 0xFFDF                 ; (upper case)
+    cmp edx, 'A'
+    jb .ex_done
+    cmp edx, 'Z'
+    ja .ex_done
+    and eax, 0xFFFF001F
+.ex_done:
     LEAVE64
 .plain:
     mov rcx, [rel bootinfo + BI.conin]

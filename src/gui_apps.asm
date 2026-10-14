@@ -285,11 +285,17 @@ tx_for:
     mov ebx, tx_ide
 .r: ret
 
-; editor_app_init: EAX = app. Load its file (notes.txt / script.ms).
+; editor_app_init: EAX = app. Load its file: the Script IDE /script.ms,
+; the Text Editor edit_path (set by editor_open, gui_desk.asm) or else
+; /notes.txt.
 editor_app_init:
     pushad
     call tx_for
     mov esi, edit_file              ; choose the file by app
+    cmp byte [edit_path], 0
+    je .ide
+    mov esi, edit_path
+.ide:
     cmp eax, APP_IDE
     jne .have
     mov esi, ide_file
