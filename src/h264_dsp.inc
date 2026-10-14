@@ -744,9 +744,10 @@ h264_idct_any:
 ; =============================================================================
 
 ; h264_mc_luma: luma prediction of a w x h block (8.4.2.2.1) from the
-; reference plane ESI (its top-left pixel) into EDI (the current frame).
-; h264_mc_x / _y = position of the block in quarter samples (vector
-; included), h264_mc_w / _h = size. Both planes have stride h264_ystride.
+; reference plane ESI (its top-left pixel) into EDI (the current frame, or
+; a prediction buffer). h264_mc_x / _y = position of the block in quarter
+; samples (vector included), h264_mc_w / _h = size. The reference has
+; stride h264_ystride, the destination h264_mc_ds.
 ; The integer position is clamped so that every tap stays inside the
 ; frame border; that gives the same samples as clamping each coordinate.
 h264_mc_luma:
@@ -794,7 +795,7 @@ h264_mc_luma:
     test edx, edx
     jnz .two
     ; one plane, straight into the destination
-    mov ebx, ebp                    ; destination stride
+    mov ebx, [h264_mc_ds]           ; destination stride
     call h264_mc_plane
     jmp .out
 .two:
@@ -825,7 +826,7 @@ h264_mc_luma:
     cmp ecx, [h264_mc_w]
     jb .ac
     add esi, 16
-    add edi, ebp
+    add edi, [h264_mc_ds]
     dec edx
     jnz .ar
 .out:
@@ -1020,7 +1021,8 @@ h264_tap6:
 
 ; h264_mc_chroma: chroma prediction of a w x h block (8.4.2.2.2) from the
 ; reference plane ESI into EDI. h264_mc_x / _y = position in eighth
-; samples, h264_mc_w / _h = size; stride h264_cstride.
+; samples, h264_mc_w / _h = size; stride h264_cstride (destination:
+; h264_mc_dsc).
 h264_mc_chroma:
     push ebx
     push esi
@@ -1101,7 +1103,7 @@ h264_mc_chroma:
     cmp ecx, [h264_mc_w]
     jb .c
     add esi, ebp
-    add edi, ebp
+    add edi, [h264_mc_dsc]
     dec edx
     jnz .r
     pop ebp
@@ -1471,49 +1473,172 @@ h264_bs:
     jne .two
     cmp byte [edi + MI_NNZ + ecx], 0
     jne .two
-    ; different reference frames or vectors 4 quarter samples apart
+    ; different reference pictures, a different number of motion vectors,
+    ; or vectors of the same picture 4 quarter samples (or more) apart. The
+    ; pictures count, not the lists they were reached through.
+    push ebx
+    push ebp
     mov esi, [h264_dbk_pmo]
     mov edi, [h264_dbk_mo]
-    push eax
-    push ecx
     mov edx, eax                    ; 8x8 index = (y >> 1) * 2 + (x >> 1)
     shr edx, 3
     shl edx, 1
-    and eax, 3
-    shr eax, 1
-    add edx, eax
-    movzx edx, byte [esi + MO_RS0 + edx]
-    mov eax, ecx
-    shr eax, 3
-    shl eax, 1
-    and ecx, 3
-    shr ecx, 1
-    add eax, ecx
-    movzx eax, byte [edi + MO_RS0 + eax]
-    cmp eax, edx
-    pop ecx
-    pop eax
-    jne .one
-    movsx edx, word [esi + MO_MV0 + eax * 4]
-    movsx eax, word [esi + MO_MV0 + eax * 4 + 2]
+    mov ebx, eax
+    and ebx, 3
+    shr ebx, 1
+    add edx, ebx                    ; EDX = 8x8 of p
+    mov ebx, ecx
+    shr ebx, 3
+    shl ebx, 1
+    mov ebp, ecx
+    and ebp, 3
+    shr ebp, 1
+    add ebx, ebp                    ; EBX = 8x8 of q
     push eax
-    movsx eax, word [edi + MO_MV0 + ecx * 4]
-    sub edx, eax
-    jns .ax
-    neg edx
-.ax:
+    push ecx
+    movzx ecx, byte [esi + MO_RS0 + edx]   ; ECX = p0, EBP = p1, EDX = q0,
+    movzx ebp, byte [esi + MO_RS1 + edx]   ;   EBX = q1: frame buffers
+    movzx edx, byte [edi + MO_RS0 + ebx]   ;   (255 = list not used)
+    movzx ebx, byte [edi + MO_RS1 + ebx]
     pop eax
-    cmp edx, 4
-    jge .one
-    movsx edx, word [edi + MO_MV0 + ecx * 4 + 2]
-    sub eax, edx
-    jns .ay
-    neg eax
-.ay:
-    cmp eax, 4
-    jge .one
+    lea edi, [edi + eax * 4]        ; EDI: [edi + MO_MV0] = q's vectors
+    pop eax
+    lea esi, [esi + eax * 4]        ; ESI: p's
+    cmp ecx, 255
+    je .pone
+    cmp ebp, 255
+    je .pone
+    ; p has two vectors: q must have two, of the same two pictures
+    cmp edx, 255
+    je .diff
+    cmp ebx, 255
+    je .diff
+    cmp ecx, ebp
+    je .same
+    cmp ecx, edx                    ; p0 = q0 and p1 = q1
+    jne .cross
+    cmp ebp, ebx
+    jne .diff
+    call .d00
+    jnz .diff
+    call .d11
+    jmp .res
+.cross:
+    cmp ecx, ebx                    ; p0 = q1 and p1 = q0
+    jne .diff
+    cmp ebp, edx
+    jne .diff
+    call .d01
+    jnz .diff
+    call .d10
+    jmp .res
+.same:
+    ; both of p's vectors refer to one picture, so must both of q's: a
+    ; filtered edge unless the vectors are close in one of the pairings
+    cmp edx, ecx
+    jne .diff
+    cmp ebx, ecx
+    jne .diff
+    call .d00
+    jnz .s2
+    call .d11
+    jz .res
+.s2:
+    call .d01
+    jnz .diff
+    call .d10
+    jmp .res
+.pone:
+    ; p has one vector (list X): q must have one too (list Y), of the same
+    ; picture
+    xor eax, eax                    ; AL = X, AH = Y
+    cmp ecx, 255
+    jne .px
+    mov ecx, ebp
+    inc al
+.px:
+    cmp edx, 255
+    je .qy1
+    cmp ebx, 255
+    jne .diff                       ; q has two
+    jmp .qy
+.qy1:
+    mov edx, ebx
+    inc ah
+.qy:
+    cmp ecx, edx
+    jne .diff
+    cmp ecx, 255                    ; (no vector on either side)
+    je .res0
+    shl al, 1
+    or al, ah
+    movzx eax, al
+    jmp [h264_bs_dxy + eax * 4]
+.d00r:
+    call .d00
+    jmp .res
+.d01r:
+    call .d01
+    jmp .res
+.d10r:
+    call .d10
+    jmp .res
+.d11r:
+    call .d11
+.res:
+    jnz .diff
+.res0:
+    pop ebp
+    pop ebx
     xor eax, eax
     jmp .out
+.diff:
+    pop ebp
+    pop ebx
+    jmp .one
+; vector comparisons: ZF = 0 (jnz) if the two differ by 4 or more in
+; either component; .dXY = p's list X against q's list Y. EAX ECX EDX
+; changed.
+.d00:
+    mov eax, [esi + MO_MV0]
+    mov ecx, [edi + MO_MV0]
+    jmp .dmv
+.d11:
+    mov eax, [esi + MO_MV1]
+    mov ecx, [edi + MO_MV1]
+    jmp .dmv
+.d01:
+    mov eax, [esi + MO_MV0]
+    mov ecx, [edi + MO_MV1]
+    jmp .dmv
+.d10:
+    mov eax, [esi + MO_MV1]
+    mov ecx, [edi + MO_MV0]
+.dmv:
+    push ebx
+    movsx edx, ax
+    movsx ebx, cx
+    sub edx, ebx
+    jns .dx
+    neg edx
+.dx:
+    cmp edx, 4
+    jge .dne
+    sar eax, 16
+    sar ecx, 16
+    sub eax, ecx
+    jns .dy
+    neg eax
+.dy:
+    cmp eax, 4
+    jge .dne
+    pop ebx
+    cmp eax, eax                    ; ZF = 1: close
+    ret
+.dne:
+    pop ebx
+    or eax, 1                       ; ZF = 0
+    ret
 .one:
     mov eax, 1
     jmp .out
@@ -1526,6 +1651,10 @@ h264_bs:
     pop edi
     pop esi
     ret
+
+section .data
+h264_bs_dxy     dd h264_bs.d00r, h264_bs.d01r, h264_bs.d10r, h264_bs.d11r
+section .text
 
 ; h264_dbk_params: EAX = qP of macroblock q, ECX = of p -> alpha, beta and
 ; the tC0 row of the edge (offsets of macroblock h264_dbk_mb). ZF = 1 (jz

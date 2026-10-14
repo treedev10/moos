@@ -23,6 +23,14 @@
 ;      and as the co-located data of later B pictures.
 ; =============================================================================
 
+PB_SZ           equ 16 * 16 + 2 * 16 * 8
+PB_U            equ 256             ; Cb, Cr in h264_pb0 / h264_pb1
+PB_V            equ 384
+; h264_ppred bits
+PP_L0           equ 1
+PP_L1           equ 2
+PP_DIRECT       equ 4
+
 section .bss
 alignb 16
 h264_pb0        resb PB_SZ          ; prediction from list 0: luma 16 x 16
@@ -110,13 +118,6 @@ h264_corner     db 0, 0, 3, 3, 0, 0, 3, 3, 12, 12, 15, 15, 12, 12, 15, 15
 
 section .text
 
-PB_SZ           equ 16 * 16 + 2 * 16 * 8
-PB_U            equ 256             ; Cb, Cr in h264_pb0 / h264_pb1
-PB_V            equ 384
-; h264_ppred bits
-PP_L0           equ 1
-PP_L1           equ 2
-PP_DIRECT       equ 4
 
 ; =============================================================================
 ;  Neighbour caches
@@ -979,6 +980,10 @@ h264_direct:
     call h264_minpos                ; MinPositive(B, C)
     xchg eax, ecx
     call h264_minpos                ; MinPositive(A, ...)
+    test eax, eax                   ; (not available counts as -1)
+    jns .sr1
+    or eax, -1
+.sr1:
     mov [h264_wtmp + ebp * 4], eax
     inc ebp
     cmp ebp, 2
@@ -1410,9 +1415,11 @@ h264_slice_bsetup:
     mov ebx, [eax + SL_POC]         ; EBX = POC of RefPicList1[0]
     ; temporal direct: DistScaleFactor per list 0 index
     xor esi, esi
-.t: movzx eax, byte [h264_list0 + esi]
+.t: mov byte [h264_dsfm + esi], 1
+    cmp esi, [h264_sh_nref0]
+    jae .tn
+    movzx eax, byte [h264_list0 + esi]
     SLOTP eax
-    mov byte [h264_dsfm + esi], 1
     test dword [eax + SL_FLAGS], F_LONG
     jnz .tn
     mov edx, [eax + SL_POC]         ; pic0
@@ -1429,16 +1436,20 @@ h264_slice_bsetup:
     cmp dword [h264_sh_wmode], 2
     jne .done
     xor esi, esi                    ; ESI = ref0 * 16 + ref1
-.w: mov eax, esi
+.w: mov edi, 32
+    mov eax, esi
     shr eax, 4
+    cmp eax, [h264_sh_nref0]
+    jae .wput
     movzx eax, byte [h264_list0 + eax]
     SLOTP eax
-    mov edi, 32
     test dword [eax + SL_FLAGS], F_LONG
     jnz .wput
     mov edx, [eax + SL_POC]         ; pic0
     mov eax, esi
     and eax, 15
+    cmp eax, [h264_sh_nref1]
+    jae .wput
     movzx eax, byte [h264_list1 + eax]
     SLOTP eax
     test dword [eax + SL_FLAGS], F_LONG

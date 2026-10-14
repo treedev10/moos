@@ -201,6 +201,7 @@ MT_PCM          equ 2
 MT_I4           equ 4               ; Intra_4x4
 MT_I16          equ 8
 MT_SKIP         equ 16
+MT_DIRECT       equ 32              ; B_Skip / B_Direct_16x16
 
 ; weights of one reference index (h264_wt)
 WT_SZ           equ 24
@@ -1581,9 +1582,13 @@ h264_slice:
     je .data
     call h264_build_lists           ; (a missing reference is replaced:
     test eax, eax                   ;  decode the slice anyway)
-    jz .data
+    jz .lists
     mov dword [h264_pic_err], 1
-.data:
+.lists:
+    cmp dword [h264_sh_type], ST_B
+    jne .data
+    call h264_slice_bsetup          ; co-located picture, direct scaling,
+.data:                              ;   implicit weights
     call h264_slice_data
     test eax, eax
     jz .complete
@@ -2051,4 +2056,5 @@ h264_same_pic:
 
 %include "src/h264_pic.inc"
 %include "src/h264_mb.inc"
+%include "src/h264_inter.inc"
 %include "src/h264_dsp.inc"
