@@ -3,6 +3,7 @@ NAME
 
 SYNOPSIS
     copy <source> <destination>
+    copy <source> <folder>
 
 DESCRIPTION
     copy creates a second file with exactly the same contents as the
@@ -14,9 +15,11 @@ DESCRIPTION
     time.
 
 ARGUMENTS
-    source        the file to copy (it must exist)
+    source        the file to copy (it must exist; a name or a path)
     destination   the name for the copy (1 to 19 letters, digits,
-                  dots, dashes or underscores)
+                  dots, dashes or underscores, with a path in front if
+                  it goes into another folder). If it is an existing
+                  folder, the copy goes there with the source's name.
 
 EXAMPLES
     copy diary.txt diary-backup.txt
@@ -24,6 +27,9 @@ EXAMPLES
 
     cp notes.txt notes2.txt
         The same, using the Unix-style alias.
+
+    copy notes.txt backup
+        Copies it into the folder backup, as backup/notes.txt.
 
 MESSAGES
     usage: copy <source> <destination>
@@ -38,8 +44,9 @@ MESSAGES
     error: source and destination are the same file
         A file cannot be copied onto itself.
 
-    error: no free file slots
-        All 32 slots are used. Delete a file with rm first.
+    error: no free entries
+        All 32 entries (files and folders together) are used. Delete
+        something first. Folders cannot be copied.
 
 ALIASES
     cp

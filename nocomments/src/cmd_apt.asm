@@ -74,6 +74,13 @@ apt_load_repo:
     popad
     ret
 
+cmd_apt_top:
+    push dword [fs_cwd]
+    mov dword [fs_cwd], 0
+    call cmd_apt
+    pop dword [fs_cwd]
+    ret
+
 cmd_apt:
     call apt_load_repo
     cmp dword [argc], 2
@@ -136,6 +143,10 @@ cmd_apt:
     call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .list_n
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .list_n
+    cmp byte [edi + DE_PARENT], 0
+    jne .list_n
     mov esi, edi
     call ends_with_inst
     jc .list_n
@@ -260,6 +271,33 @@ apt_install:
 
 apt_protected_name:
     pushad
+    mov edi, esi
+.part:
+    cmp byte [edi], '.'
+    jne .skip
+    cmp byte [edi + 1], '.'
+    jne .one
+    inc edi
+.one:
+    mov al, [edi + 1]
+    test al, al
+    jz .yes
+    cmp al, '/'
+    je .yes
+.skip:
+    mov al, [edi]
+    inc edi
+    test al, al
+    jz .where
+    cmp al, '/'
+    jne .skip
+    jmp .part
+.where:
+    call fs_resolve
+    jc .no
+    test eax, eax
+    jnz .no
+    mov esi, fs_leaf
     mov ebx, apt_protected
 .l: mov edi, [ebx]
     test edi, edi
@@ -271,6 +309,7 @@ apt_protected_name:
 .check_inst:
     call ends_with_inst
     jnc .yes
+.no:
     popad
     clc
     ret
@@ -373,7 +412,10 @@ pkg_install:
     push ecx
     push edx
     mov esi, apt_pkg_name
+    call fs_make_parents
+    jc .made
     call fs_save
+.made:
     pop edx
     pop ecx
     jc .save_err

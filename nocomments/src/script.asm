@@ -548,6 +548,8 @@ cmd_run:
     mov esi, [argv + 4]
     call fs_find
     jc .nofile
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .nofile
     mov ecx, [edi + DE_SIZE]
     call fs_slot
     mov edi, SCRATCH

@@ -2,8 +2,8 @@ TASKBAR_H   equ 34
 CUR_W       equ 24
 CUR_H       equ 20
 CUR_DX      equ 6
-TB_N        equ 7
-TB_QUIT     equ 6
+TB_N        equ 8
+TB_QUIT     equ 7
 
 %macro RECT 5
     mov ecx, %1
@@ -60,19 +60,20 @@ section .data
 desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
-gui_hint1   db "Click an app on the taskbar, or press its key:", 0
-gui_hint2   db "F1 Terminal  F2 Editor  F3 Script IDE  F4 Browser  F5 Settings  F11 Tasks", 0
-gui_hint3   db "Drag a title bar to move a window, an edge or corner to resize it.", 0
-gui_hint4   db "Keys: F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
-gui_hint5   db "Esc closes a window. Esc on the empty desktop leaves.", 0
-gui_nomouse db "No mouse found - the PC's firmware offers none. Use the keys above.", 0
+gui_hint1   db "Start menu: the Start button, F12 or Ctrl+Esc.", 0
+gui_hint2   db "F1-F5 open the apps on the taskbar, F11 the Task Manager.", 0
+gui_hint3   db "F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
+gui_hint4   db "Right-click the desktop (or Shift+F10) for New folder / file.", 0
+gui_hint5   db "Esc closes a window; Esc on the empty desktop leaves.", 0
+gui_nomouse db "No mouse found (the firmware has none): use the keys.", 0
 ga_term     db "term", 0
 ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
 ga_settings db "settings", 0
 ga_tasks    db "tasks", 0
-tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_tasks
+ga_files    db "files", 0
+tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_tasks, tb_l_files
             dd tb_l_quit
 tb_lens     db 8, 6, 10, 7, 8, 5, 4
 tb_l_term   db "Terminal", 0
@@ -81,6 +82,7 @@ tb_l_ide    db "Script IDE", 0
 tb_l_brow   db "Browser", 0
 tb_l_set    db "Settings", 0
 tb_l_tasks  db "Tasks", 0
+tb_l_files  db "Files", 0
 tb_l_quit   db "Quit", 0
 
 DESK_NCOLORS equ 8
@@ -121,19 +123,7 @@ gui_wallpaper:
     mov edi, [gfx_h]
     sub edi, TASKBAR_H
     call gfx_fillrect
-    mov dword [gfx_scale], 3
-    TEXT 40, 26, gui_title, 0xF4F0E6, -1
-    mov dword [gfx_scale], 1
-    TEXT 40, 74, gui_sub, 0xD8E4EA, -1
-    TEXT 40, 120, gui_hint1, 0xD8E4EA, -1
-    TEXT 40, 140, gui_hint2, 0xFFFFFF, -1
-    TEXT 40, 166, gui_hint3, 0xD8E4EA, -1
-    TEXT 40, 186, gui_hint4, 0xD8E4EA, -1
-    TEXT 40, 206, gui_hint5, 0xD8E4EA, -1
-    cmp byte [mouse_ok], 0
-    jne .done
-    TEXT 40, 242, gui_nomouse, 0xFFD27A, -1
-.done:
+    call desk_draw
     popad
     ret
 
@@ -249,7 +239,8 @@ gui_taskbar:
     mov edx, [tb_top]
     RECT 0, edx, [gfx_w], 2, 0x4A5A6A
     mov dword [gfx_scale], 1
-    mov dword [tb_cx], 8
+    call start_draw
+    mov dword [tb_cx], START_X + START_W + 8
     mov dword [tb_i], 0
 .btn:
     mov ecx, [tb_i]
@@ -337,6 +328,14 @@ tb_hit:
     sub eax, TASKBAR_H
     cmp [mouse_y], eax
     jb .none
+    mov eax, [mouse_x]
+    sub eax, START_X
+    cmp eax, START_W
+    jae .apps
+    mov eax, TB_START
+    pop ecx
+    ret
+.apps:
     xor ecx, ecx
 .l: mov eax, [mouse_x]
     cmp eax, [tb_x0 + ecx * 4]
@@ -371,6 +370,10 @@ gui_mouse_busy:
 
 gui_hover_check:
     push eax
+    cmp dword [mn_open], 0
+    je .bar
+    call menu_hover
+.bar:
     call tb_hit
     cmp eax, [tb_hover]
     je .same
@@ -465,6 +468,8 @@ gui_redraw:
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
+    call menu_draw
+    call mb_draw
     call gui_cursor_show
     call gfx_present
     jmp .done
@@ -522,7 +527,7 @@ cmd_gui:
     ret
 .ok:
     mov esi, desktop_marker
-    call fs_find
+    call fs_find_top
     jnc .installed
     PRINTF `The desktop is not installed yet. Install it with:\n\n    \x01wapt install desktop\x01n\n\n(this downloads it from the package server - see \x01wman apt\x01n). It is a one-time\nstep; after that, \x01wgui\x01n starts the desktop.\n`
     ret
@@ -536,6 +541,7 @@ cmd_gui:
     call efi_mouse_init
     mov byte [gui_quit], 0
     call wm_reset
+    call desk_reset
     mov dword [tb_hover], -1
     mov dword [prev_btn], 0
     mov eax, [mouse_x]
@@ -572,6 +578,10 @@ cmd_gui:
     je .open
     mov eax, APP_TASKS
     mov edi, ga_tasks
+    call str_icmp
+    je .open
+    mov eax, APP_FILES
+    mov edi, ga_files
     call str_icmp
     je .open
     mov eax, APP_BROWSER
@@ -651,6 +661,10 @@ cmd_gui:
     mov dword [br_loaded], 0
 
     call gui_restore_console
+    cmp byte [gui_quit], 2
+    je cmd_reboot
+    cmp byte [gui_quit], 3
+    je cmd_shutdown
     ret
 
 gui_restore_console:
@@ -668,3 +682,5 @@ gui_restore_console:
     ret
 
 %include "src/gui_win.asm"
+%include "src/gui_menu.asm"
+%include "src/gui_desk.asm"

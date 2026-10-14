@@ -30,6 +30,9 @@ efi_far     resd 2
 efi_cur_bio resq 1
 efi_time    resb 16
 efi_key     resd 1
+efi_keyst   resd 2
+efi_keyex   resq 1
+key_mods    resd 1
 efi_index   resq 1
 efi_tmp     resq 2
 fw_name     resb 48
@@ -73,6 +76,9 @@ guid_dev_path   dd 0x09576E91
 guid_abs_ptr    dd 0x8D59D32B
                 dw 0xC655, 0x4AE9
                 db 0x9B, 0x15, 0xF2, 0x59, 0x04, 0x99, 0x2A, 0x43
+guid_text_ex    dd 0xDD9E7534
+                dw 0x7762, 0x4698
+                db 0x8C, 0x14, 0xF5, 0x85, 0x17, 0xA6, 0x25, 0xAA
 guid_simple_ptr dd 0x31878C87
                 dw 0x0B75, 0x11D5
                 db 0x9A, 0x4F, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D
@@ -161,6 +167,8 @@ efi_list_disks:
     ret
 
 efi_mouse_init:
+    mov eax, efi_keyinit64
+    call efi64
     mov eax, efi_ptrinit64
     call efi64
     test eax, eax
@@ -453,6 +461,47 @@ efi_readkey64:
 
 efi_keypoll64:
     ENTER64
+    mov rcx, [rel efi_keyex]
+    test rcx, rcx
+    jz .plain
+    lea rdx, [rel efi_key]
+    xor eax, eax
+    mov [rdx], eax
+    mov [rdx + 4], rax
+    call [rcx + 8]
+    test rax, rax
+    jnz .none
+    xor edx, edx
+    mov eax, [rel efi_keyst]
+    test eax, eax
+    jns .mods
+    test eax, 3
+    jz .m1
+    or edx, KMOD_SHIFT
+.m1:
+    test eax, 0x0C
+    jz .m2
+    or edx, KMOD_CTRL
+.m2:
+    test eax, 0x30
+    jz .mods
+    or edx, KMOD_ALT
+.mods:
+    mov [rel key_mods], edx
+    mov eax, [rel efi_key]
+    rol eax, 16
+    test edx, KMOD_CTRL
+    jz .ex_done
+    mov edx, eax
+    and edx, 0xFFDF
+    cmp edx, 'A'
+    jb .ex_done
+    cmp edx, 'Z'
+    ja .ex_done
+    and eax, 0xFFFF001F
+.ex_done:
+    LEAVE64
+.plain:
     mov rcx, [rel bootinfo + BI.conin]
     lea rdx, [rel efi_key]
     mov dword [rdx], 0
@@ -463,6 +512,24 @@ efi_keypoll64:
     rol eax, 16
     LEAVE64
 .none:
+    xor eax, eax
+    LEAVE64
+
+efi_keyinit64:
+    ENTER64
+    mov qword [rel efi_keyex], 0
+    mov rcx, [rel bootinfo + BI.systab]
+    mov rcx, [rcx + 40]
+    lea rdx, [rel guid_text_ex]
+    lea r8, [rel efi_tmp]
+    mov qword [r8], 0
+    mov rax, [rel bootinfo + BI.bs]
+    call [rax + 152]
+    test rax, rax
+    jnz .done
+    mov rax, [rel efi_tmp]
+    mov [rel efi_keyex], rax
+.done:
     xor eax, eax
     LEAVE64
 
@@ -864,7 +931,7 @@ ptr_abs_apply:
     call .map
     mov [rel mouse_y], eax
     mov eax, [rel ptr_state + 24]
-    and eax, 1
+    and eax, 3
     mov [rel mouse_btn], eax
     mov rax, [rcx + 16]
     cmp rax, [rcx + 40]
@@ -916,8 +983,12 @@ ptr_rel_apply:
     mov r10d, [rel gfx_h]
     call .clamp
     mov [rel mouse_y], eax
-    movzx eax, byte [rel ptr_state + 12]
+    movzx eax, byte [rel ptr_state + 13]
     and eax, 1
+    add eax, eax
+    movzx edx, byte [rel ptr_state + 12]
+    and edx, 1
+    or eax, edx
     mov [rel mouse_btn], eax
     mov eax, [rel ptr_state + 8]
     add [rel mouse_wheel], eax

@@ -25,7 +25,7 @@ ed_saved    resb 1
 ed_msg_on   resb 1
 ed_cutting  resb 1
 ed_quit     resb 1
-ed_name     resb 24
+ed_name     resb 128
 ed_msgbuf   resb SCR_COLS + 2
 ed_find     resb 80
 
@@ -56,9 +56,6 @@ cmd_edit:
     jc .start
     mov ecx, [edi + DE_SIZE]
     push esi
-    mov esi, edi
-    mov edi, ed_name
-    call str_copy
     call fs_slot
     mov edi, ED_BUF
     call mem_copy

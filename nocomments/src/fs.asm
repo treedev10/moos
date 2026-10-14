@@ -13,13 +13,21 @@ DE_SIZE         equ 20
 DE_FLAGS        equ 24
 DE_MTIME        equ 28
 DE_SIZEOF       equ 32
+DE_PARENT       equ DE_FLAGS + 1
 FLAG_USED       equ 1
+FLAG_DIR        equ 2
+FS_PATH_MAX     equ 256
 
 section .bss
 fs_persist      resb 1
 alignb 4
 fs_part_lba     resd 1
 fs_sector       resb 512
+alignb 4
+fs_cwd          resd 1
+fs_chain        resd FS_MAX_FILES
+fs_leaf         resb 24
+fs_tmp_path     resb FS_PATH_MAX
 
 section .data
 fs_magic        db "MOOSFS01"
@@ -46,10 +54,15 @@ dm_none         db "nothing (RAM only)", 0
 dm_ata          db "the MOOS ATA driver", 0
 dm_bios         db "the BIOS (INT 13h)", 0
 dm_uefi         db "the UEFI firmware", 0
-err_name_bad    db "invalid file name (use 1-19 letters, digits, '.', '-' or '_')", 0
+err_name_bad    db "invalid name (1-19 letters, digits, '.', '-', '_')", 0
 err_too_big     db "file too large (the limit is 4096 bytes)", 0
-err_disk_full   db "no free file slots (the limit is 32 files) - delete something first", 0
-err_exists      db "a file with that name already exists", 0
+err_disk_full   db "all 32 entries are in use (files and folders together)", 0
+err_exists      db "a file or folder with that name already exists there", 0
+err_no_folder   db "no such folder", 0
+err_not_folder  db "that is a file, not a folder", 0
+err_is_folder   db "that is a folder, not a file", 0
+err_not_empty   db "the folder is not empty - delete what is in it first", 0
+err_into_self   db "a folder cannot be moved into itself", 0
 
 section .text
 
@@ -149,9 +162,11 @@ fs_init:
     inc ebx
     cmp ebx, FS_MAX_FILES
     jb .load
+    call fs_check_tree
     call fs_stats
+    call fs_counts
     call fs_method
-    PRINTF `\x01g[ OK ]\x01n Disk: %d file(s), %d bytes, saved through %s\n`, eax, edx, esi
+    PRINTF `\x01g[ OK ]\x01n Disk: %d file(s)/%d folder(s), %d bytes, saved through %s\n`, eax, ecx, edx, esi
     jmp .done
 
 .fresh:
@@ -243,6 +258,7 @@ fs_add_welcome:
 
 fs_format:
     pushad
+    mov dword [fs_cwd], 0
     mov edi, FS_DIR
     mov ecx, FS_MAX_FILES * DE_SIZEOF / 4
     xor eax, eax
@@ -322,11 +338,20 @@ fs_disk_error:
     PRINTF `\x01rwarning:\x01n disk write failed - from now on files are kept in RAM only\n`
     ret
 
-fs_find:
+fs_up:
+    test eax, eax
+    jz .r
+    shl eax, 5
+    movzx eax, byte [FS_DIR - DE_SIZEOF + DE_PARENT + eax]
+.r: ret
+
+fs_lookup:
     xor ebx, ebx
 .l: call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .n
+    cmp [edi + DE_PARENT], al
+    jne .n
     call str_icmp
     je .found
 .n: inc ebx
@@ -338,10 +363,280 @@ fs_find:
     clc
     ret
 
+fs_resolve:
+    push ebx
+    push ecx
+    push esi
+    push edi
+    mov eax, [fs_cwd]
+    cmp byte [esi], '/'
+    jne .start
+    xor eax, eax
+.start:
+    mov byte [fs_leaf], 0
+.skip:
+    cmp byte [esi], '/'
+    jne .part
+    inc esi
+    jmp .skip
+.part:
+    cmp byte [esi], 0
+    je .ok
+    mov edi, fs_leaf
+    xor ecx, ecx
+.copy:
+    mov bl, [esi]
+    test bl, bl
+    jz .copied
+    cmp bl, '/'
+    je .copied
+    cmp ecx, FS_NAME_MAX
+    jae .bad
+    mov [edi + ecx], bl
+    inc ecx
+    inc esi
+    jmp .copy
+.copied:
+    mov byte [edi + ecx], 0
+    cmp byte [edi], '.'
+    jne .name
+    cmp byte [edi + 1], 0
+    je .dot
+    cmp word [edi + 1], '.'
+    jne .name
+    call fs_up
+.dot:
+    mov byte [fs_leaf], 0
+    jmp .skip
+.name:
+    mov ebx, esi
+.more:
+    cmp byte [ebx], '/'
+    jne .last
+    inc ebx
+    jmp .more
+.last:
+    cmp byte [ebx], 0
+    je .ok
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
+    jc .no_folder
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .not_folder
+    lea eax, [ebx + 1]
+    jmp .skip
+.ok:
+    clc
+    jmp .out
+.bad:
+    mov eax, err_name_bad
+    jmp .fail
+.no_folder:
+    mov eax, err_no_folder
+    jmp .fail
+.not_folder:
+    mov eax, err_not_folder
+.fail:
+    mov byte [fs_leaf], 0
+    stc
+.out:
+    pop edi
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+
+fs_find:
+    push eax
+    call fs_resolve
+    jc .no
+    cmp byte [fs_leaf], 0
+    je .folder
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
+    pop eax
+    ret
+.folder:
+    test eax, eax
+    jz .no
+    lea ebx, [eax - 1]
+    call fs_entry
+    pop eax
+    clc
+    ret
+.no:
+    pop eax
+    stc
+    ret
+
+fs_find_dir:
+    push ebx
+    push edi
+    call fs_resolve
+    jc .out
+    cmp byte [fs_leaf], 0
+    je .ok
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
+    mov eax, err_no_folder
+    jc .out
+    mov eax, err_not_folder
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    stc
+    jz .out
+    lea eax, [ebx + 1]
+.ok:
+    clc
+.out:
+    pop edi
+    pop ebx
+    ret
+
+fs_find_top:
+    push dword [fs_cwd]
+    mov dword [fs_cwd], 0
+    call fs_find
+    pop dword [fs_cwd]
+    ret
+
+fs_save_top:
+    push dword [fs_cwd]
+    mov dword [fs_cwd], 0
+    call fs_save
+    pop dword [fs_cwd]
+    ret
+
+fs_dir_count:
+    push ebx
+    push edi
+    xor ecx, ecx
+    xor ebx, ebx
+.l: call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_USED
+    jz .n
+    cmp [edi + DE_PARENT], al
+    jne .n
+    inc ecx
+.n: inc ebx
+    cmp ebx, FS_MAX_FILES
+    jb .l
+    pop edi
+    pop ebx
+    ret
+
+fs_inside:
+    push eax
+    push ecx
+    mov ecx, FS_MAX_FILES + 1
+.l: test eax, eax
+    jz .no
+    dec eax
+    cmp eax, ebx
+    je .yes
+    inc eax
+    call fs_up
+    loop .l
+.no:
+    clc
+    jmp .out
+.yes:
+    stc
+.out:
+    pop ecx
+    pop eax
+    ret
+
+fs_path:
+    pushad
+    xor ecx, ecx
+.up:
+    test eax, eax
+    jz .down
+    cmp ecx, FS_MAX_FILES
+    jae .down
+    mov [fs_chain + ecx * 4], eax
+    inc ecx
+    call fs_up
+    jmp .up
+.down:
+    lea edx, [edi + FS_PATH_MAX - 1]
+    test ecx, ecx
+    jnz .part
+    mov byte [edi], '/'
+    inc edi
+    jmp .end
+.part:
+    dec ecx
+    cmp edi, edx
+    jae .end
+    mov byte [edi], '/'
+    inc edi
+    mov esi, [fs_chain + ecx * 4]
+    shl esi, 5
+    add esi, FS_DIR - DE_SIZEOF
+.ch:
+    lodsb
+    test al, al
+    jz .next
+    cmp edi, edx
+    jae .end
+    stosb
+    jmp .ch
+.next:
+    test ecx, ecx
+    jnz .part
+.end:
+    mov byte [edi], 0
+    popad
+    ret
+
+fs_entry_path:
+    pushad
+    mov edx, edi
+    call fs_entry
+    movzx eax, byte [edi + DE_PARENT]
+    mov esi, edi
+    mov edi, edx
+    call fs_path
+    call str_len
+    push esi
+    mov esi, edi
+    push ecx
+    call str_len
+    mov eax, ecx
+    pop ecx
+    pop esi
+    lea ecx, [eax + ecx + 2]
+    cmp ecx, FS_PATH_MAX
+    ja .done
+    cmp eax, 1
+    je .top
+    mov byte [edi + eax], '/'
+    inc eax
+.top:
+    add edi, eax
+    call str_copy
+.done:
+    popad
+    ret
+
 fs_name_valid:
     push eax
     push ecx
     push esi
+    cmp byte [esi], '.'
+    jne .chars
+    cmp byte [esi + 1], 0
+    je .bad
+    cmp word [esi + 1], '.'
+    je .bad
+.chars:
     xor ecx, ecx
 .l: lodsb
     test al, al
@@ -377,6 +672,79 @@ fs_name_valid:
     pop eax
     ret
 
+fs_leaf_check:
+    push esi
+    mov esi, fs_leaf
+    call fs_name_valid
+    pop esi
+    jnc .r
+    mov eax, err_name_bad
+.r: ret
+
+fs_claim:
+    push ecx
+    push esi
+    xor ebx, ebx
+.l: call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_USED
+    jz .free
+    inc ebx
+    cmp ebx, FS_MAX_FILES
+    jb .l
+    mov eax, err_disk_full
+    stc
+    jmp .out
+.free:
+    push eax
+    mov ecx, DE_SIZEOF
+    xor eax, eax
+    rep stosb
+    sub edi, DE_SIZEOF
+    pop eax
+    mov esi, fs_leaf
+    call str_copy
+    mov byte [edi + DE_FLAGS], FLAG_USED
+    mov [edi + DE_PARENT], al
+    clc
+.out:
+    pop esi
+    pop ecx
+    ret
+
+fs_check_tree:
+    pushad
+    xor ebx, ebx
+.l: call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_USED
+    jz .n
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .walk
+    mov dword [edi + DE_SIZE], 0
+.walk:
+    movzx eax, byte [edi + DE_PARENT]
+    mov ecx, FS_MAX_FILES + 1
+.up:
+    test eax, eax
+    jz .n
+    cmp eax, FS_MAX_FILES
+    ja .orphan
+    mov edx, eax
+    shl edx, 5
+    add edx, FS_DIR - DE_SIZEOF
+    test byte [edx + DE_FLAGS], FLAG_USED
+    jz .orphan
+    test byte [edx + DE_FLAGS], FLAG_DIR
+    jz .orphan
+    movzx eax, byte [edx + DE_PARENT]
+    loop .up
+.orphan:
+    mov byte [edi + DE_PARENT], 0
+.n: inc ebx
+    cmp ebx, FS_MAX_FILES
+    jb .l
+    popad
+    ret
+
 fs_timestamp:
     push ebx
     call rtc_read
@@ -403,35 +771,23 @@ fs_timestamp:
 fs_save:
     cmp ecx, FS_SLOT_SIZE
     ja .too_big
-    call fs_name_valid
-    jc .bad_name
     pushad
-    call fs_find
+    call fs_resolve
+    jc .fail
+    call fs_leaf_check
+    jc .fail
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
     jnc .have
-    xor ebx, ebx
-.free:
-    call fs_entry
-    test byte [edi + DE_FLAGS], FLAG_USED
-    jz .claim
-    inc ebx
-    cmp ebx, FS_MAX_FILES
-    jb .free
-    popad
-    mov esi, err_disk_full
-    stc
-    ret
-.claim:
-    push ecx
-    push edi
-    mov ecx, DE_SIZEOF
-    xor eax, eax
-    rep stosb
-    pop edi
-    pop ecx
-    call str_copy
+    call fs_claim
+    jc .fail
 .have:
+    mov eax, err_is_folder
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .fail
     mov [edi + DE_SIZE], ecx
-    mov dword [edi + DE_FLAGS], FLAG_USED
     call fs_timestamp
     mov [edi + DE_MTIME], eax
     call fs_slot
@@ -445,53 +801,185 @@ fs_save:
     popad
     clc
     ret
+.fail:
+    mov [esp + 4], eax
+    popad
+    stc
+    ret
 .too_big:
     mov esi, err_too_big
     stc
     ret
-.bad_name:
-    mov esi, err_name_bad
+
+fs_mkdir:
+    pushad
+    call fs_resolve
+    jc .fail
+    cmp byte [fs_leaf], 0
+    je .exists
+    call fs_leaf_check
+    jc .fail
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
+    jnc .exists
+    call fs_claim
+    jc .fail
+    or byte [edi + DE_FLAGS], FLAG_DIR
+    call fs_timestamp
+    mov [edi + DE_MTIME], eax
+    call fs_commit
+    mov [esp + 16], ebx
+    popad
+    clc
+    ret
+.exists:
+    mov eax, err_exists
+.fail:
+    mov [esp + 4], eax
+    popad
+    stc
+    ret
+
+fs_make_parents:
+    pushad
+    call str_len
+    cmp ecx, FS_PATH_MAX - 1
+    jae .done
+    mov edi, fs_tmp_path
+    call str_copy
+    mov edx, edi
+.scan:
+    mov al, [edx]
+    test al, al
+    jz .done
+    cmp al, '/'
+    jne .next
+    cmp edx, fs_tmp_path
+    je .next
+    mov byte [edx], 0
+    mov esi, fs_tmp_path
+    call fs_find_dir
+    jnc .there
+    cmp eax, err_no_folder
+    jne .fail
+    call fs_mkdir
+    mov eax, esi
+    jc .fail
+.there:
+    mov byte [edx], '/'
+.next:
+    inc edx
+    jmp .scan
+.done:
+    popad
+    clc
+    ret
+.fail:
+    mov [esp + 4], eax
+    popad
     stc
     ret
 
 fs_delete:
     pushad
     call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .go
+    lea eax, [ebx + 1]
+    call fs_dir_count
+    test ecx, ecx
+    jnz .not_empty
+    cmp [fs_cwd], eax
+    jne .go
+    movzx eax, byte [edi + DE_PARENT]
+    mov [fs_cwd], eax
+.go:
     mov ecx, DE_SIZEOF
     xor eax, eax
     rep stosb
     call fs_commit
     popad
+    clc
+    ret
+.not_empty:
+    popad
+    mov esi, err_not_empty
+    stc
     ret
 
 fs_rename:
-    call fs_name_valid
-    jc .bad_name
-    push ebx
-    push edi
-    call fs_find
-    pop edi
-    jnc .exists
-    pop ebx
     pushad
+    call fs_resolve
+    jc .fail
+    cmp byte [fs_leaf], 0
+    je .into
+    push ebx
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    mov ecx, ebx
+    pop esi
+    pop ebx
+    jc .new_name
+    cmp ecx, ebx
+    je .new_name
+    push ebx
+    mov ebx, ecx
     call fs_entry
-    mov ecx, 20
-    push edi
+    pop ebx
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .exists
+    lea eax, [ecx + 1]
+.into:
+    call fs_entry
+    push esi
+    mov esi, edi
+    mov edi, fs_leaf
+    call str_copy
+    mov esi, fs_leaf
+    push ebx
+    call fs_lookup
+    mov ecx, ebx
+    pop ebx
+    pop esi
+    jc .tree
+    cmp ecx, ebx
+    jne .exists
+    jmp .tree
+.new_name:
+    call fs_leaf_check
+    jc .fail
+.tree:
+    call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .apply
+    call fs_inside
+    jnc .apply
+    mov eax, err_into_self
+    jmp .fail
+.apply:
+    push eax
+    mov ecx, FS_NAME_MAX + 1
     xor eax, eax
     rep stosb
-    pop edi
+    sub edi, FS_NAME_MAX + 1
+    pop eax
+    push esi
+    mov esi, fs_leaf
     call str_copy
+    pop esi
+    mov [edi + DE_PARENT], al
     call fs_commit
     popad
     clc
     ret
 .exists:
-    pop ebx
-    mov esi, err_exists
-    stc
-    ret
-.bad_name:
-    mov esi, err_name_bad
+    mov eax, err_exists
+.fail:
+    mov [esp + 4], eax
+    popad
     stc
     ret
 
@@ -506,6 +994,28 @@ fs_stats:
     jz .n
     inc eax
     add edx, [edi + DE_SIZE]
+.n: inc ebx
+    cmp ebx, FS_MAX_FILES
+    jb .l
+    pop edi
+    pop ebx
+    ret
+
+fs_counts:
+    push ebx
+    push edi
+    xor eax, eax
+    xor ecx, ecx
+    xor ebx, ebx
+.l: call fs_entry
+    test byte [edi + DE_FLAGS], FLAG_USED
+    jz .n
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .file
+    inc ecx
+    jmp .n
+.file:
+    inc eax
 .n: inc ebx
     cmp ebx, FS_MAX_FILES
     jb .l

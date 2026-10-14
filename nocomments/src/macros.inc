@@ -19,6 +19,9 @@ KEY_DEL     equ 0x107
 KEY_PGUP    equ 0x108
 KEY_PGDN    equ 0x109
 KEY_F1      equ 0x111
+KMOD_SHIFT  equ 1
+KMOD_CTRL   equ 2
+KMOD_ALT    equ 4
 
 %macro PRINTF 1-*
     [section .data]

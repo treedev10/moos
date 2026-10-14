@@ -5,7 +5,8 @@ APP_IDE     equ 3
 APP_BROWSER equ 4
 APP_SETTINGS equ 5
 APP_TASKS   equ 6
-NAPPS       equ 6
+APP_FILES   equ 7
+NAPPS       equ 7
 
 TITLE_H     equ 28
 BTN_W       equ 22
@@ -86,15 +87,16 @@ gui_close_x resd 1
 gui_run_x   resd 1
 
 section .data
-win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set, t_tasks
+win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set, t_tasks, t_files
 t_term      db "Terminal", 0
 t_edit      db "Text Editor", 0
 t_ide       db "Script IDE", 0
 t_brow      db "MOOS Browser", 0
 t_set       db "Settings", 0
 t_tasks     db "Task Manager", 0
-win_def_w   dd 0, 760, 720, 720, 1000, 640, 780
-win_def_h   dd 0, 460, 480, 480, 640, 440, 600
+t_files     db "Files", 0
+win_def_w   dd 0, 760, 720, 720, 1000, 640, 780, 660
+win_def_h   dd 0, 460, 480, 480, 640, 440, 600, 430
 close_x     db "x", 0
 min_glyph   db "_", 0
 run_label   db "Run", 0
@@ -779,6 +781,8 @@ app_init:
     je settings_init
     cmp eax, APP_TASKS
     je tasks_init
+    cmp eax, APP_FILES
+    je files_init
     ret
 
 app_draw:
@@ -793,11 +797,17 @@ app_draw:
     je settings_draw
     cmp eax, APP_TASKS
     je tasks_draw
+    cmp eax, APP_FILES
+    je files_draw
     jmp app_text_draw
 
 app_title:
     cmp eax, APP_BROWSER
     je brow_title
+    cmp eax, APP_FILES
+    je files_title
+    cmp eax, APP_EDITOR
+    je editor_title
     mov esi, [win_titles + eax * 4]
     ret
 
@@ -811,6 +821,8 @@ app_click:
     je settings_click
     cmp eax, APP_TASKS
     je tasks_click
+    cmp eax, APP_FILES
+    je files_click
     ret
 
 app_key:
@@ -825,6 +837,8 @@ app_key:
     je settings_key
     cmp dword [cur_app], APP_TASKS
     je tasks_key
+    cmp dword [cur_app], APP_FILES
+    je files_key
     jmp editor_app_key
 
 app_tick:
@@ -845,13 +859,21 @@ gui_handle:
     mov [prev_btn], eax
     cmp dword [pl_full], 0
     je .windows
-    test eax, eax
+    test eax, 1
     jz .done
-    test ebx, ebx
+    test ebx, 1
     jnz .done
     call pl_full_click
     jmp .done
 .windows:
+    test eax, 2
+    jz .left
+    test ebx, 2
+    jnz .left
+    call gui_rpress
+.left:
+    and eax, 1
+    and ebx, 1
     test eax, eax
     jz .up
     test ebx, ebx
@@ -869,6 +891,8 @@ gui_handle:
 .press:
     or byte [gui_dirty], 1
     mov dword [kmode], 0
+    call desk_press
+    jc .done
     mov eax, [gfx_h]
     sub eax, TASKBAR_H
     cmp [mouse_y], eax
@@ -945,6 +969,9 @@ gui_handle:
     jmp .done
 .desktop:
     mov dword [cur_app], APP_NONE
+    mov ebp, IV_DESK
+    call iv_prep
+    call iv_click
     jmp .done
 .taskbar:
     call gui_taskbar_click
@@ -1110,15 +1137,25 @@ gui_wheel:
     test ecx, ecx
     jz .done
     mov dword [mouse_wheel], 0
+    cmp dword [mb_open], 0
+    jne .done
+    cmp dword [mn_open], 0
+    jne .done
     call wm_hit
     cmp eax, APP_TASKS
     je .tasks
+    cmp eax, APP_FILES
+    je .files
     cmp eax, APP_BROWSER
     jne .done
     call wm_content
     mov eax, ecx
     APP_CALL APP_BROWSER, brow_wheel
     or byte [gui_dirty], 1
+    jmp .done
+.files:
+    mov eax, ecx
+    call files_wheel
 .done:
     popad
     ret
@@ -1130,6 +1167,8 @@ gui_wheel:
 
 gui_taskbar_click:
     call tb_hit
+    cmp eax, TB_START
+    je .start
     cmp eax, TB_QUIT
     je .quit
     test eax, eax
@@ -1141,6 +1180,9 @@ gui_taskbar_click:
 .quit:
     mov byte [gui_quit], 1
 .r: ret
+.start:
+    xor eax, eax
+    jmp start_open
 
 gui_key:
     pushad
@@ -1149,6 +1191,8 @@ gui_key:
     call pl_full_key
     jmp .done
 .win:
+    call desk_key
+    jnc .done
     cmp dword [kmode], 0
     jne .kmode
     cmp eax, 27

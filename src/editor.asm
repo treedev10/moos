@@ -39,7 +39,7 @@ ed_saved    resb 1                      ; saved at least once this session
 ed_msg_on   resb 1
 ed_cutting  resb 1                      ; previous key was Ctrl+K
 ed_quit     resb 1                      ; 1 = close, 2 = close, discard
-ed_name     resb 24
+ed_name     resb 128                ; the file's path
 ed_msgbuf   resb SCR_COLS + 2
 ed_find     resb 80
 
@@ -71,9 +71,6 @@ cmd_edit:
     jc .start
     mov ecx, [edi + DE_SIZE]        ; existing file: load it
     push esi
-    mov esi, edi                    ; keep the name's original spelling
-    mov edi, ed_name
-    call str_copy
     call fs_slot
     mov edi, ED_BUF
     call mem_copy

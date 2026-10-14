@@ -1,19 +1,27 @@
 NAME
-    rename - give a file a new name
+    rename - give a file or folder a new name, or move it
 
 SYNOPSIS
     rename <old-name> <new-name>
+    rename <old-name> <folder>
 
 DESCRIPTION
-    rename changes the name of a file. The contents and the
+    rename changes the name of a file or a folder. The contents and the
     modification time stay the same - only the name changes. The change
     is saved to disk immediately.
 
+    It also moves things between folders: when the new name is a path
+    into another folder, the file goes there; when it names an existing
+    folder ("notes", "..", "/"), the file moves into that folder and
+    keeps its name. A folder moves with everything in it, but it cannot
+    be moved into itself.
+
 ARGUMENTS
-    old-name    the file as it is called now
+    old-name    the file or folder as it is called now (a name or a
+                path)
     new-name    the name you want: 1 to 19 letters, digits, dots,
-                dashes or underscores. No other file may already have
-                this name.
+                dashes or underscores, optionally with a path in front.
+                Nothing else in that folder may already have this name.
 
 EXAMPLES
     rename todo.txt done.txt
@@ -22,6 +30,12 @@ EXAMPLES
     mv draft.txt letter.txt
         The same, using the Unix-style alias.
 
+    rename letter.txt notes
+        Moves letter.txt into the folder notes.
+
+    rename notes/letter.txt ../old.txt
+        From inside a folder: up one level, with a new name.
+
 MESSAGES
     usage: rename <old-name> <new-name>
         Both names are needed.
@@ -29,10 +43,16 @@ MESSAGES
     There is no file named 'x'.
         The old name does not exist. Check with  ls .
 
-    error: a file with that name already exists
+    error: a file or folder with that name already exists there
         Pick another new name, or delete the other file first with rm.
-        Names are not case sensitive, so changing only capital letters
-        (Notes -> notes) also gives this message.
+        Names are not case sensitive (Notes and notes are the same
+        name); changing only capital letters is allowed.
+
+    error: no such folder
+        A folder in the new path does not exist.
+
+    error: a folder cannot be moved into itself
+        The new place is inside the folder being moved.
 
     error: invalid file name
         The new name contains a space or a symbol that is not allowed.
@@ -41,4 +61,4 @@ ALIASES
     mv
 
 SEE ALSO
-    copy, ls, files
+    copy, ls, cd, mkdir, files

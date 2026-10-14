@@ -1,0 +1,46 @@
+NAME
+    mkdir - make a folder
+
+SYNOPSIS
+    mkdir <folder> [folder ...]
+
+DESCRIPTION
+    mkdir makes a new, empty folder. Folders keep files together:
+    "notes/plan.txt" is the file plan.txt in the folder notes. A folder
+    can hold other folders too.
+
+    A folder takes one of the disk's 32 entries, the same as a file
+    (it holds no data itself). The change is saved to disk immediately.
+
+ARGUMENTS
+    folder      the new folder, as a name or a path. The folders on the
+                way must already exist:  mkdir notes/2026  needs notes.
+                A name is 1 to 19 letters, digits, dots, dashes or
+                underscores. Several folders can be made at once.
+
+EXAMPLES
+    mkdir notes
+        Made folder notes.
+
+    mkdir notes/2026 notes/old
+        Two folders inside notes.
+
+MESSAGES
+    error: x: a file or folder with that name already exists there
+        Pick another name.
+
+    error: x: no such folder
+        A folder on the way is missing. Make it first.
+
+    error: x: invalid name
+        The name has a space or a symbol that is not allowed, or is
+        longer than 19 characters.
+
+    error: x: no free entries
+        All 32 entries (files and folders together) are in use.
+
+ALIASES
+    md
+
+SEE ALSO
+    rmdir, cd, ls, files

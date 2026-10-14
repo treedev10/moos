@@ -3,7 +3,7 @@ APP_BUF     equ 4096
 TX_LEN      equ 0
 TX_DIRTY    equ 4
 TX_FILE     equ 8
-TX_BUF      equ 32
+TX_BUF      equ 8 + 128
 TX_SIZE     equ TX_BUF + APP_BUF
 TERM_MARK   equ 1
 TERM_PLAIN  equ 2
@@ -35,9 +35,8 @@ section .data
 term_welcome db "MOOS terminal - type a command and press Enter.", 10
              db "Commands that take over the screen (edit, write, gui) are", 10
              db "not available here; use ls, cat, calc, net, apt, time...", 10, 10, 0
-term_prompt  db "moos> ", 0
-ide_file     db "script.ms", 0
-edit_file    db "notes.txt", 0
+ide_file     db "/script.ms", 0
+edit_file    db "/notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
 edit_hint    db "Ctrl+S = Save", 0
 bl_edit      db "edit", 0
@@ -201,7 +200,7 @@ app_term_draw:
     mov edx, eax
     imul edx, 16
     add edx, [ta_y]
-    mov esi, term_prompt
+    call shell_prompt
     mov eax, 0x7CE08A
     push edx
     call gfx_rgb
@@ -209,7 +208,11 @@ app_term_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    add ecx, 8 * 6
+    push ecx
+    call str_len
+    shl ecx, 3
+    pop eax
+    add ecx, eax
     mov esi, term_input
     call gfx_text
     popad
@@ -241,7 +244,7 @@ term_key:
     mov byte [term_input + ecx], 0
     ret
 .enter:
-    mov esi, term_prompt
+    call shell_prompt
     call term_log_str
     mov esi, term_input
     call term_log_str
@@ -335,6 +338,10 @@ editor_app_init:
     pushad
     call tx_for
     mov esi, edit_file
+    cmp byte [edit_path], 0
+    je .ide
+    mov esi, edit_path
+.ide:
     cmp eax, APP_IDE
     jne .have
     mov esi, ide_file
@@ -403,8 +410,14 @@ app_text_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    mov ecx, [ta_x]
-    add ecx, 8 * 14
+    call str_len
+    add ecx, 3
+    cmp ecx, 14
+    jae .hx
+    mov ecx, 14
+.hx:
+    shl ecx, 3
+    add ecx, [ta_x]
     mov esi, edit_hint
     cmp dword [txd_app], APP_IDE
     jne .h

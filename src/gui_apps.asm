@@ -17,8 +17,8 @@ GUI_LOG     equ 16384
 APP_BUF     equ 4096
 TX_LEN      equ 0                   ; text buffer block: length of the text,
 TX_DIRTY    equ 4                   ; 1 = changed since saved,
-TX_FILE     equ 8                   ; the file it belongs to,
-TX_BUF      equ 32                  ; then the text itself
+TX_FILE     equ 8                   ; the file it belongs to (a path),
+TX_BUF      equ 8 + 128             ; then the text itself
 TX_SIZE     equ TX_BUF + APP_BUF
 TERM_MARK   equ 1                   ; colour marks in the terminal log
 TERM_PLAIN  equ 2
@@ -50,9 +50,8 @@ section .data
 term_welcome db "MOOS terminal - type a command and press Enter.", 10
              db "Commands that take over the screen (edit, write, gui) are", 10
              db "not available here; use ls, cat, calc, net, apt, time...", 10, 10, 0
-term_prompt  db "moos> ", 0
-ide_file     db "script.ms", 0
-edit_file    db "notes.txt", 0
+ide_file     db "/script.ms", 0           ; (whatever the current folder is)
+edit_file    db "/notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
 edit_hint    db "Ctrl+S = Save", 0
 bl_edit      db "edit", 0
@@ -230,7 +229,7 @@ app_term_draw:
     mov edx, eax
     imul edx, 16
     add edx, [ta_y]
-    mov esi, term_prompt
+    call shell_prompt               ; "moos> " (with the folder, if any)
     mov eax, 0x7CE08A               ; (green, like the text console's prompt)
     push edx
     call gfx_rgb
@@ -238,7 +237,11 @@ app_term_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    add ecx, 8 * 6                  ; after "moos> "
+    push ecx
+    call str_len                    ; after the prompt
+    shl ecx, 3
+    pop eax
+    add ecx, eax
     mov esi, term_input
     call gfx_text
     popad
@@ -271,7 +274,7 @@ term_key:
     mov byte [term_input + ecx], 0
     ret
 .enter:
-    mov esi, term_prompt            ; echo the command into the log
+    call shell_prompt               ; echo the command into the log
     call term_log_str
     mov esi, term_input
     call term_log_str
@@ -365,11 +368,17 @@ tx_for:
     mov ebx, tx_ide
 .r: ret
 
-; editor_app_init: EAX = app. Load its file (notes.txt / script.ms).
+; editor_app_init: EAX = app. Load its file: the Script IDE /script.ms,
+; the Text Editor edit_path (set by editor_open, gui_desk.asm) or else
+; /notes.txt.
 editor_app_init:
     pushad
     call tx_for
     mov esi, edit_file              ; choose the file by app
+    cmp byte [edit_path], 0
+    je .ide
+    mov esi, edit_path
+.ide:
     cmp eax, APP_IDE
     jne .have
     mov esi, ide_file
@@ -439,8 +448,14 @@ app_text_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    mov ecx, [ta_x]
-    add ecx, 8 * 14
+    call str_len                    ; the hint after the name (a path can be
+    add ecx, 3                      ; long), at least 14 columns in
+    cmp ecx, 14
+    jae .hx
+    mov ecx, 14
+.hx:
+    shl ecx, 3
+    add ecx, [ta_x]
     mov esi, edit_hint
     cmp dword [txd_app], APP_IDE
     jne .h

@@ -26,6 +26,8 @@ cand_count  resd 1
 cand_wlen   resd 1
 cand_ptrs   resd MAX_CANDS
 cand_prefix resb 256
+cand_ctx    resd 1
+cand_dir    resd 1
 
 section .data
 str_man_sp  db "man ", 0
@@ -401,6 +403,11 @@ rl_complete:
 .manual:
     mov edx, 1
 .context:
+    mov [cand_ctx], edx
+    cmp edx, 2
+    jne .build
+    call rl_file_prefix
+.build:
     call build_candidates
     mov ecx, [cand_count]
     test ecx, ecx
@@ -417,6 +424,13 @@ rl_complete:
     jmp .one
 .one_end:
     mov al, ' '
+    cmp dword [cand_ctx], 2
+    jne .one_sep
+    mov esi, [cand_ptrs]
+    test byte [esi + DE_FLAGS], FLAG_DIR
+    jz .one_sep
+    mov al, '/'
+.one_sep:
     call rl_append_char
     jmp .done
 
@@ -505,12 +519,48 @@ build_candidates:
 .f: call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .fn
+    movzx eax, byte [edi + DE_PARENT]
+    cmp eax, [cand_dir]
+    jne .fn
     call cand_try
 .fn:
     inc ebx
     cmp ebx, FS_MAX_FILES
     jb .f
 .done:
+    popad
+    ret
+
+rl_file_prefix:
+    pushad
+    mov eax, [fs_cwd]
+    mov esi, cand_prefix
+    call str_len
+    mov edi, ecx
+.back:
+    test edi, edi
+    jz .set
+    cmp byte [cand_prefix + edi - 1], '/'
+    je .slash
+    dec edi
+    jmp .back
+.slash:
+    mov bl, [cand_prefix + edi]
+    mov byte [cand_prefix + edi], 0
+    call fs_find_dir
+    mov [cand_prefix + edi], bl
+    jnc .found
+    mov eax, -1
+.found:
+    lea esi, [cand_prefix + edi]
+    push edi
+    mov edi, cand_prefix
+    call str_copy
+    pop edi
+    sub ecx, edi
+    mov [cand_wlen], ecx
+.set:
+    mov [cand_dir], eax
     popad
     ret
 

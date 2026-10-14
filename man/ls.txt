@@ -1,42 +1,65 @@
 NAME
-    ls - list all files
+    ls - list files and folders
 
 SYNOPSIS
     ls
+    ls <folder>
 
 DESCRIPTION
-    ls shows every file on the disk, one per line, with three columns:
+    ls shows what is in a folder: first its folders (in blue, with a
+    "/" after the name), then its files, one per line, with three
+    columns:
 
-        NAME        the file name
-        SIZE        how many bytes the file contains (B = bytes)
-        MODIFIED    when the file was last changed, as
+        NAME        the file or folder name
+        SIZE        how many bytes the file contains (B = bytes);
+                    "folder" for a folder
+        MODIFIED    when it was last changed, as
                     year-month-day hour:minute
 
-    Below the list a summary shows how many of the 32 file slots are in
-    use and how many bytes all files take together.
+    Without a folder, ls lists the current folder (see  man cd ). When
+    that is not the top level, the first line says which folder it is.
 
-    Files are listed in slot order: roughly the order in which they
-    were created. When a file is deleted its slot is reused by the
-    next new file, so a new file can appear in the middle of the list.
+    Below the list a summary shows how many files and folders there are
+    on the whole disk, how many of the 32 entries are in use (files and
+    folders share them) and how many bytes all files take together.
+
+    Within each group, entries are listed in slot order: roughly the
+    order in which they were created.
 
     If there are no files at all, ls tells you how to create one.
 
 ARGUMENTS
-    None. Anything typed after ls is ignored.
+    folder      optional: the folder to list, as a path ("notes",
+                "notes/2026", "/", ".."). Tab completes it. With the
+                name of a file, ls shows just that file's line.
 
 EXAMPLES
     ls
           NAME                     SIZE    MODIFIED
+          notes/                 folder  2026-10-12 09:10
           welcome.txt             414 B  2026-10-12 09:15
           todo.txt                 37 B  2026-10-12 10:02
 
-          2 of 32 files, 451 bytes used. Each file can hold up to
-          4096 bytes.
+          2 file(s) and 1 folder(s): 3 of 32 entries used, 451 bytes.
+          Each file can hold up to 4096 bytes.
+
+    ls notes
+        What is in the folder notes.
+
+    ls ..
+        The folder above the current one.
 
 MESSAGES
     No files yet.
         The disk is empty. Create a file with  write <name>  or
-        echo hello > hello.txt .
+        echo hello > hello.txt , or a folder with  mkdir <name> .
+
+    (this folder is empty)
+        The folder has nothing in it.
+
+    error: x: no such folder
+        There is no folder of that name (or a folder on the way to it
+        is missing).
 
     Note: no disk was found ...
         MOOS is running in RAM-only mode, so files will be lost when
@@ -52,4 +75,4 @@ TIPS
     The time comes from the computer's built-in clock (see  man time ).
 
 SEE ALSO
-    cat, wc, mem, files
+    cd, mkdir, cat, wc, mem, files

@@ -23,6 +23,7 @@
 ;    5 Settings   - clock, colours, network
 ;    6 Tasks      - the Task Manager: windows, CPU, memory, network
 ;                   (gui_tasks.asm)
+;    7 Files      - the files and folders of one folder (gui_desk.asm)
 ;
 ;  An app supplies: init (when its window opens), draw (into the content
 ;  box cb_x/cb_y/cb_w/cb_h, with drawing clipped to it), key, and if it
@@ -45,7 +46,8 @@ APP_IDE     equ 3
 APP_BROWSER equ 4
 APP_SETTINGS equ 5
 APP_TASKS   equ 6
-NAPPS       equ 6
+APP_FILES   equ 7
+NAPPS       equ 7
 
 TITLE_H     equ 28                  ; title bar height
 BTN_W       equ 22                  ; title-bar buttons
@@ -126,15 +128,16 @@ gui_close_x resd 1
 gui_run_x   resd 1
 
 section .data
-win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set, t_tasks
+win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set, t_tasks, t_files
 t_term      db "Terminal", 0
 t_edit      db "Text Editor", 0
 t_ide       db "Script IDE", 0
 t_brow      db "MOOS Browser", 0
 t_set       db "Settings", 0
 t_tasks     db "Task Manager", 0
-win_def_w   dd 0, 760, 720, 720, 1000, 640, 780  ; first-time sizes
-win_def_h   dd 0, 460, 480, 480, 640, 440, 600
+t_files     db "Files", 0
+win_def_w   dd 0, 760, 720, 720, 1000, 640, 780, 660  ; first-time sizes
+win_def_h   dd 0, 460, 480, 480, 640, 440, 600, 430
 close_x     db "x", 0
 min_glyph   db "_", 0
 run_label   db "Run", 0
@@ -864,6 +867,8 @@ app_init:
     je settings_init
     cmp eax, APP_TASKS
     je tasks_init
+    cmp eax, APP_FILES
+    je files_init
     ret
 
 app_draw:
@@ -878,12 +883,18 @@ app_draw:
     je settings_draw
     cmp eax, APP_TASKS
     je tasks_draw
+    cmp eax, APP_FILES
+    je files_draw
     jmp app_text_draw               ; editor / IDE share the text view
 
 ; app_title: EAX = app -> ESI = the text for its title bar
 app_title:
     cmp eax, APP_BROWSER
     je brow_title
+    cmp eax, APP_FILES
+    je files_title
+    cmp eax, APP_EDITOR
+    je editor_title
     mov esi, [win_titles + eax * 4]
     ret
 
@@ -898,6 +909,8 @@ app_click:
     je settings_click
     cmp eax, APP_TASKS
     je tasks_click
+    cmp eax, APP_FILES
+    je files_click
     ret
 
 ; app_key: EAX = key, for the focused app
@@ -913,6 +926,8 @@ app_key:
     je settings_key
     cmp dword [cur_app], APP_TASKS
     je tasks_key
+    cmp dword [cur_app], APP_FILES
+    je files_key
     jmp editor_app_key
 
 ; app_tick: EAX = app, once every round of the desktop's loop while its
@@ -932,7 +947,9 @@ app_end:
     ret
 
 ; ---------------------------------------------------------- the mouse
-; gui_handle: called every round: clicks, drags, hovering
+; gui_handle: called every round: clicks, drags, hovering. Bit 0 of
+; mouse_btn is the left button (pressing, dragging, letting go); a press of
+; the right button (bit 1) is a separate event, gui_rpress.
 gui_handle:
     pushad
     mov eax, [mouse_btn]
@@ -940,13 +957,21 @@ gui_handle:
     mov [prev_btn], eax
     cmp dword [pl_full], 0          ; a video in full screen: clicks are its
     je .windows
-    test eax, eax
+    test eax, 1
     jz .done
-    test ebx, ebx
+    test ebx, 1
     jnz .done
     call pl_full_click
     jmp .done
 .windows:
+    test eax, 2                     ; the right button went down?
+    jz .left
+    test ebx, 2
+    jnz .left
+    call gui_rpress
+.left:
+    and eax, 1
+    and ebx, 1
     test eax, eax
     jz .up
     test ebx, ebx
@@ -964,6 +989,8 @@ gui_handle:
 .press:
     or byte [gui_dirty], 1
     mov dword [kmode], 0
+    call desk_press                 ; a message box, a menu, renaming?
+    jc .done
     mov eax, [gfx_h]                ; the taskbar?
     sub eax, TASKBAR_H
     cmp [mouse_y], eax
@@ -1041,6 +1068,9 @@ gui_handle:
     jmp .done
 .desktop:
     mov dword [cur_app], APP_NONE   ; nothing has the focus now
+    mov ebp, IV_DESK                ; (an icon, or nothing: deselect)
+    call iv_prep
+    call iv_click
     jmp .done
 .taskbar:
     call gui_taskbar_click
@@ -1215,15 +1245,25 @@ gui_wheel:
     test ecx, ecx
     jz .done
     mov dword [mouse_wheel], 0
+    cmp dword [mb_open], 0          ; (not under a message box or a menu)
+    jne .done
+    cmp dword [mn_open], 0
+    jne .done
     call wm_hit
     cmp eax, APP_TASKS
     je .tasks
+    cmp eax, APP_FILES
+    je .files
     cmp eax, APP_BROWSER
     jne .done
     call wm_content
     mov eax, ecx
     APP_CALL APP_BROWSER, brow_wheel
     or byte [gui_dirty], 1
+    jmp .done
+.files:
+    mov eax, ecx
+    call files_wheel
 .done:
     popad
     ret
@@ -1234,9 +1274,12 @@ gui_wheel:
     jmp .done
 
 ; gui_taskbar_click: a taskbar button opens its app, brings it up, or
-; minimizes it if it already has the focus. Quit leaves the desktop.
+; minimizes it if it already has the focus. Quit leaves the desktop, Start
+; opens the Start menu.
 gui_taskbar_click:
     call tb_hit
+    cmp eax, TB_START
+    je .start
     cmp eax, TB_QUIT
     je .quit
     test eax, eax
@@ -1248,11 +1291,15 @@ gui_taskbar_click:
 .quit:
     mov byte [gui_quit], 1
 .r: ret
+.start:
+    xor eax, eax
+    jmp start_open
 
 ; ------------------------------------------------------------- the keys
-; gui_key: EAX = key. Window keys first (F1-F11, Esc, and the arrows while
-; moving or resizing with F7 / F8), the rest to the focused app. On the
-; empty desktop 1-6 open the apps too.
+; gui_key: EAX = key. A message box, a menu, renaming, the Start menu and
+; the icons first (desk_key), then window keys (F1-F11, Esc, and the arrows
+; while moving or resizing with F7 / F8), the rest to the focused app. On
+; the empty desktop 1-7 open the apps too.
 gui_key:
     pushad
     cmp dword [pl_full], 0          ; a video in full screen takes the keys
@@ -1260,6 +1307,8 @@ gui_key:
     call pl_full_key
     jmp .done
 .win:
+    call desk_key
+    jnc .done
     cmp dword [kmode], 0
     jne .kmode
     cmp eax, 27                     ; Esc: close the window, or leave
@@ -1292,7 +1341,7 @@ gui_key:
     jb .done
     cmp eax, '0' + NAPPS
     ja .done
-    sub eax, '0'                    ; '1' -> APP_TERM ... '6' -> APP_TASKS
+    sub eax, '0'                    ; '1' -> APP_TERM ... '7' -> APP_FILES
     call gui_open
     jmp .done
 .app:

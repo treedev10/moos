@@ -7,6 +7,8 @@ window, types keys through the QEMU monitor and prints MOOS's 80x25 screen.
 
 Options
     --image IMG     disk image to copy and start (default build/moos.img)
+    --save IMG      when done, keep the test's disk as IMG (to start it
+                    again with --image, e.g. to check files survive)
     --uefi          start the PC with UEFI firmware instead of a BIOS
     --drive ARGS    replace the QEMU disk arguments; {disk} stands for the
                     copied image, e.g. "-machine q35 -drive file={disk},format=raw"
@@ -38,6 +40,8 @@ STEP is either text to type (use \\n for Enter) or a command:
                     label NAME, e.g. @peek=cpu_busy or @peek=cpu_pm,17
                     (the full kernel, so with --uefi)
     @mon=COMMAND    run a QEMU monitor command and print its answer
+    @where          print where the CPU is in the kernel (label + offset),
+                    e.g. to see where MOOS hangs
     @exit           check that QEMU has exited (after "shutdown")
 
 The image is copied first, so tests never touch your real disk image.
@@ -87,7 +91,10 @@ def kernel_symbols(names):
         for line in open(os.path.join(tmp, 'k.map')):
             parts = line.split()
             if len(parts) == 3 and parts[2] in names:
-                found[parts[2]] = int(parts[0], 16)
+                try:
+                    found[parts[2]] = int(parts[0], 16)
+                except ValueError:      # (a heading line of the map)
+                    pass
         return found
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -237,12 +244,15 @@ def main():
     args = sys.argv[1:]
     image, drive, extra, uefi, mem, nic = IMAGE, None, '', False, None, 'rtl8139'
     audio = None
+    save = None
     while args and args[0].startswith('--'):
         opt = args.pop(0)
         if opt == '--uefi':
             uefi = True
         elif opt == '--image':
             image = args.pop(0)
+        elif opt == '--save':
+            save = args.pop(0)
         elif opt == '--drive':
             drive = args.pop(0)
         elif opt == '--extra':
@@ -344,6 +354,20 @@ def main():
                 data = screen.dump(base + syms[name], 4 * count)
                 values = [int.from_bytes(data[i:i + 4], 'little') for i in range(0, 4 * count, 4)]
                 print('%s = %s' % (name, ' '.join(str(v) for v in values)))
+            elif step == '@where':
+                class Every:
+                    def __contains__(self, name):
+                        return True
+                if 'all' not in globals():
+                    globals()['all_syms'] = kernel_symbols(Every())
+                allsyms = globals()['all_syms']
+                out = mon.cmd('info registers').decode('utf-8', 'replace')
+                eip = int(out.split('EIP=')[1][:8], 16)
+                base = screen.addr - 16 - allsyms['screen_magic']
+                rel = eip - base
+                best = max(((a, n) for n, a in allsyms.items() if a <= rel),
+                           default=(0, '?'))
+                print('EIP %#x = %s+%#x' % (eip, best[1], rel - best[0]))
             elif step == '@click':
                 mon.cmd('mouse_button 1')
                 time.sleep(0.2)
@@ -364,6 +388,9 @@ def main():
         if proc.poll() is None:
             proc.kill()
         proc.wait()
+        if save:
+            shutil.copy(disk, save)
+            print('disk saved:', save)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 

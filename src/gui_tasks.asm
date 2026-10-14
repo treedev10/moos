@@ -146,13 +146,14 @@ tk_bss_end:
 TK_MEM      equ tk_bss_end - tk_bss_start
 
 section .data
-tk_names    dd 0, tn_term, tn_edit, tn_ide, tn_brow, tn_set, tn_tasks
+tk_names    dd 0, tn_term, tn_edit, tn_ide, tn_brow, tn_set, tn_tasks, tn_files
 tn_term     db "Terminal", 0
 tn_edit     db "Text Editor", 0
 tn_ide      db "Script IDE", 0
 tn_brow     db "Browser", 0
 tn_set      db "Settings", 0
 tn_tasks    db "Task Manager", 0
+tn_files    db "Files", 0
 ; memory each app has in the kernel's own variables and buffers
 tk_fixed    dd 0, GUI_LOG + 168, TX_SIZE, TX_SIZE, 0x200000, 88, TK_MEM
 tk_h_win    db "Window", 0

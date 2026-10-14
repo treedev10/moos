@@ -12,9 +12,14 @@ rest_ptr    resd 1                  ; raw text after the command name
 lev_tmp     resd 1
 lev_prev    resd 33
 lev_cur     resd 33
+sh_path     resb FS_PATH_MAX        ; (shell_prompt)
+sh_prompt   resb 48
 
 section .data
 prompt_str  db "moos> ", 0
+sh_moos     db "moos:", 0
+sh_cut      db "...", 0
+sh_end      db "> ", 0
 str_man     db "man", 0
 
 section .text
@@ -23,13 +28,17 @@ section .text
 cmd_table:
     COMMAND "help",     cmd_help,     "list all commands",          man_help
     COMMAND "man",      cmd_man,      "read a command's manual",    man_man
-    COMMAND "ls",       cmd_ls,       "list files",                 man_ls
+    COMMAND "ls",       cmd_ls,       "list files and folders",     man_ls
+    COMMAND "cd",       cmd_cd,       "go into a folder",           man_cd
+    COMMAND "pwd",      cmd_pwd,      "show the current folder",    man_pwd
+    COMMAND "mkdir",    cmd_mkdir,    "make a folder",              man_mkdir
+    COMMAND "rmdir",    cmd_rmdir,    "delete an empty folder",     man_rmdir
     COMMAND "cat",      cmd_cat,      "show what is in a file",     man_cat
     COMMAND "edit",     cmd_edit,     "full-screen text editor",    man_edit
     COMMAND "write",    cmd_write,    "create or replace a file",   man_write
     COMMAND "append",   cmd_append,   "add lines to a file",        man_append
     COMMAND "rm",       cmd_rm,       "delete a file",              man_rm
-    COMMAND "rename",   cmd_rename,   "rename a file",              man_rename
+    COMMAND "rename",   cmd_rename,   "rename or move a file",      man_rename
     COMMAND "copy",     cmd_copy,     "copy a file",                man_copy
     COMMAND "find",     cmd_find,     "search text in files",       man_find
     COMMAND "wc",       cmd_wc,       "count lines, words, bytes",  man_wc
@@ -43,7 +52,7 @@ cmd_table:
     COMMAND "time",     cmd_time,     "show date and time",         man_time
     COMMAND "clock",    cmd_clock,    "clock settings, time sync",  man_clock
     COMMAND "net",      cmd_net,      "connect to the network",     man_net
-    COMMAND "apt",      cmd_apt,      "install packages",           man_apt
+    COMMAND "apt",      cmd_apt_top,  "install packages",           man_apt
     COMMAND "get",      cmd_get,      "download a web page (https)", man_get
     COMMAND "uptime",   cmd_uptime,   "time since start-up",        man_uptime
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
@@ -61,6 +70,9 @@ cmd_table:
     ALIAS "nano",     cmd_edit,     man_edit
     ALIAS "notepad",  cmd_edit,     man_edit
     ALIAS "dir",      cmd_ls,       man_ls
+    ALIAS "md",       cmd_mkdir,    man_mkdir
+    ALIAS "rd",       cmd_rmdir,    man_rmdir
+    ALIAS "chdir",    cmd_cd,       man_cd
     ALIAS "type",     cmd_cat,      man_cat
     ALIAS "more",     cmd_cat,      man_cat
     ALIAS "del",      cmd_rm,       man_rm
@@ -93,7 +105,7 @@ topic_table:                        ; manual pages that are not commands
 shell_run:
     PRINTF `\nWelcome! Type \x01whelp\x01n to see all commands, or \x01wman intro\x01n for a guided tour.\n`
 .loop:
-    mov esi, prompt_str
+    call shell_prompt
     mov bl, C_PROMPT
     mov bh, RL_HISTORY
     call readline
@@ -101,6 +113,36 @@ shell_run:
     jnz .loop                       ; Ctrl+C / Ctrl+D: nothing to run
     call shell_exec
     jmp .loop
+
+; shell_prompt: -> ESI = the prompt: "moos> ", or in a folder
+; "moos:/notes/old> " (a long path is shortened to its end, "...")
+shell_prompt:
+    mov esi, prompt_str
+    cmp dword [fs_cwd], 0
+    je .r
+    pushad
+    mov eax, [fs_cwd]
+    mov edi, sh_path
+    call fs_path
+    mov edi, sh_prompt
+    mov esi, sh_moos
+    call str_copy
+    mov esi, sh_path
+    call str_len
+    cmp ecx, 32
+    jbe .whole
+    lea esi, [sh_path + ecx - 29]   ; just the last 29 characters
+    push esi
+    mov esi, sh_cut
+    call str_append
+    pop esi
+.whole:
+    call str_append
+    mov esi, sh_end
+    call str_append
+    popad
+    mov esi, sh_prompt
+.r: ret
 
 ; shell_exec: run the command in line_buf
 shell_exec:

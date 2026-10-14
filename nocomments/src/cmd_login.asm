@@ -34,7 +34,7 @@ login_hashstr:
 login_load:
     pushad
     mov esi, login_file
-    call fs_find
+    call fs_find_top
     jc .off
     mov ecx, [edi + DE_SIZE]
     call fs_slot
@@ -184,7 +184,7 @@ cmd_login:
     sub ecx, SCRATCH
     mov esi, login_file
     mov edx, SCRATCH
-    call fs_save
+    call fs_save_top
     jc .err
     PRINTF `\x01gSign-in is on.\x01n You will be asked for the password at start-up.\n`
     PRINTF `\x01yKeep it safe - there is no password recovery.\x01n\n`
@@ -197,7 +197,7 @@ cmd_login:
     ret
 .off:
     mov esi, login_file
-    call fs_find
+    call fs_find_top
     jc .already
     call fs_delete
     PRINTF `Sign-in turned off.\n`

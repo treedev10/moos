@@ -1,0 +1,49 @@
+NAME
+    cd - go into a folder
+
+SYNOPSIS
+    cd
+    cd <folder>
+
+DESCRIPTION
+    cd changes the current folder: the folder that file names without a
+    leading "/" start from. After  cd notes ,  cat plan.txt  shows
+    notes/plan.txt and  ls  lists notes.
+
+    The prompt shows the current folder when it is not the top level:
+
+        moos:/notes>
+
+    cd on its own (or  cd / ) goes back to the top level.  cd ..  goes
+    up one folder.
+
+    The current folder is not saved: MOOS always starts at the top
+    level. The desktop's Terminal shares it with the text console.
+
+ARGUMENTS
+    folder      a path to an existing folder: "notes", "notes/2026",
+                "..", "../other", "/" or "/notes/2026". Tab completes
+                each part.
+
+EXAMPLES
+    cd notes
+        moos:/notes>
+
+    cd ../photos
+        From /notes to /photos.
+
+    cd
+        Back to the top level.
+
+MESSAGES
+    error: x: no such folder
+        There is no folder of that name there. Check with  ls .
+
+    error: x: that is a file, not a folder
+        cd only goes into folders.
+
+ALIASES
+    chdir
+
+SEE ALSO
+    pwd, ls, mkdir, rmdir, files
