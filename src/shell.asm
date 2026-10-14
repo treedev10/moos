@@ -1,7 +1,7 @@
 ; =============================================================================
 ;  shell.asm - the command line: parsing, command table, help and man
 ; =============================================================================
-MAX_ARGS    equ 8
+MAX_ARGS    equ 16                  ; (get -H ... -d ... needs more than 8)
 
 section .bss
 parse_buf   resb 256                ; (a copy of line_buf: as long)
