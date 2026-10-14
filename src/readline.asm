@@ -33,6 +33,8 @@ cand_count  resd 1
 cand_wlen   resd 1
 cand_ptrs   resd MAX_CANDS
 cand_prefix resb 256
+cand_ctx    resd 1                  ; what is being completed (0, 1, 2)
+cand_dir    resd 1                  ; files: the folder (-1 = none)
 
 section .data
 str_man_sp  db "man ", 0
@@ -378,7 +380,9 @@ rl_add_history:
 
 ; -----------------------------------------------------------------------------
 ; Tab completion: first word -> command names; after "man"/"help" -> manual
-; names; anything else -> file names.
+; names; anything else -> file and folder names. A path completes its last
+; part in the folder before it ("notes/pl" -> "notes/plan.txt"); a folder
+; is finished with "/" so the next part can follow.
 ; -----------------------------------------------------------------------------
 rl_complete:
     pushad
@@ -420,6 +424,11 @@ rl_complete:
 .manual:
     mov edx, 1                      ; context 1 = manual pages
 .context:
+    mov [cand_ctx], edx
+    cmp edx, 2
+    jne .build
+    call rl_file_prefix             ; a path: complete its last part
+.build:
     call build_candidates
     mov ecx, [cand_count]
     test ecx, ecx
@@ -436,6 +445,13 @@ rl_complete:
     jmp .one
 .one_end:
     mov al, ' '
+    cmp dword [cand_ctx], 2         ; a folder: "/" instead of a space
+    jne .one_sep
+    mov esi, [cand_ptrs]            ; (file candidates are their entries)
+    test byte [esi + DE_FLAGS], FLAG_DIR
+    jz .one_sep
+    mov al, '/'
+.one_sep:
     call rl_append_char
     jmp .done
 
@@ -526,12 +542,52 @@ build_candidates:
 .f: call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .fn
+    movzx eax, byte [edi + DE_PARENT]
+    cmp eax, [cand_dir]             ; only those in the folder in question
+    jne .fn
     call cand_try
 .fn:
     inc ebx
     cmp ebx, FS_MAX_FILES
     jb .f
 .done:
+    popad
+    ret
+
+; rl_file_prefix: cand_prefix = a path being completed -> cand_dir = the
+; folder named by everything up to its last "/" (the current folder if
+; there is none; -1 if that folder does not exist), and cand_prefix /
+; cand_wlen = just the part after it
+rl_file_prefix:
+    pushad
+    mov eax, [fs_cwd]
+    mov esi, cand_prefix
+    call str_len
+    mov edi, ecx                    ; find the last "/"
+.back:
+    test edi, edi
+    jz .set
+    cmp byte [cand_prefix + edi - 1], '/'
+    je .slash
+    dec edi
+    jmp .back
+.slash:
+    mov bl, [cand_prefix + edi]     ; resolve "folder/" (kept as it is)
+    mov byte [cand_prefix + edi], 0
+    call fs_find_dir
+    mov [cand_prefix + edi], bl
+    jnc .found
+    mov eax, -1
+.found:
+    lea esi, [cand_prefix + edi]    ; keep only the last part
+    push edi
+    mov edi, cand_prefix
+    call str_copy
+    pop edi
+    sub ecx, edi
+    mov [cand_wlen], ecx
+.set:
+    mov [cand_dir], eax
     popad
     ret
 

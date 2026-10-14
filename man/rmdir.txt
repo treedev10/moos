@@ -1,0 +1,40 @@
+NAME
+    rmdir - delete an empty folder
+
+SYNOPSIS
+    rmdir <folder>
+
+DESCRIPTION
+    rmdir deletes a folder. Only an empty folder can be deleted, so a
+    file can never be lost by accident: delete (rm) or move (rename)
+    what is in it first. If you delete the folder you are in, the
+    folder above becomes the current one.
+
+    rm does not delete folders, and rmdir does not delete files.
+
+ARGUMENTS
+    folder      the folder to delete, as a name or a path
+
+EXAMPLES
+    rmdir old
+        Removed folder old.
+
+    rmdir notes
+        The folder 'notes' is not empty: it holds 2 file(s) or
+        folder(s). Delete or move them first (ls notes shows them).
+
+MESSAGES
+    There is no folder named 'x'.
+        Check the name with  ls .
+
+    'x' is a file, not a folder.
+        Use  rm  for files.
+
+    The folder 'x' is not empty
+        See above.
+
+ALIASES
+    rd
+
+SEE ALSO
+    mkdir, rm, rename, ls, files

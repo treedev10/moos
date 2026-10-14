@@ -15,8 +15,12 @@ DESCRIPTION
     There is no recycle bin: a deleted file cannot be brought back. Its
     slot becomes free for the next new file.
 
+    rm only deletes files. To delete a folder, empty it and use
+    rmdir.
+
 ARGUMENTS
-    file        the file to delete. Tab completes the name.
+    file        the file to delete, as a name or a path such as
+                notes/old.txt. Tab completes the name.
 
 EXAMPLES
     rm old-notes.txt
@@ -33,6 +37,9 @@ MESSAGES
     Nothing was deleted.
         You answered no.
 
+    'x' is a folder. Remove an empty folder with rmdir x.
+        rm does not delete folders.
+
 ALIASES
     del
 
@@ -42,4 +49,4 @@ TIPS
     To delete every file at once, see  man format .
 
 SEE ALSO
-    ls, copy, format
+    ls, copy, rmdir, format

@@ -3,15 +3,15 @@ NAME
 
 OVERVIEW
     MOOS has its own file system called MOOSFS. It is deliberately
-    simple: one flat list of files, no folders. Think of it as a box
-    with 32 numbered drawers, each able to hold one file of up to 4096
-    bytes (about two pages of text).
+    simple. Think of it as a box with 32 numbered drawers, each able to
+    hold one file of up to 4096 bytes (about two pages of text) - or a
+    folder, which keeps files (and other folders) together.
 
 LIMITS
-    Number of files     32
+    Files and folders   32 together (a folder uses one entry too)
     Size of one file    4096 bytes (4 KB)
     Total space         131072 bytes (128 KB)
-    File name length    1 to 19 characters
+    Name length         1 to 19 characters
 
 FILE NAMES
     A name may contain:
@@ -26,6 +26,24 @@ FILE NAMES
 
     Names are not case sensitive: Notes.TXT and notes.txt are the same
     file. The name keeps the capitals you used when you created it.
+    The same rules apply to folder names; "." and ".." are not names.
+
+FOLDERS AND PATHS
+    Folders are made with mkdir and deleted (when empty) with rmdir.
+    Every command that takes a file name also takes a path:
+
+        notes/plan.txt      plan.txt in the folder notes
+        notes/2026/a.txt    a folder inside a folder
+        /welcome.txt        a leading / starts at the top level
+        ../todo.txt         .. is the folder above, . this one
+
+    A path without a leading / starts in the current folder, which cd
+    changes and pwd shows; the prompt shows it too (moos:/notes>).
+    Two files may have the same name in different folders.
+
+    rename moves files and folders between folders. Nothing can be
+    left without a folder: rm only deletes files, rmdir only empty
+    folders.
 
     The part after the dot (like .txt) is just part of the name. MOOS
     does not care about it, but it helps you remember what a file is.
@@ -39,19 +57,24 @@ SAVING IS AUTOMATIC
     reading files is instant.
 
 WHAT IS STORED FOR EACH FILE
-    name, size in bytes, the date and time it was last changed, and
-    the contents. ls shows all of this.
+    name, size in bytes, the date and time it was last changed, the
+    folder it is in, and the contents. ls shows all of this.
 
 WORKING WITH FILES
-    ls                  list all files
+    ls [folder]         list files and folders
+    cd <folder>         go into a folder (cd .. goes up, cd alone to
+                        the top level)
+    pwd                 show the current folder
+    mkdir <folder>      make a folder
+    rmdir <folder>      delete an empty folder
     cat <file>          show a file
     write <file>        create a file by typing it
     append <file>       add lines to the end of a file
     echo text > file    save one line (>> adds instead of replacing)
-    copy <a> <b>        copy a file
-    rename <a> <b>      rename a file
+    copy <a> <b>        copy a file (b may be a folder)
+    rename <a> <b>      rename or move a file or folder
     rm <file>           delete a file
-    find <text>         search in all files
+    find <text>         search in the files here and below
     wc <file>           count lines, words and bytes
     hexdump <file>      show the raw bytes
     format              erase everything
@@ -102,10 +125,14 @@ ON-DISK LAYOUT (FOR THE CURIOUS)
 
     Your files live in the partition's "reserved sectors", which the
     FAT file system leaves alone. A directory entry holds the name (20
-    bytes), the size, a "used" flag and the packed modification time.
+    bytes), the size, the flags and the packed modification time. In
+    the flags, bit 0 means "used", bit 1 "folder", and bits 8-15 hold
+    the entry number + 1 of the folder it is in (0 = the top level).
+    Disks from before folders existed read the same: all their files
+    are at the top level. An older MOOS sees folders as empty files.
 
     If the header is missing at start-up (a brand new disk), MOOS
     creates an empty file system and a welcome.txt file.
 
 SEE ALSO
-    ls, write, format, mem
+    ls, cd, mkdir, rmdir, write, format, mem

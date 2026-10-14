@@ -1,6 +1,9 @@
 ; =============================================================================
 ;  cmd_files.asm - ls, cat, write, append, rm, rename, copy, find, wc,
-;                  hexdump, echo, clear
+;                  hexdump, echo, clear, and the folder commands cd, pwd,
+;                  mkdir, rmdir
+;  Every file name may be a path ("notes/plan.txt", "/a/b", "../x"); see
+;  fs.asm. Paths without a leading "/" start in the current folder.
 ;  Commands read argc / argv / rest_ptr and may change any register.
 ; =============================================================================
 section .bss
@@ -16,6 +19,12 @@ fnd_len     resd 1
 fnd_count   resd 1
 fnd_name    resd 1
 fnd_lineno  resd 1
+fnd_skip    resd 1                  ; (find: how much of a path to leave out)
+ls_dir      resd 1                  ; the folder ls lists
+cp_src      resd 1                  ; (copy: the source's index)
+cp_dst      resd 1                  ; (copy: the destination path)
+fc_path     resb FS_PATH_MAX        ; a path being built or shown
+fc_name     resb 24                 ; (ls: a folder's name with its "/")
 
 section .data
 u_cat       db "cat <file>", 0
@@ -27,17 +36,36 @@ u_copy      db "copy <source> <destination>", 0
 u_find      db "find <text> [file]", 0
 u_wc        db "wc <file>", 0
 u_hexdump   db "hexdump <file>", 0
+u_mkdir     db "mkdir <folder> [folder ...]", 0
+u_rmdir     db "rmdir <folder>", 0
 q_replace   db "That file already exists. Replace it?", 0
 q_empty     db "", 0
 
 section .text
 
-; open_file: ESI = name -> CF=0, EBX = index, EDI = entry.
-; CF=1 after printing a friendly message when there is no such file.
+; open_file: ESI = path -> CF=0, EBX = index, EDI = entry of that file.
+; CF=1 after printing a friendly message when there is no such file (or
+; it is a folder).
 open_file:
     call fs_find
-    jnc .ok
+    jc .none
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .ok                          ; (test leaves CF=0)
+    PRINTF `'\x01w%s\x01n' is a folder, not a file. Type \x01wls %s\x01n to see what is in it.\n`, esi, esi
+    stc
+    ret
+.none:
     PRINTF `There is no file named '\x01w%s\x01n'. Type \x01wls\x01n to see your files.\n`, esi
+    stc
+.ok:
+    ret
+
+; find_any: ESI = path -> CF=0, EBX = index, EDI = entry of that file or
+; folder; CF=1 after a message when there is none
+find_any:
+    call fs_find
+    jnc .ok
+    PRINTF `There is no file or folder named '\x01w%s\x01n'. Type \x01wls\x01n to see them.\n`, esi
     stc
 .ok:
     ret
@@ -47,23 +75,31 @@ print_fs_error:
     PRINTF `\x01rerror:\x01n %s\n`, esi
     ret
 
-; check_new_file: ESI = name. CF=1 (message printed) if the name is not
-; valid, or if the file does not exist yet and all 32 slots are taken.
+; check_new_file: ESI = path. CF=1 (message printed) if a file cannot be
+; saved there: a folder on the way is missing, the name is not valid, it
+; is a folder, or the file does not exist yet and all 32 entries are taken.
 check_new_file:
     pushad
-    call fs_name_valid
-    jc .bad
-    call fs_find
-    jnc .ok
+    call fs_resolve
+    jc .fail
+    call fs_leaf_check
+    jc .fail
+    push esi
+    mov esi, fs_leaf
+    call fs_lookup
+    pop esi
+    jc .new
+    mov eax, err_is_folder
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .fail
+    jmp .ok
+.new:
     call fs_stats
     cmp eax, FS_MAX_FILES
     jb .ok
-    mov esi, err_disk_full
-    jmp .fail
-.bad:
-    mov esi, err_name_bad
+    mov eax, err_disk_full
 .fail:
-    call print_fs_error
+    PRINTF `\x01rerror:\x01n %s: %s\n`, esi, eax
     popad
     stc
     ret
@@ -123,27 +159,71 @@ out_text:
     ret
 
 ; ------------------------------------------------------------------------- ls
+; ls [folder]: the folders in it (in blue, with a "/") and then its files
 cmd_ls:
+    mov eax, [fs_cwd]
+    cmp dword [argc], 2
+    jb .have
+    mov esi, [argv + 4]
+    call fs_find_dir
+    jnc .have
+    call fs_find                    ; a file: just its line
+    jc .bad
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .bad
+    call ls_line
+    ret
+.bad:
+    PRINTF `\x01rerror:\x01n %s: %s\n`, esi, eax
+    ret
+.have:
+    mov [ls_dir], eax
     call fs_stats
     test eax, eax
     jnz .list
-    PRINTF `No files yet. Create one with \x01wwrite notes.txt\x01n\n`
+    PRINTF `No files yet. Create one with \x01wwrite notes.txt\x01n or a folder with \x01wmkdir notes\x01n\n`
     ret
 .list:
     call out_begin
+    mov eax, [ls_dir]
+    test eax, eax
+    jz .head
+    mov edi, fc_path
+    call fs_path
+    PRINTF `  In \x01w%s\x01n\n`, edi
+.head:
+    mov eax, [ls_dir]
+    call fs_dir_count
+    test ecx, ecx
+    jnz .cols
+    PRINTF `  (this folder is empty)\n`
+    jmp .summary
+.cols:
     PRINTF `\x01w  NAME                     SIZE    MODIFIED\x01n\n`
+    mov dl, FLAG_DIR                ; folders first, then files
+.pass:
     xor ebx, ebx
 .l: call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .n
-    mov eax, [edi + DE_MTIME]
-    call unpack_mtime
-    PRINTF `  \x01c%20s\x01n %6d B  %d-%02d-%02d %02d:%02d\n`, edi, dword [edi + DE_SIZE], dword [dt_year], dword [dt_mon], dword [dt_day], dword [dt_hour], dword [dt_min]
+    mov al, [ls_dir]
+    cmp [edi + DE_PARENT], al
+    jne .n
+    mov al, [edi + DE_FLAGS]
+    and al, FLAG_DIR
+    cmp al, dl
+    jne .n
+    call ls_line
 .n: inc ebx
     cmp ebx, FS_MAX_FILES
     jb .l
+    sub dl, FLAG_DIR
+    jz .pass
+.summary:
+    call fs_counts
+    PRINTF `\n  %d file(s) and %d folder(s) on the disk, `, eax, ecx
     call fs_stats
-    PRINTF `\n  %d of 32 files, %d bytes used. Each file can hold up to 4096 bytes.\n`, eax, edx
+    PRINTF `%d bytes: %d of 32 entries used.\n  Each file can hold up to 4096 bytes.\n`, edx, eax
     cmp byte [fs_persist], 0
     jne .flush
     PRINTF `  \x01yNote:\x01n no disk was found, so files disappear when the computer is turned off.\n`
@@ -151,6 +231,31 @@ cmd_ls:
     xor ebx, ebx
     call out_flush
     ret
+
+; ls_line: EDI = entry -> one line of ls: name, size (or "folder"), date
+ls_line:
+    pushad
+    mov eax, [edi + DE_MTIME]
+    call unpack_mtime
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .folder
+    PRINTF `  \x01c%20s\x01n %6d B  `, edi, dword [edi + DE_SIZE]
+    jmp .date
+.folder:
+    mov esi, edi
+    mov edi, fc_name
+    call str_copy
+    mov esi, fs_slash
+    call str_append
+    PRINTF `  \x01b%20s\x01n   folder  `, edi
+.date:
+    PRINTF `%d-%02d-%02d %02d:%02d\n`, dword [dt_year], dword [dt_mon], dword [dt_day], dword [dt_hour], dword [dt_min]
+    popad
+    ret
+
+section .data
+fs_slash    db "/", 0
+section .text
 
 ; ------------------------------------------------------------------------ cat
 cmd_cat:
@@ -308,6 +413,13 @@ cmd_rm:
     call need_args
     jc .ret
     mov esi, [argv + 4]
+    call fs_find
+    jc .file
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .file
+    PRINTF `'\x01w%s\x01n' is a folder. Remove an empty folder with \x01wrmdir %s\x01n.\n`, esi, esi
+    ret
+.file:
     call open_file
     jc .ret
     PRINTF `Delete \x01w%s\x01n (%d bytes)?`, edi, dword [edi + DE_SIZE]
@@ -331,9 +443,19 @@ cmd_rename:
     call need_args
     jc .ret
     mov esi, [argv + 4]
-    call open_file
+    call find_any
     jc .ret
     mov esi, [argv + 8]
+    call fs_find_dir                ; into another folder: say "moved"
+    jc .rename
+    dec eax
+    cmp eax, ebx
+    je .rename
+    call fs_rename
+    jc print_fs_error
+    PRINTF `Moved %s into \x01b%s\x01n.\n`, dword [argv + 4], esi
+    ret
+.rename:
     call fs_rename
     jc print_fs_error
     PRINTF `Renamed %s to \x01w%s\x01n.\n`, dword [argv + 4], esi
@@ -341,6 +463,8 @@ cmd_rename:
     ret
 
 ; ----------------------------------------------------------------------- copy
+; copy <source> <destination>: the destination may be a folder (the copy
+; keeps the source's name there)
 cmd_copy:
     mov ecx, 2
     mov esi, u_copy
@@ -349,10 +473,31 @@ cmd_copy:
     mov esi, [argv + 4]
     call open_file
     jc .ret
-    mov edi, [argv + 8]
-    call str_icmp
-    je .same
+    mov [cp_src], ebx
+    mov esi, [argv + 8]
+    mov [cp_dst], esi
+    call fs_find_dir                ; into a folder: <folder>/<name>
+    jc .named
+    mov edi, fc_path
+    call str_copy
+    call str_len
+    cmp byte [esi + ecx - 1], '/'   ; ("folder/" already ends with one)
+    je .slashed
+    mov esi, fs_slash
+    call str_append
+.slashed:
+    call fs_entry
     mov esi, edi
+    mov edi, fc_path
+    call str_append
+    mov [cp_dst], edi
+.named:
+    mov esi, [cp_dst]
+    call fs_find
+    jc .check
+    cmp ebx, [cp_src]
+    je .same
+.check:
     call check_new_file
     jc .ret
     call fs_find
@@ -361,13 +506,13 @@ cmd_copy:
     call confirm
     jc .kept
 .copy:
-    mov esi, [argv + 4]
-    call fs_find
+    mov ebx, [cp_src]
+    call fs_entry
     mov ecx, [edi + DE_SIZE]
     call fs_slot                    ; copy via SCRATCH (source may move)
     mov edi, SCRATCH
     call mem_copy
-    mov esi, [argv + 8]
+    mov esi, [cp_dst]
     mov edx, SCRATCH
     call fs_save
     jc print_fs_error
@@ -382,6 +527,8 @@ cmd_copy:
     ret
 
 ; ----------------------------------------------------------------------- find
+; find <text> [file]: without a file, every file in the current folder and
+; the folders inside it (shown with their paths from here)
 cmd_find:
     mov ecx, 1
     mov esi, u_find
@@ -397,15 +544,43 @@ cmd_find:
     mov esi, [argv + 8]
     call open_file
     jc .ret
+    mov [fnd_name], esi
     call out_begin
     call find_in_file
     jmp .summary
 .all:
+    mov eax, [fs_cwd]               ; paths are shown from the current
+    mov edi, fc_path                ; folder: leave out its path + "/"
+    call fs_path
+    mov esi, edi
+    call str_len
+    inc ecx
+    cmp ecx, 2
+    jne .skip
+    dec ecx                         ; (the top level: just the "/")
+.skip:
+    mov [fnd_skip], ecx
     call out_begin
     xor ebx, ebx
 .l: call fs_entry
     test byte [edi + DE_FLAGS], FLAG_USED
     jz .n
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jnz .n
+    mov eax, [fs_cwd]               ; only below the current folder
+    test eax, eax
+    jz .in
+    push ebx
+    lea ebx, [eax - 1]
+    movzx eax, byte [edi + DE_PARENT]
+    call fs_inside
+    pop ebx
+    jnc .n
+.in:
+    mov edi, fc_path
+    call fs_entry_path
+    add edi, [fnd_skip]
+    mov [fnd_name], edi
     call find_in_file
 .n: inc ebx
     cmp ebx, FS_MAX_FILES
@@ -423,11 +598,11 @@ cmd_find:
 .ret:
     ret
 
-; find_in_file: EBX = file index. Prints "file:line: text" for each match.
+; find_in_file: EBX = file index, fnd_name = how to call it. Prints
+; "file:line: text" for each match.
 find_in_file:
     pushad
     call fs_entry
-    mov [fnd_name], edi
     mov edx, [edi + DE_SIZE]
     call fs_slot
     lea ebp, [esi + edx]            ; end of data
@@ -741,4 +916,82 @@ cmd_echo:
 ; ---------------------------------------------------------------------- clear
 cmd_clear:
     call vga_clear
+    ret
+
+; ------------------------------------------------------------------- folders
+; cd [folder]: change the current folder ("cd" or "cd /" = the top level)
+cmd_cd:
+    xor eax, eax
+    cmp dword [argc], 2
+    jb .set
+    mov esi, [argv + 4]
+    call fs_find_dir
+    jc .bad
+.set:
+    mov [fs_cwd], eax
+    ret
+.bad:
+    PRINTF `\x01rerror:\x01n %s: %s\n`, esi, eax
+    ret
+
+; pwd: show the current folder
+cmd_pwd:
+    mov eax, [fs_cwd]
+    mov edi, fc_path
+    call fs_path
+    PRINTF `%s\n`, edi
+    ret
+
+; mkdir <folder> ...: make new, empty folders
+cmd_mkdir:
+    mov ecx, 1
+    mov esi, u_mkdir
+    call need_args
+    jc .ret
+    mov ebx, 1
+.next:
+    cmp ebx, [argc]
+    jae .ret
+    mov esi, [argv + ebx * 4]
+    push ebx
+    call fs_mkdir
+    pop ebx
+    jc .err
+    PRINTF `Made folder \x01b%s\x01n.\n`, esi
+    jmp .n
+.err:
+    PRINTF `\x01rerror:\x01n %s: %s\n`, dword [argv + ebx * 4], esi
+.n: inc ebx
+    jmp .next
+.ret:
+    ret
+
+; rmdir <folder>: delete a folder - only an empty one
+cmd_rmdir:
+    mov ecx, 1
+    mov esi, u_rmdir
+    call need_args
+    jc .ret
+    mov esi, [argv + 4]
+    call fs_find
+    jc .none
+    test byte [edi + DE_FLAGS], FLAG_DIR
+    jz .file
+    lea eax, [ebx + 1]
+    call fs_dir_count
+    test ecx, ecx
+    jnz .full
+    call fs_delete
+    jc print_fs_error
+    PRINTF `Removed folder %s.\n`, esi
+.ret:
+    ret
+.none:
+    PRINTF `There is no folder named '\x01w%s\x01n'.\n`, esi
+    ret
+.file:
+    PRINTF `'\x01w%s\x01n' is a file, not a folder. Delete files with \x01wrm\x01n.\n`, esi
+    ret
+.full:
+    PRINTF `The folder '\x01w%s\x01n' is not empty: it holds %d file(s) or folder(s).\nDelete or move them first (\x01wls %s\x01n shows them).\n`, esi, ecx, esi
     ret

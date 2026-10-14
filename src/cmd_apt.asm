@@ -96,6 +96,16 @@ apt_load_repo:
     popad
     ret
 
+; cmd_apt_top: apt always works in the top-level folder - packages are
+; installed there and its records (apt.repo, <name>.inst) live there -
+; whatever the shell's current folder is
+cmd_apt_top:
+    push dword [fs_cwd]
+    mov dword [fs_cwd], 0
+    call cmd_apt
+    pop dword [fs_cwd]
+    ret
+
 cmd_apt:
     call apt_load_repo
     cmp dword [argc], 2
@@ -281,9 +291,37 @@ apt_install:
     PRINTF `\x01rerror:\x01n %s\n`, dword [url_err]
     ret
 
-; apt_protected_name: ESI = file name -> CF=1 if a package may not write it
+; apt_protected_name: ESI = file path -> CF=1 if a package may not write it
+; (MOOS's settings files and the .inst records, all in the top-level folder)
 apt_protected_name:
     pushad
+    mov edi, esi                    ; a "." or ".." part: refused, so a
+.part:                              ; path cannot sneak to the top level
+    cmp byte [edi], '.'
+    jne .skip
+    cmp byte [edi + 1], '.'
+    jne .one
+    inc edi
+.one:
+    mov al, [edi + 1]
+    test al, al
+    jz .yes
+    cmp al, '/'
+    je .yes
+.skip:                              ; on to the next part
+    mov al, [edi]
+    inc edi
+    test al, al
+    jz .where
+    cmp al, '/'
+    jne .skip
+    jmp .part
+.where:
+    call fs_resolve
+    jc .no                          ; (fs_save will refuse it anyway)
+    test eax, eax
+    jnz .no                         ; inside a folder: never a settings file
+    mov esi, fs_leaf
     mov ebx, apt_protected
 .l: mov edi, [ebx]
     test edi, edi
@@ -295,6 +333,7 @@ apt_protected_name:
 .check_inst:
     call ends_with_inst
     jnc .yes
+.no:
     popad
     clc
     ret
@@ -400,7 +439,10 @@ pkg_install:
     push ecx
     push edx
     mov esi, apt_pkg_name
+    call fs_make_parents            ; ("@file games/x.ms": make games/)
+    jc .made
     call fs_save                    ; ESI = name, EDX = data, ECX = len
+.made:
     pop edx
     pop ecx
     jc .save_err

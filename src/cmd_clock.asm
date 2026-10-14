@@ -57,7 +57,7 @@ clk_init:
     pushad
     call clk_defaults
     mov esi, clk_cfg_name
-    call fs_find
+    call fs_find_top
     jc .done
     cmp dword [edi + DE_SIZE], 7
     jb .done
@@ -89,7 +89,7 @@ clk_save:
     mov esi, clk_cfg_name
     mov edx, SCRATCH
     mov ecx, 7
-    call fs_save
+    call fs_save_top
     popad
     ret
 

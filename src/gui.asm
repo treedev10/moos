@@ -499,7 +499,7 @@ cmd_gui:
     ret
 .ok:
     mov esi, desktop_marker         ; the desktop is an installable package
-    call fs_find
+    call fs_find_top
     jnc .installed
     PRINTF `The desktop is not installed yet. Install it with:\n\n    \x01wapt install desktop\x01n\n\n(this downloads it from the package server - see \x01wman apt\x01n). It is a one-time\nstep; after that, \x01wgui\x01n starts the desktop.\n`
     ret

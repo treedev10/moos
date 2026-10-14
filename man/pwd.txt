@@ -1,0 +1,25 @@
+NAME
+    pwd - show the current folder
+
+SYNOPSIS
+    pwd
+
+DESCRIPTION
+    pwd prints the whole path of the current folder, from the top
+    level: "/" for the top level itself, "/notes/2026" for a folder
+    inside a folder. The prompt shows the same thing (shortened when it
+    is long).
+
+ARGUMENTS
+    None.
+
+EXAMPLES
+    pwd
+        /
+
+    cd notes
+    pwd
+        /notes
+
+SEE ALSO
+    cd, ls, files

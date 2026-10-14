@@ -15,7 +15,9 @@ DESCRIPTION
     Upper and lower case are ignored, so  find MILK  also finds "milk"
     and "Milk".
 
-    Without a file name, all files are searched. With a file name, only
+    Without a file name, every file in the current folder and in the
+    folders inside it is searched, and results show the path from the
+    current folder (notes/todo.txt:3: ...). With a file name, only
     that file is searched. At the end, find tells you how many lines
     matched. Long result lists are shown page by page.
 

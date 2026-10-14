@@ -11,8 +11,8 @@ GUI_LOG     equ 16384
 APP_BUF     equ 4096
 TX_LEN      equ 0                   ; text buffer block: length of the text,
 TX_DIRTY    equ 4                   ; 1 = changed since saved,
-TX_FILE     equ 8                   ; the file it belongs to,
-TX_BUF      equ 32                  ; then the text itself
+TX_FILE     equ 8                   ; the file it belongs to (a path),
+TX_BUF      equ 8 + 128             ; then the text itself
 TX_SIZE     equ TX_BUF + APP_BUF
 
 section .bss
@@ -37,7 +37,6 @@ section .data
 term_welcome db "MOOS terminal - type a command and press Enter.", 10
              db "Commands that take over the screen (edit, write, gui) are", 10
              db "not available here; use ls, cat, calc, net, apt, time...", 10, 10, 0
-term_prompt  db "moos> ", 0
 ide_file     db "script.ms", 0
 edit_file    db "notes.txt", 0
 ide_hint     db "Ctrl+R = Run     Ctrl+S = Save", 0
@@ -147,7 +146,7 @@ app_term_draw:
     mov edx, eax
     imul edx, 16
     add edx, [ta_y]
-    mov esi, term_prompt
+    call shell_prompt               ; "moos> " (with the folder, if any)
     mov eax, 0x7CE08A               ; (green, like the text console's prompt)
     push edx
     call gfx_rgb
@@ -155,7 +154,11 @@ app_term_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    add ecx, 8 * 6                  ; after "moos> "
+    push ecx
+    call str_len                    ; after the prompt
+    shl ecx, 3
+    pop eax
+    add ecx, eax
     mov esi, term_input
     call gfx_text
     popad
@@ -188,7 +191,7 @@ term_key:
     mov byte [term_input + ecx], 0
     ret
 .enter:
-    mov esi, term_prompt            ; echo the command into the log
+    call shell_prompt               ; echo the command into the log
     call term_log_str
     mov esi, term_input
     call term_log_str

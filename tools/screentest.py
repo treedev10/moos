@@ -7,6 +7,8 @@ window, types keys through the QEMU monitor and prints MOOS's 80x25 screen.
 
 Options
     --image IMG     disk image to copy and start (default build/moos.img)
+    --save IMG      when done, keep the test's disk as IMG (to start it
+                    again with --image, e.g. to check files survive)
     --uefi          start the PC with UEFI firmware instead of a BIOS
     --drive ARGS    replace the QEMU disk arguments; {disk} stands for the
                     copied image, e.g. "-machine q35 -drive file={disk},format=raw"
@@ -225,12 +227,15 @@ def main():
     args = sys.argv[1:]
     image, drive, extra, uefi, mem, nic = IMAGE, None, '', False, None, 'rtl8139'
     audio = None
+    save = None
     while args and args[0].startswith('--'):
         opt = args.pop(0)
         if opt == '--uefi':
             uefi = True
         elif opt == '--image':
             image = args.pop(0)
+        elif opt == '--save':
+            save = args.pop(0)
         elif opt == '--drive':
             drive = args.pop(0)
         elif opt == '--extra':
@@ -336,6 +341,9 @@ def main():
         if proc.poll() is None:
             proc.kill()
         proc.wait()
+        if save:
+            shutil.copy(disk, save)
+            print('disk saved:', save)
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
