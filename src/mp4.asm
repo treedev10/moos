@@ -140,43 +140,43 @@ MP4_EFRAG       equ -3              ; fragmented MP4: the samples are in moof bo
 MP4_ECODEC      equ -4              ; tracks found, none in H.264 or AAC (see MP4T_CODEC)
 
 ; ---- a track being read (internal): the public block, then the tables -------
-TK_USE          equ MP4T_LEN + 0    ; 1 = MOOS can play it
-TK_HDLR         equ MP4T_LEN + 4    ; 'vide' / 'soun' (0 = no track kept yet)
-TK_CODECOK      equ MP4T_LEN + 8    ; codec and its setup understood
-TK_CFGSRC       equ MP4T_LEN + 12   ; the avcC / ASC bytes inside the moov
-TK_SPSOFF       equ MP4T_LEN + 16   ; first SPS / PPS: offset into the avcC
-TK_PPSOFF       equ MP4T_LEN + 20
-TK_STTS         equ MP4T_LEN + 24   ; first entry, entry count
-TK_STTSN        equ MP4T_LEN + 28
-TK_CTTS         equ MP4T_LEN + 32
-TK_CTTSN        equ MP4T_LEN + 36
-TK_STSS         equ MP4T_LEN + 40   ; (0 = no stss box: every sample is a sync sample)
-TK_STSSN        equ MP4T_LEN + 44
-TK_STSC         equ MP4T_LEN + 48
-TK_STSCN        equ MP4T_LEN + 52
-TK_SZ           equ MP4T_LEN + 56   ; sample size entries
-TK_SZKIND       equ MP4T_LEN + 60   ; 0 none, 1 one size for all, 32 stsz, 4/8/16 stz2
-TK_SZCONST      equ MP4T_LEN + 64
-TK_CO           equ MP4T_LEN + 68   ; chunk offsets
-TK_CON          equ MP4T_LEN + 72
-TK_CO64         equ MP4T_LEN + 76   ; 1 = co64 (64-bit entries)
-TK_LEN          equ MP4T_LEN + 80
+MP4TK_USE       equ MP4T_LEN + 0    ; 1 = MOOS can play it
+MP4TK_HDLR      equ MP4T_LEN + 4    ; 'vide' / 'soun' (0 = no track kept yet)
+MP4TK_CODECOK   equ MP4T_LEN + 8    ; codec and its setup understood
+MP4TK_CFGSRC    equ MP4T_LEN + 12   ; the avcC / ASC bytes inside the moov
+MP4TK_SPSOFF    equ MP4T_LEN + 16   ; first SPS / PPS: offset into the avcC
+MP4TK_PPSOFF    equ MP4T_LEN + 20
+MP4TK_STTS      equ MP4T_LEN + 24   ; first entry, entry count
+MP4TK_STTSN     equ MP4T_LEN + 28
+MP4TK_CTTS      equ MP4T_LEN + 32
+MP4TK_CTTSN     equ MP4T_LEN + 36
+MP4TK_STSS      equ MP4T_LEN + 40   ; (0 = no stss box: every sample is a sync sample)
+MP4TK_STSSN     equ MP4T_LEN + 44
+MP4TK_STSC      equ MP4T_LEN + 48
+MP4TK_STSCN     equ MP4T_LEN + 52
+MP4TK_SZ        equ MP4T_LEN + 56   ; sample size entries
+MP4TK_SZKIND    equ MP4T_LEN + 60   ; 0 none, 1 one size for all, 32 stsz, 4/8/16 stz2
+MP4TK_SZCONST   equ MP4T_LEN + 64
+MP4TK_CO        equ MP4T_LEN + 68   ; chunk offsets
+MP4TK_CON       equ MP4T_LEN + 72
+MP4TK_CO64      equ MP4T_LEN + 76   ; 1 = co64 (64-bit entries)
+MP4TK_LEN       equ MP4T_LEN + 80
 
 ; boxes mp4_walk notes for a track (slot numbers)
-SL_TKHD         equ 0
-SL_ELST         equ 1
-SL_MDHD         equ 2
-SL_HDLR         equ 3
-SL_STSD         equ 4
-SL_STTS         equ 5
-SL_CTTS         equ 6
-SL_STSS         equ 7
-SL_STSC         equ 8
-SL_STSZ         equ 9
-SL_STZ2         equ 10
-SL_STCO         equ 11
-SL_CO64         equ 12
-SL_COUNT        equ 13
+MP4SL_TKHD      equ 0
+MP4SL_ELST      equ 1
+MP4SL_MDHD      equ 2
+MP4SL_HDLR      equ 3
+MP4SL_STSD      equ 4
+MP4SL_STTS      equ 5
+MP4SL_CTTS      equ 6
+MP4SL_STSS      equ 7
+MP4SL_STSC      equ 8
+MP4SL_STSZ      equ 9
+MP4SL_STZ2      equ 10
+MP4SL_STCO      equ 11
+MP4SL_CO64      equ 12
+MP4SL_COUNT     equ 13
 MP4_MAXDEPTH    equ 6               ; containers inside a trak (trak/mdia/minf/stbl is 3)
 
 section .data
@@ -184,10 +184,10 @@ align 4
 ; type, slot (-1 = a container to look inside); ends with 0
 mp4_boxtab:
     dd 'edts', -1, 'mdia', -1, 'minf', -1, 'stbl', -1
-    dd 'tkhd', SL_TKHD, 'elst', SL_ELST, 'mdhd', SL_MDHD, 'hdlr', SL_HDLR
-    dd 'stsd', SL_STSD, 'stts', SL_STTS, 'ctts', SL_CTTS, 'stss', SL_STSS
-    dd 'stsc', SL_STSC, 'stsz', SL_STSZ, 'stz2', SL_STZ2, 'stco', SL_STCO
-    dd 'co64', SL_CO64, 0, 0
+    dd 'tkhd', MP4SL_TKHD, 'elst', MP4SL_ELST, 'mdhd', MP4SL_MDHD, 'hdlr', MP4SL_HDLR
+    dd 'stsd', MP4SL_STSD, 'stts', MP4SL_STTS, 'ctts', MP4SL_CTTS, 'stss', MP4SL_STSS
+    dd 'stsc', MP4SL_STSC, 'stsz', MP4SL_STSZ, 'stz2', MP4SL_STZ2, 'stco', MP4SL_STCO
+    dd 'co64', MP4SL_CO64, 0, 0
 ; box types a file may start with (anything else: not an MP4)
 mp4_firsttab:
     dd 'ftyp', 'styp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pdin', 'uuid'
@@ -203,11 +203,11 @@ mp4_aacch:
 section .bss
 alignb 4
 mp4_bss:                            ; (cleared by mp4_parse_moov)
-mp4_slot_ptr    resd SL_COUNT       ; payload of each noted box (0 = none)
-mp4_slot_len    resd SL_COUNT
-mp4_ct          resb TK_LEN         ; the track being read
-mp4_vt          resb TK_LEN         ; the video track kept
-mp4_at          resb TK_LEN         ; the audio track kept
+mp4_slot_ptr    resd MP4SL_COUNT       ; payload of each noted box (0 = none)
+mp4_slot_len    resd MP4SL_COUNT
+mp4_ct          resb MP4TK_LEN         ; the track being read
+mp4_vt          resb MP4TK_LEN         ; the video track kept
+mp4_at          resb MP4TK_LEN         ; the audio track kept
 mp4_mscale      resd 1              ; movie time scale / length (mvhd)
 mp4_mdur        resd 1
 mp4_frag        resd 1              ; 1 = an mvex box (fragmented file)
@@ -486,16 +486,16 @@ mp4_rd64:
 ; -----------------------------------------------------------------------------
 ; mp4_track: read the boxes mp4_walk noted for one trak into the track
 ;   record at EBP: kind, codec and its setup, time scale, the sample tables,
-;   the edit list, and whether MOOS can play it (TK_USE).
+;   the edit list, and whether MOOS can play it (MP4TK_USE).
 ;   Uses EAX EBX ECX EDX ESI EDI; keeps EBP.
 ; -----------------------------------------------------------------------------
 mp4_track:
     mov edi, ebp
-    mov ecx, TK_LEN / 4
+    mov ecx, MP4TK_LEN / 4
     xor eax, eax
     rep stosd
     ; tkhd: track number (after the times, which are 64-bit in version 1)
-    mov ecx, SL_TKHD
+    mov ecx, MP4SL_TKHD
     call mp4_slot
     jz .hdlr
     cmp ecx, 16
@@ -511,15 +511,15 @@ mp4_track:
     bswap eax
     mov [ebp + MP4T_ID], eax
 .hdlr:                              ; hdlr: 'vide' or 'soun'
-    mov ecx, SL_HDLR
+    mov ecx, MP4SL_HDLR
     call mp4_slot
     jz .mdhd
     cmp ecx, 12
     jb .mdhd
     mov eax, [ebx + 8]
-    mov [ebp + TK_HDLR], eax
+    mov [ebp + MP4TK_HDLR], eax
 .mdhd:                              ; mdhd: time scale and length
-    mov ecx, SL_MDHD
+    mov ecx, MP4SL_MDHD
     call mp4_slot
     jz .stsd
     cmp ecx, 20
@@ -543,7 +543,7 @@ mp4_track:
     call mp4_rd64
     mov [ebp + MP4T_MDUR], eax
 .stsd:                              ; stsd: the first sample entry
-    mov ecx, SL_STSD
+    mov ecx, MP4SL_STSD
     call mp4_slot
     jz .tables
     cmp ecx, 16
@@ -553,33 +553,33 @@ mp4_track:
     call mp4_box_next
     jc .tables
     mov [ebp + MP4T_CODEC], eax
-    cmp dword [ebp + TK_HDLR], 'vide'
+    cmp dword [ebp + MP4TK_HDLR], 'vide'
     jne .notvid
     call mp4_vis_entry
     jmp .tables
 .notvid:
-    cmp dword [ebp + TK_HDLR], 'soun'
+    cmp dword [ebp + MP4TK_HDLR], 'soun'
     jne .tables
     call mp4_snd_entry
 .tables:
     call mp4_tables
     call mp4_edit
     ; can MOOS play it?
-    cmp dword [ebp + TK_CODECOK], 0
+    cmp dword [ebp + MP4TK_CODECOK], 0
     je .ret
     cmp dword [ebp + MP4T_SCALE], 0
     je .ret
     cmp dword [ebp + MP4T_N], 0
     je .ret
-    cmp dword [ebp + TK_STTSN], 0
+    cmp dword [ebp + MP4TK_STTSN], 0
     je .ret
-    cmp dword [ebp + TK_STSCN], 0
+    cmp dword [ebp + MP4TK_STSCN], 0
     je .ret
-    cmp dword [ebp + TK_CON], 0
+    cmp dword [ebp + MP4TK_CON], 0
     je .ret
-    cmp dword [ebp + TK_SZKIND], 0
+    cmp dword [ebp + MP4TK_SZKIND], 0
     je .ret
-    mov dword [ebp + TK_USE], 1
+    mov dword [ebp + MP4TK_USE], 1
 .ret:
     ret
 
@@ -610,7 +610,7 @@ mp4_vis_entry:
     mov esi, ecx
     jmp .next
 .avcc:
-    mov [ebp + TK_CFGSRC], ebx
+    mov [ebp + MP4TK_CFGSRC], ebx
     sub ecx, ebx                    ; ECX = record length
     mov [ebp + MP4T_CFGLEN], ecx
     mov eax, [ebp + MP4T_CODEC]
@@ -649,7 +649,7 @@ mp4_vis_entry:
     test edx, edx
     jz .sps2
     lea edx, [esi + 2]
-    mov [ebp + TK_SPSOFF], edx
+    mov [ebp + MP4TK_SPSOFF], edx
     sub eax, edx
     mov [ebp + MP4T_P5], eax
     add eax, edx
@@ -678,7 +678,7 @@ mp4_vis_entry:
     test edx, edx
     jz .pps2
     lea edx, [esi + 2]
-    mov [ebp + TK_PPSOFF], edx
+    mov [ebp + MP4TK_PPSOFF], edx
     sub eax, edx
     mov [ebp + MP4T_P7], eax
     add eax, edx
@@ -687,7 +687,7 @@ mp4_vis_entry:
     dec edi
     jmp .pps
 .ok:
-    mov dword [ebp + TK_CODECOK], 1
+    mov dword [ebp + MP4TK_CODECOK], 1
 .ret:
     ret
 
@@ -768,7 +768,7 @@ mp4_snd_entry:
     ja .ret
 .aac:
     call mp4_asc
-    mov dword [ebp + TK_CODECOK], 1
+    mov dword [ebp + MP4TK_CODECOK], 1
 .ret:
     ret
 
@@ -821,7 +821,7 @@ mp4_desc:
 ; mp4_esds: find the AudioSpecificConfig in an esds box (14496-14 5.6):
 ;   ES_Descriptor (tag 3) > DecoderConfigDescriptor (tag 4: objectType...)
 ;   > DecoderSpecificInfo (tag 5) = the AudioSpecificConfig bytes.
-;   In: EBX = esds payload, ECX = its end; EBP = track (TK_CFGSRC,
+;   In: EBX = esds payload, ECX = its end; EBP = track (MP4TK_CFGSRC,
 ;   MP4T_CFGLEN, MP4T_P3 set). Keeps ESI EDX; uses EAX EBX ECX EDI.
 ; -----------------------------------------------------------------------------
 mp4_esds:
@@ -879,7 +879,7 @@ mp4_esds:
     add esi, ecx
     jmp .find5
 .dsi:
-    mov [ebp + TK_CFGSRC], esi
+    mov [ebp + MP4TK_CFGSRC], esi
     mov [ebp + MP4T_CFGLEN], ecx
 .ret:
     pop edx
@@ -913,7 +913,7 @@ mp4_bits:
 ; mp4_asc: read the start of the AudioSpecificConfig (14496-3 1.6.2.1):
 ;   audio object type, sampling frequency, channel configuration, and for
 ;   explicit HE-AAC (SBR, PS) the output sampling frequency.
-;   In: EBP = track with TK_CFGSRC / MP4T_CFGLEN. Sets MP4T_P4 (object
+;   In: EBP = track with MP4TK_CFGSRC / MP4T_CFGLEN. Sets MP4T_P4 (object
 ;   type), MP4T_P1 (rate) and MP4T_P2 (channels) where the config says.
 ;   Uses EAX ECX EDX ESI EDI.
 ; -----------------------------------------------------------------------------
@@ -923,7 +923,7 @@ mp4_asc:
     mov edi, mp4_ascbuf
     mov ecx, 4
     rep stosd
-    mov esi, [ebp + TK_CFGSRC]
+    mov esi, [ebp + MP4TK_CFGSRC]
     mov ecx, [ebp + MP4T_CFGLEN]
     cmp ecx, 12
     jbe .copy
@@ -981,31 +981,31 @@ mp4_asc:
 ;   Uses EAX EBX ECX EDX.
 ; -----------------------------------------------------------------------------
 mp4_tables:
-    mov ecx, SL_STTS                ; stts: (count, delta) pairs
+    mov ecx, MP4SL_STTS             ; stts: (count, delta) pairs
     call mp4_slot
     jz .ctts
     mov edx, 3                      ; (8-byte entries)
     call .count
-    mov [ebp + TK_STTS], ebx
-    mov [ebp + TK_STTSN], eax
+    mov [ebp + MP4TK_STTS], ebx
+    mov [ebp + MP4TK_STTSN], eax
 .ctts:                              ; ctts: (count, offset) pairs
-    mov ecx, SL_CTTS
+    mov ecx, MP4SL_CTTS
     call mp4_slot
     jz .stss
     mov edx, 3
     call .count
-    mov [ebp + TK_CTTS], ebx
-    mov [ebp + TK_CTTSN], eax
+    mov [ebp + MP4TK_CTTS], ebx
+    mov [ebp + MP4TK_CTTSN], eax
 .stss:                              ; stss: sync sample numbers
-    mov ecx, SL_STSS
+    mov ecx, MP4SL_STSS
     call mp4_slot
     jz .stsc
     mov edx, 2
     call .count
-    mov [ebp + TK_STSS], ebx
-    mov [ebp + TK_STSSN], eax
+    mov [ebp + MP4TK_STSS], ebx
+    mov [ebp + MP4TK_STSSN], eax
 .stsc:                              ; stsc: (first chunk, samples per chunk, entry) triples
-    mov ecx, SL_STSC
+    mov ecx, MP4SL_STSC
     call mp4_slot
     jz .stco
     cmp ecx, 8
@@ -1022,27 +1022,27 @@ mp4_tables:
     mov eax, ecx
 .scfit:
     add ebx, 8
-    mov [ebp + TK_STSC], ebx
-    mov [ebp + TK_STSCN], eax
+    mov [ebp + MP4TK_STSC], ebx
+    mov [ebp + MP4TK_STSCN], eax
 .stco:                              ; stco / co64: chunk offsets
-    mov ecx, SL_STCO
+    mov ecx, MP4SL_STCO
     call mp4_slot
     jz .co64
     mov edx, 2
     call .count
     jmp .setco
 .co64:
-    mov ecx, SL_CO64
+    mov ecx, MP4SL_CO64
     call mp4_slot
     jz .sizes
     mov edx, 3
     call .count
-    mov dword [ebp + TK_CO64], 1
+    mov dword [ebp + MP4TK_CO64], 1
 .setco:
-    mov [ebp + TK_CO], ebx
-    mov [ebp + TK_CON], eax
+    mov [ebp + MP4TK_CO], ebx
+    mov [ebp + MP4TK_CON], eax
 .sizes:                             ; stsz: one size for all, or a 32-bit size each
-    mov ecx, SL_STSZ
+    mov ecx, MP4SL_STSZ
     call mp4_slot
     jz .stz2
     cmp ecx, 12
@@ -1053,8 +1053,8 @@ mp4_tables:
     bswap edx                       ; EDX = the size of every sample, or 0
     test edx, edx
     jz .stsz32
-    mov [ebp + TK_SZCONST], edx
-    mov dword [ebp + TK_SZKIND], 1
+    mov [ebp + MP4TK_SZCONST], edx
+    mov dword [ebp + MP4TK_SZKIND], 1
     jmp .setn
 .stsz32:
     sub ecx, 12
@@ -1063,10 +1063,10 @@ mp4_tables:
     jbe .s32fit
     mov eax, ecx
 .s32fit:
-    mov dword [ebp + TK_SZKIND], 32
+    mov dword [ebp + MP4TK_SZKIND], 32
     jmp .setsz
 .stz2:                              ; stz2: 4, 8 or 16-bit sizes
-    mov ecx, SL_STZ2
+    mov ecx, MP4SL_STZ2
     call mp4_slot
     jz .ret
     cmp ecx, 12
@@ -1092,10 +1092,10 @@ mp4_tables:
     jbe .zok
     mov eax, ecx
 .zok:
-    mov [ebp + TK_SZKIND], edx
+    mov [ebp + MP4TK_SZKIND], edx
 .setsz:
     add ebx, 12
-    mov [ebp + TK_SZ], ebx
+    mov [ebp + MP4TK_SZ], ebx
 .setn:
     mov [ebp + MP4T_N], eax
 .ret:
@@ -1129,7 +1129,7 @@ mp4_tables:
 mp4_edit:
     mov eax, [ebp + MP4T_MDUR]
     mov [ebp + MP4T_DUR], eax
-    mov ecx, SL_ELST
+    mov ecx, MP4SL_ELST
     call mp4_slot
     jz .ret
     cmp ecx, 8
@@ -1237,7 +1237,7 @@ mp4_edit:
     ret
 
 ; -----------------------------------------------------------------------------
-; mp4_build: fill the sample array at EDI for the track at EBP (TK_USE set,
+; mp4_build: fill the sample array at EDI for the track at EBP (MP4TK_USE set,
 ;   MP4T_N entries of room): sizes, file offsets, presentation times, sync
 ;   flags. MP4T_N may come down if the chunk tables run out early.
 ;   Uses EAX EBX ECX EDX ESI EDI.
@@ -1250,17 +1250,17 @@ mp4_build:
     mov [mp4_send], eax
     ; --- sizes, and the sync flag every sample has if there is no stss
     xor edx, edx
-    cmp dword [ebp + TK_STSS], 0
+    cmp dword [ebp + MP4TK_STSS], 0
     jne .flag
     inc edx
 .flag:
-    mov esi, [ebp + TK_SZ]
+    mov esi, [ebp + MP4TK_SZ]
     mov ecx, [ebp + MP4T_N]
     test ecx, ecx
     jz .ret
     xor ebx, ebx                    ; EBX = sample number (for 4-bit sizes)
 .size:
-    mov eax, [ebp + TK_SZKIND]
+    mov eax, [ebp + MP4TK_SZKIND]
     cmp eax, 32
     je .sz32
     cmp eax, 16
@@ -1269,7 +1269,7 @@ mp4_build:
     je .sz8
     cmp eax, 4
     je .sz4
-    mov eax, [ebp + TK_SZCONST]
+    mov eax, [ebp + MP4TK_SZCONST]
     jmp .szset
 .sz32:
     mov eax, [esi + ebx * 4]
@@ -1315,14 +1315,14 @@ mp4_build:
 ; -----------------------------------------------------------------------------
 mp4_offsets:
     mov edi, [ebp + MP4T_SAMP]      ; EDI = next sample to place
-    mov esi, [ebp + TK_STSC]        ; ESI = current stsc entry
-    mov eax, [ebp + TK_STSCN]
+    mov esi, [ebp + MP4TK_STSC]     ; ESI = current stsc entry
+    mov eax, [ebp + MP4TK_STSCN]
     lea eax, [eax + eax * 2]
     lea eax, [esi + eax * 4]
     mov [mp4_scend], eax
     mov ebx, 1                      ; EBX = chunk number (from 1)
 .chunk:
-    cmp ebx, [ebp + TK_CON]
+    cmp ebx, [ebp + MP4TK_CON]
     ja .done
     cmp edi, [mp4_send]
     jae .done
@@ -1345,8 +1345,8 @@ mp4_offsets:
     mov ecx, [esi + 4]
     bswap ecx
 .gotn:
-    mov eax, [ebp + TK_CO]
-    cmp dword [ebp + TK_CO64], 0
+    mov eax, [ebp + MP4TK_CO]
+    cmp dword [ebp + MP4TK_CO64], 0
     jne .c64
     mov edx, [eax + ebx * 4 - 4]
     bswap edx
@@ -1389,16 +1389,16 @@ mp4_offsets:
 mp4_times:
     cmp dword [ebp + MP4T_N], 0
     je .ret
-    mov esi, [ebp + TK_STTS]        ; ESI = current stts entry
-    mov eax, [ebp + TK_STTSN]
+    mov esi, [ebp + MP4TK_STTS]     ; ESI = current stts entry
+    mov eax, [ebp + MP4TK_STTSN]
     lea eax, [esi + eax * 8]
     mov [mp4_tend], eax
     mov eax, [esi]
     bswap eax
     mov [mp4_trem], eax
-    mov eax, [ebp + TK_CTTS]
+    mov eax, [ebp + MP4TK_CTTS]
     mov [mp4_cp], eax
-    mov ecx, [ebp + TK_CTTSN]
+    mov ecx, [ebp + MP4TK_CTTSN]
     lea ecx, [eax + ecx * 8]
     mov [mp4_cend], ecx
     xor ecx, ecx
@@ -1515,8 +1515,8 @@ mp4_times:
 ;   them (MP4T_NSYNC) for the track at EBP. Uses EAX EBX ECX EDX ESI.
 ; -----------------------------------------------------------------------------
 mp4_sync:
-    mov esi, [ebp + TK_STSS]
-    mov ecx, [ebp + TK_STSSN]
+    mov esi, [ebp + MP4TK_STSS]
+    mov ecx, [ebp + MP4TK_STSSN]
     mov ebx, [ebp + MP4T_SAMP]
     test esi, esi
     jz .count
@@ -1555,7 +1555,7 @@ mp4_sync:
 ;   does not fit 32 bits. Nothing for a track MOOS cannot play. Uses EDX.
 ; -----------------------------------------------------------------------------
 mp4_need:
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .ret
     mov edx, [ebp + MP4T_CFGLEN]
     add edx, 15
@@ -1583,25 +1583,25 @@ mp4_need:
 mp4_cfg:
     mov edi, [mp4_wp]
     mov [ebp + MP4T_CFG], edi
-    mov esi, [ebp + TK_CFGSRC]
+    mov esi, [ebp + MP4TK_CFGSRC]
     mov ecx, [ebp + MP4T_CFGLEN]
     rep movsb
     mov eax, [ebp + MP4T_CFGLEN]
     add eax, 15
     and eax, -16
     add [mp4_wp], eax
-    cmp dword [ebp + TK_HDLR], 'vide'
+    cmp dword [ebp + MP4TK_HDLR], 'vide'
     jne .ret
     mov eax, [ebp + MP4T_CFG]
     cmp dword [ebp + MP4T_P5], 0
     je .pps
-    add eax, [ebp + TK_SPSOFF]
+    add eax, [ebp + MP4TK_SPSOFF]
     mov [ebp + MP4T_P4], eax
 .pps:
     mov eax, [ebp + MP4T_CFG]
     cmp dword [ebp + MP4T_P7], 0
     je .ret
-    add eax, [ebp + TK_PPSOFF]
+    add eax, [ebp + MP4TK_PPSOFF]
     mov [ebp + MP4T_P6], eax
 .ret:
     ret
@@ -1613,7 +1613,7 @@ mp4_cfg:
 ;   Uses EAX ECX ESI EDI.
 ; -----------------------------------------------------------------------------
 mp4_out:
-    cmp dword [ebp + TK_HDLR], 0
+    cmp dword [ebp + MP4TK_HDLR], 0
     je .ret                         ; (no such track)
     mov esi, ebp
     mov ecx, MP4T_LEN / 4
@@ -1627,7 +1627,7 @@ mp4_out:
     mov [edi + MP4T_CFG], eax
     mov [edi + MP4T_CFGLEN], eax
     mov [edi + MP4T_NSYNC], eax
-    cmp dword [ebp + TK_HDLR], 'vide'
+    cmp dword [ebp + MP4TK_HDLR], 'vide'
     jne .ret
     mov [edi + MP4T_P4], eax
     mov [edi + MP4T_P5], eax
@@ -1644,12 +1644,15 @@ mp4_out:
 ;   track and the first AAC audio track (or, if there is none, the first
 ;   video / sound track of another codec, with OK = 0) and builds their
 ;   sample arrays in work.
-;   work must hold, rounded up to 16 bytes each: the avcC record, the
-;   AudioSpecificConfig, and 16 bytes per sample of both tracks, + 15.
-;   When each sample's size is listed (stsz with sample size 0 - every
-;   ffmpeg / YouTube file), a track's samples are at most a quarter of the
-;   moov's size, so moov length * 6 + 1 MB is always enough; a file with one
-;   size for all samples may need more (MP4I_NEED tells).
+;   How big work must be: 16 bytes per sample of the two tracks kept, plus
+;   their avcC record and AudioSpecificConfig (each rounded up to 16), plus
+;   15 for alignment. The exact number is put in MP4I_NEED; if worklen is
+;   less, the result is -2 and nothing is written to work. When the sample
+;   sizes are listed one by one in an stsz box (sample size 0: what ffmpeg
+;   and YouTube write), every sample costs 4 bytes of moov and 16 of work,
+;   so moov length * 4 + the configs is enough, and the player's moov
+;   length * 6 + 1 MB always is. Compact sizes (stz2: 4, 8 or 16 bits) or
+;   one size for all samples can need more (MP4I_NEED tells).
 ;   Returns 0 ok (MP4I_V_OK and/or MP4I_A_OK set), -1 damaged / no
 ;   tracks, -2 work too small (MP4I_NEED = bytes needed), -3 fragmented
 ;   file (samples in moof boxes, not supported), -4 no H.264 or AAC track.
@@ -1753,7 +1756,7 @@ mp4_parse_moov:
     push edx
     push esi
     mov edi, mp4_slot_ptr           ; forget the last track's boxes
-    mov ecx, SL_COUNT * 2
+    mov ecx, MP4SL_COUNT * 2
     xor eax, eax
     rep stosd
     mov [mp4_depth], eax
@@ -1765,22 +1768,22 @@ mp4_parse_moov:
     ; keep it if it is the first of its kind, or playable where the one
     ; kept is not
     mov edi, mp4_vt
-    mov eax, [ebp + TK_HDLR]
+    mov eax, [ebp + MP4TK_HDLR]
     cmp eax, 'vide'
     je .pick
     mov edi, mp4_at
     cmp eax, 'soun'
     jne .p2pop
 .pick:
-    cmp dword [edi + TK_HDLR], 0
+    cmp dword [edi + MP4TK_HDLR], 0
     je .keep
-    cmp dword [edi + TK_USE], 0
+    cmp dword [edi + MP4TK_USE], 0
     jne .p2pop
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .p2pop
 .keep:
     mov esi, ebp
-    mov ecx, TK_LEN / 4
+    mov ecx, MP4TK_LEN / 4
     rep movsd
 .p2pop:
     pop esi
@@ -1813,17 +1816,17 @@ mp4_parse_moov:
     and eax, -16
     mov [mp4_wp], eax
     mov ebp, mp4_vt
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .bcfga
     call mp4_cfg
 .bcfga:
     mov ebp, mp4_at
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .bsampv
     call mp4_cfg
 .bsampv:
     mov ebp, mp4_vt
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .bsampa
     mov edi, [mp4_wp]
     mov eax, [ebp + MP4T_N]
@@ -1832,7 +1835,7 @@ mp4_parse_moov:
     call mp4_build
 .bsampa:
     mov ebp, mp4_at
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .report
     mov edi, [mp4_wp]
     mov eax, [ebp + MP4T_N]
@@ -1862,8 +1865,8 @@ mp4_parse_moov:
     cmp dword [mp4_frag], 0
     jne .ret
     mov eax, MP4_ECODEC
-    mov ecx, [mp4_vt + TK_HDLR]
-    or ecx, [mp4_at + TK_HDLR]
+    mov ecx, [mp4_vt + MP4TK_HDLR]
+    or ecx, [mp4_at + MP4TK_HDLR]
     jnz .ret
 .bad:
     mov eax, MP4_EBAD
@@ -1872,9 +1875,9 @@ mp4_parse_moov:
 .small:
     mov eax, MP4_EWORK
     CLEAVE
-.setok:                             ; MP4T_OK = TK_USE and samples left
+.setok:                             ; MP4T_OK = MP4TK_USE and samples left
     xor eax, eax
-    cmp dword [ebp + TK_USE], 0
+    cmp dword [ebp + MP4TK_USE], 0
     je .so
     cmp dword [ebp + MP4T_N], 0
     je .so
