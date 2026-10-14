@@ -132,10 +132,10 @@ Networking tests use QEMU user-mode networking (added automatically), and QEMU r
 RTL8139 unless you pick another: `screentest.py --nic e1000` (or `e1000e`, `virtio-net-pci`,
 `none`), or `MOOS_NIC=e1000` for `build.py run/uefi`. Under `--uefi`, QEMU's iPXE option
 ROMs give the firmware SNP driver, so `net up` uses it; `net up native` forces MOOS's own.
-Under `--uefi` with the default RTL8139 the firmware driver is iPXE's, which drops frames
-in every burst (its receive ring is tiny and QEMU gives it no flow control): downloads
-work but crawl at 0.2-0.4 MB/s, waiting on SLIRP's retransmission timeouts. Through SNP
-with `--nic e1000`, or with `net up native`, the same download runs at 60+ MB/s.
+Under `--uefi` the firmware driver (iPXE's) drops frames in bursts that overflow its small
+receive ring (QEMU gives it no flow control), and SLIRP's TCP has no SACK: MOOS sends three
+duplicate ACKs per gap so SLIRP resends at once (net_tcp.asm); without that, SNP downloads
+crawled at 0.2 MB/s. Now: SNP RTL8139 ~6 MB/s HTTP, SNP e1000 and native drivers 30-70 MB/s.
 QEMU's e1000 ignores received frames for about a second after RCTL is written — DHCP waits
 3 s per step and ignores stray/late replies (`dhcp_wait_type`) partly because of this.
 

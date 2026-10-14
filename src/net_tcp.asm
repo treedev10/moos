@@ -14,10 +14,13 @@
 ;             duplicate ACK goes back at once, so the sender soon resends the
 ;             missing part; when the server takes SACK (RFC 2018), the ACK
 ;             also lists the ranges we hold, so it resends only what is
-;             missing. When the gap is filled, the ranges join on; if a
-;             later gap is left, that ACK goes out four times (three
-;             duplicates), so a sender without SACK resends the next lost
-;             segment at once instead of after its timeout.
+;             missing. When the gap is filled, the ranges join on. The ACK
+;             that first reports a gap, and the one after a fill that still
+;             leaves a gap, go out four times (three duplicates), so a
+;             sender without SACK resends the lost segment at once instead
+;             of after its timeout (a burst that overflows a small receive
+;             queue, like a firmware driver's, often ends with too few
+;             segments after the loss for three duplicates).
 ;             Data is acknowledged every second full segment, and at the end
 ;             of each batch of frames.
 ;  Sending    Our bytes wait in a 64 KB ring (TCP_SBUF) until they are
@@ -1568,6 +1571,10 @@ tcp_in_estab:
     mov byte [ack_now], 1
     jmp .data_done
 .early:
+    cmp dword [ooo_n], 0                ; a new gap: say what we need four
+    jne .more                           ; times (as after a fill, above)
+    mov byte [ack_dup], 1
+.more:
     lea eax, [ebx + ecx]                ; after a gap: remember the range
     call ooo_add
     mov byte [ack_now], 1               ; and say again what we still need

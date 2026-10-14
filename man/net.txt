@@ -133,12 +133,14 @@ THE NETWORK STACK
       - the window it offers is the free room in its 256 KB receive
         buffer (window scaling), with an update when the reader frees
         room; segments that arrive out of order are kept and the missing
-        part is asked for again at once (duplicate ACKs)
+        part is asked for again at once (duplicate ACKs, and SACK when
+        the server takes it)
       - what MOOS sends is kept until acknowledged and sent again after a
         timeout that adapts to the round-trip time and doubles on each
         retry (8 tries); the same for its FIN; a closed window is probed
-      - the SYN is sent up to 4 times; MSS and window-scale options; a
-        reset is taken only if it is in the window
+      - the SYN is sent up to 4 times; MSS, window-scale and
+        SACK-permitted options; a reset is taken only if it is in the
+        window
     HTTP/1.1, one request per connection: GET, POST and HEAD; Host,
     User-Agent ("MOOS/1.2"), Range, cookies; chunked replies are decoded,
     interim "100 Continue" replies skipped. Programs read a reply either
