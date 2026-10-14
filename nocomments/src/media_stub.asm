@@ -27,9 +27,6 @@ h264_init:
 h264_decode_avcc:
 h264_decode_nal:
 h264_flush:
-aac_init:
-aac_info:
-aac_decode:
 png_info:
 png_decode:
 gif_info:
@@ -43,6 +40,5 @@ h264_get_frame:
     ret
 h264_ctx_size:
 h264_mem_size:
-aac_ctx_size:
     mov eax, 4096
     ret
