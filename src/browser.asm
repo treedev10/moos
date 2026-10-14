@@ -90,7 +90,6 @@ br_about    db "about:", 0
 br_vsrc     db "view-source:", 0
 br_http     db "http://", 0
 br_scheme_sep db "://", 0
-br_chunked  db "chunked", 0
 ct_html     db "html", 0
 ct_text     db "text/", 0
 ct_json     db "json", 0
@@ -1768,7 +1767,6 @@ brow_load:
     mov dword [br_loaded], 1
     movzx eax, byte [url_scheme]
     mov [br_secure], eax
-    call brow_dechunk
     mov esi, PKG_BUF                ; (no UTF-8 byte order mark)
     mov ecx, [pkg_len]
     mov [br_bytes], ecx
@@ -2000,62 +1998,6 @@ str_has_ci:
     or esi, esi                     ; ZF=0 (ESI is not 0)
 .out:
     pop esi
-    ret
-
-; brow_dechunk: undo "Transfer-Encoding: chunked" in PKG_BUF (pkg_len)
-brow_dechunk:
-    pushad
-    mov esi, http_tenc
-    mov edi, br_chunked
-    call str_has_ci
-    jne .done
-    mov esi, PKG_BUF
-    mov edi, PKG_BUF
-    mov ebp, PKG_BUF
-    add ebp, [pkg_len]              ; EBP = the end
-.chunk:
-    xor ebx, ebx                    ; the chunk's size, in hex
-.h: cmp esi, ebp
-    jae .end
-    movzx ecx, byte [esi]
-    call hex_digit
-    jc .line
-    shl ebx, 4
-    add ebx, ecx
-    inc esi
-    jmp .h
-.line:                              ; to the end of the size line
-    cmp esi, ebp
-    jae .end
-    lodsb
-    cmp al, 10
-    jne .line
-    test ebx, ebx
-    jz .end                         ; size 0: the last chunk
-    mov ecx, ebp
-    sub ecx, esi
-    cmp ebx, ecx
-    jbe .copy
-    mov ebx, ecx
-.copy:
-    mov ecx, ebx
-    rep movsb
-.crlf:                              ; the CR LF after the chunk
-    cmp esi, ebp
-    jae .end
-    cmp byte [esi], 13
-    je .skip
-    cmp byte [esi], 10
-    jne .chunk
-.skip:
-    inc esi
-    jmp .crlf
-.end:
-    sub edi, PKG_BUF
-    mov [pkg_len], edi
-    mov byte [PKG_BUF + edi], 0
-.done:
-    popad
     ret
 
 ; brow_error_page: a page saying why the address could not be loaded

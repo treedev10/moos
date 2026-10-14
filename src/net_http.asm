@@ -1461,12 +1461,15 @@ http_follow:
     mov byte [rq_over], 0
     mov esi, http_location
     push edi
-    mov edi, hn_http                    ; "http" + "s"? then "://"
+    mov edi, url_http                   ; "http://..." or "https://...":
+    call http_prefix_ci                 ; an absolute address, taken as is
+    jnc .abs
+    mov edi, url_https
     call http_prefix_ci
+.abs:
     pop edi
-    jc .not_abs
     mov esi, http_location              ; (http_prefix_ci moved ESI)
-    jmp .tail
+    jnc .tail
 .not_abs:
     call .scheme                        ; "http" or "https"
     cmp word [esi], '//'                ; //host/path: the same scheme

@@ -72,9 +72,10 @@ MESSAGES
         It can be saved from the Terminal with  get <address> <file>.
 
 TIPS
-    Pages up to 512 KB are loaded; a bigger one is shown as far as it
-    came. Text-based sites work best. The browser keeps no cookies, so
-    sites that need you to sign in will not let you.
+    Pages up to 4 MB are loaded; a bigger one is shown as far as it
+    came. Text-based sites work best. Cookies are kept until MOOS
+    restarts and sent back as browsers do (see man net, COOKIES), so a
+    site can remember a choice; "net cookies clear" forgets them.
 
 SEE ALSO
     gui, get, net

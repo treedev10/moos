@@ -10,6 +10,11 @@ SYNOPSIS
     net selftest             check the HTTPS cryptography
     net dns <a.b.c.d>        use another DNS server
     net http <ip> <port> <path>   low-level plain-HTTP test
+    net cookies              list the cookies web servers have set
+    net cookies clear        forget every cookie
+    net loss <percent>       testing: TCP drops that share of segments
+    nettest [-k] [-n] [-r START-END] [-p SIZE] <url|@file>
+                             time a download, with its SHA-256
 
 DESCRIPTION
     net up finds a network card, waits for the cable link, then uses DHCP
@@ -85,10 +90,60 @@ WHAT NEEDS THE NETWORK
     clock sync   gets the real time from the internet (man clock)
     gui          the desktop's Browser
 
+COOKIES
+    Web servers set cookies with "Set-Cookie" (to remember a sign-in, a
+    choice, a session). MOOS keeps them in memory until it restarts and
+    sends the right ones back with every request - from get, apt and the
+    Browser alike - as browsers do (RFC 6265):
+      - a cookie goes back only to the server that set it (or, with
+        Domain=, to that domain and the names under it), and only for
+        its Path and the paths below it
+      - Secure cookies go only over HTTPS (and only HTTPS may set them)
+      - Max-Age=0, a negative Max-Age or an Expires date in the past
+        deletes a cookie; others are dropped when their time is up
+    At most 64 cookies are kept (then the oldest goes); values longer
+    than 1071 characters are cut. "net cookies" lists them (domain, path,
+    name, the start of the value, and how long each is kept);
+    "net cookies clear" forgets them all.
+
+TESTING THE NETWORK
+    nettest <url> downloads a URL the way a video player reads one - with
+    the streaming interface, a piece at a time - and prints the status,
+    Content-Length, the size, the time, the speed and the SHA-256 of what
+    came, so it can be compared with "sha256sum" of the server's copy.
+    It follows redirects. Esc stops it.
+        -k            do not check the HTTPS certificate (testing only)
+        -n            no SHA-256 (times the network alone)
+        -r START-END  ask for those bytes only (Range); END may be left
+                      out:  -r 1000-  is from byte 1000 to the end
+        -p SIZE       POST SIZE bytes of a test pattern instead of a GET
+        @file         read the URL from the first line of a file (for
+                      URLs longer than a command line)
+
+    net loss <percent> makes TCP throw away that share (0-50) of the
+    segments it sends and receives, at random, to test that lost data is
+    sent again. "net loss 0" turns it off. Only for testing.
+
 THE NETWORK STACK
     Everything is MOOS's own code: the card drivers, Ethernet and ARP,
-    IPv4, UDP, DHCP, DNS, a small TCP client, HTTP, and TLS 1.3 for HTTPS
-    (X25519, AES-128-GCM, SHA-256/384/512, RSA certificate checking).
+    IPv4, UDP, DHCP, DNS, TCP, HTTP/1.1, and TLS 1.3 for HTTPS (X25519,
+    AES-128-GCM, SHA-256/384/512, RSA certificate checking).
+
+    TCP (one connection at a time) is made for real, lossy networks:
+      - the window it offers is the free room in its 256 KB receive
+        buffer (window scaling), with an update when the reader frees
+        room; segments that arrive out of order are kept and the missing
+        part is asked for again at once (duplicate ACKs)
+      - what MOOS sends is kept until acknowledged and sent again after a
+        timeout that adapts to the round-trip time and doubles on each
+        retry (8 tries); the same for its FIN; a closed window is probed
+      - the SYN is sent up to 4 times; MSS and window-scale options; a
+        reset is taken only if it is in the window
+    HTTP/1.1, one request per connection: GET, POST and HEAD; Host,
+    User-Agent ("MOOS/1.2"), Range, cookies; chunked replies are decoded,
+    interim "100 Continue" replies skipped. Programs read a reply either
+    whole (into the download buffer: 512 KB on a BIOS PC, 4 MB on UEFI;
+    larger replies are cut) or as a stream of any length (video).
 
 SEE ALSO
     get, apt, clock, gui

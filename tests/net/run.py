@@ -5,10 +5,11 @@ starts tests/net/server.py on free ports, types commands and checks what
 MOOS prints (and what the server saw).
 
     python3 tests/net/run.py [--uefi] [--nic MODEL] [--native] [--keep]
-                             [--list] [TEST ...]
+                             [--pcap FILE] [--list] [TEST ...]
 
 With no TEST names every test runs. --native makes "net up native" (under
 --uefi the firmware's own driver is used otherwise). --list shows the tests.
+--pcap FILE records every frame (look at it with tests/net/pcap.py).
 Each test prints PASS or FAIL; on a failure the screen is shown.
 Results of the speed tests are printed as "SPEED ...".
 """
@@ -39,8 +40,17 @@ def pattern(n):
     return bytes(((i * 2654435761) & 0xFFFFFFFF) >> 24 for i in range(n))
 
 
+def unwrap(rows):
+    """The screen's rows as text; a row that fills all 80 columns runs on
+    into the next one (MOOS wrapped a long line there)."""
+    out = ''
+    for r in rows:
+        out += r if len(r) >= 80 else r + '\n'
+    return out
+
+
 class Moos:
-    def __init__(self, uefi, nic, image):
+    def __init__(self, uefi, nic, image, pcap=None):
         self.tmp = tempfile.mkdtemp(prefix='moosnet')
         disk = os.path.join(self.tmp, 'disk.img')
         shutil.copy(image, disk)
@@ -50,6 +60,8 @@ class Moos:
                '-m', str(mem), '-rtc', 'base=utc', '-display', 'none', '-cpu', 'max',
                '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port,
                '-netdev', 'user,id=n0', '-device', nic + ',netdev=n0']
+        if pcap:            # every frame MOOS sends and gets (tests/net/pcap.py)
+            cmd += ['-object', 'filter-dump,id=f0,netdev=n0,file=' + pcap]
         if uefi:
             code, vars_file = ovmf_paths()
             vars_copy = os.path.join(self.tmp, 'vars.fd')
@@ -85,7 +97,7 @@ class Moos:
             rows = self.lines()
             text = [r for r in rows if r.strip()]
             if len(text) >= 2 and text[-1].rstrip() == 'moos>':
-                return '\n'.join(rows)
+                return unwrap(rows)
             if any('-- more --' in r for r in rows):
                 self.key('q')          # the pager: leave it
                 time.sleep(0.5)
@@ -421,7 +433,7 @@ def t_loss(m, s, H, S):
 
 def main():
     args = sys.argv[1:]
-    uefi, nic, native, keep, image = False, 'rtl8139', False, False, IMAGE
+    uefi, nic, native, keep, image, pcap = False, 'rtl8139', False, False, IMAGE, None
     while args and args[0].startswith('--'):
         a = args.pop(0)
         if a == '--uefi':
@@ -437,6 +449,8 @@ def main():
             return
         elif a == '--image':
             image = args.pop(0)
+        elif a == '--pcap':
+            pcap = args.pop(0)
     names = args or [n for n, _ in TESTS]
     os.makedirs(DATA, exist_ok=True)
     srv = Server()
@@ -451,7 +465,7 @@ def main():
     failed = []
     m = None
     try:
-        m = Moos(uefi, nic, img)
+        m = Moos(uefi, nic, img, pcap)
         out = m.run('net up native' if native else 'net up', timeout=60)
         print(out.split('\n')[1:6] if 'Connected' not in out else 'network up')
         if 'Connected' not in out:
