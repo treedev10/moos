@@ -101,8 +101,14 @@ int h264_init(void *ctx, uint8_t *mem, uint32_t memlen, uint32_t max_w, uint32_t
 int h264_decode_nal(void *ctx, const uint8_t *nal, uint32_t len);
     /* one NAL unit without start code or length prefix: 0 ok, 1 a picture is ready,
        < 0 error (the decoder recovers at the next IDR / slice) */
+int h264_decode_avcc(void *ctx, const uint8_t *avcc, uint32_t len);
+    /* the SPS / PPS of an MP4 'avcC' record: returns the NAL length size (1, 2, 4), < 0 bad */
 int h264_get_frame(void *ctx, H264FRAME *f);   /* 1 = a frame (display order), 0 none */
 int h264_flush(void *ctx);                      /* end of stream: release held frames */
+/* H264FRAME (44 bytes): H264F_Y, H264F_U, H264F_V plane pointers (cropped top-left),
+   H264F_YS luma stride, H264F_CS chroma stride, H264F_W, H264F_H cropped size,
+   H264F_POC, H264F_FLAGS (bit 0 concealed, bit 1 IDR), H264F_SARW, H264F_SARH.
+   Test: python3 tests/native/h264_make.py --run [--avcc] | --fuzz=N [--seed=S] */
 ```
 
 ### aac.asm

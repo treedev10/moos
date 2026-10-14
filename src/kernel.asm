@@ -221,6 +221,8 @@ zero_bss:
 %include "src/json.asm"               ; JSON tokenizer (self-contained module)
 %include "src/aac.asm"                ; AAC-LC audio decoder (self-contained module)
 %include "src/sound.asm"              ; sound cards (HDA, AC'97)
+%include "src/h264.asm"               ; H.264 video decoder (module)
+section .text
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif
