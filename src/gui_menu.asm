@@ -84,6 +84,8 @@ mn_head     resd 1                  ; the header's second line (0 = no header)
 mn_hint_x   resd 1                  ; where the hints start, from mn_x
 mn_i        resd 1                  ; (drawing)
 mn_iy       resd 1
+mn_hx       resd 1                  ; where the mouse was (menu_hover)
+mn_hy       resd 1
 mb_open     resd 1                  ; 1 while a message box is up
 mb_buttons  resd 1                  ; MB_OK / MB_OKCANCEL
 mb_sel      resd 1                  ; 0 = OK, 1 = Cancel
@@ -221,6 +223,7 @@ menu_open:
     mov dword [mn_open], 1
     mov dword [mn_sel], -1
     mov dword [mn_start], 0         ; (start_open sets it after)
+    call mn_note_mouse
     pop eax
     test eax, MO_KEYS
     jz .done
@@ -330,6 +333,16 @@ menu_set:
 .r: popad
     ret
 
+; mn_note_mouse: remember where the mouse is (menu_hover)
+mn_note_mouse:
+    push eax
+    mov eax, [mouse_x]
+    mov [mn_hx], eax
+    mov eax, [mouse_y]
+    mov [mn_hy], eax
+    pop eax
+    ret
+
 ; menu_close: take the menu away
 menu_close:
     cmp dword [mn_open], 0
@@ -413,9 +426,18 @@ mn_at:
     pop ecx
     ret
 
-; menu_hover: the mouse moved: light up the item under it
+; menu_hover: (every round) if the mouse moved, light up the item under it
+; - so the keys' highlight stays while the mouse stands still
 menu_hover:
     push eax
+    mov eax, [mouse_x]
+    cmp eax, [mn_hx]
+    jne .moved
+    mov eax, [mouse_y]
+    cmp eax, [mn_hy]
+    je .r
+.moved:
+    call mn_note_mouse
     call mn_at
     jc .r                           ; (outside: keep what is lit)
     cmp eax, [mn_sel]
