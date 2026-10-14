@@ -10,7 +10,9 @@ Options
     --uefi          start the PC with UEFI firmware instead of a BIOS
     --drive ARGS    replace the QEMU disk arguments; {disk} stands for the
                     copied image, e.g. "-machine q35 -drive file={disk},format=raw"
-    --extra ARGS    more QEMU arguments (a second disk, a USB keyboard, ...)
+    --extra ARGS    more QEMU arguments (a second disk, a USB keyboard, ...);
+                    quote an argument that has spaces, e.g.
+                    --extra "-cpu 'max,model-id=AMD Ryzen 7 5800X'"
     --nic MODEL     the emulated network card: rtl8139 (default), e1000,
                     e1000e, virtio-net-pci, ...; "none" for no card
     --mem MB        memory size
@@ -32,12 +34,16 @@ STEP is either text to type (use \\n for Enter) or a command:
                     this is how the desktop's mouse handling is tested.
                     Several in a row make a drag.
     @wheel=N        turn MOOS's mouse wheel N notches (+ = away from you)
+    @peek=NAME[,N]  print N (default 1) 32-bit numbers stored at the kernel
+                    label NAME, e.g. @peek=cpu_busy or @peek=cpu_pm,17
+                    (the full kernel, so with --uefi)
     @mon=COMMAND    run a QEMU monitor command and print its answer
     @exit           check that QEMU has exited (after "shutdown")
 
 The image is copied first, so tests never touch your real disk image.
 """
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -59,6 +65,12 @@ PLAIN = {' ': 'spc', '\n': 'ret', '.': 'dot', ',': 'comma', '/': 'slash',
          '[': 'bracket_left', ']': 'bracket_right', '\\': 'backslash',
          '`': 'grave_accent', '\t': 'tab'}
 MAGIC = b'MOOSSCRN'
+
+
+def split_args(text):
+    """QEMU arguments: split at spaces, or like a shell when quotes are used
+    (plain splitting keeps Windows paths with backslashes intact)."""
+    return shlex.split(text) if ("'" in text or '"' in text) else text.split()
 
 
 def kernel_symbols(names):
@@ -251,11 +263,20 @@ def main():
     port = free_port()
     gdb_port = free_port()
     want_ptr = any(a.startswith(('@ptr=', '@wheel=')) for a in args)
-    cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
+    peeks = {a[6:].split(',')[0] for a in args if a.startswith('@peek=')}
+    syms = {}
+    if peeks:
+        syms = kernel_symbols(peeks | {'screen_magic', 'mouse_x', 'mouse_wheel'})
+        missing = peeks - set(syms)
+        if missing:
+            sys.exit('no such kernel label: ' + ', '.join(sorted(missing)))
+    cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
-         '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
+         '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port] + \
+        split_args(extra)               # (after -cpu max, so it can replace it)
     if want_ptr:
-        syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
+        if not syms:
+            syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
         cmd += ['-gdb', 'tcp:127.0.0.1:%d' % gdb_port]
     gdb = None
     if audio:
@@ -316,6 +337,13 @@ def main():
                     gdb.write(base + syms['mouse_x'],
                               b''.join(int(x).to_bytes(4, 'little') for x in v[:3]))
                 time.sleep(0.15)
+            elif step.startswith('@peek='):
+                name, _, count = step[6:].partition(',')
+                count = int(count or 1)
+                base = screen.addr - 16 - syms['screen_magic']
+                data = screen.dump(base + syms[name], 4 * count)
+                values = [int.from_bytes(data[i:i + 4], 'little') for i in range(0, 4 * count, 4)]
+                print('%s = %s' % (name, ' '.join(str(v) for v in values)))
             elif step == '@click':
                 mon.cmd('mouse_button 1')
                 time.sleep(0.2)

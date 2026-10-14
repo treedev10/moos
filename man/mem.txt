@@ -3,6 +3,8 @@ NAME
 
 SYNOPSIS
     mem
+    mem take <MB>
+    mem give
 
 DESCRIPTION
     mem prints a map of the computer's memory (RAM) and a summary of
@@ -29,6 +31,8 @@ MEMORY SECTION
                         through text
     Unused              everything else - MOOS is tiny, so nearly
                         all of the memory is free
+    Big blocks          (UEFI) memory MOOS asked the firmware for while
+                        it runs - for video, pictures and sound
 
     Addresses are shown in hexadecimal (0x...). See  man hexdump  for a
     short introduction to hexadecimal.
@@ -45,7 +49,14 @@ STORAGE SECTION
     Free     how many bytes are left, and in how many empty slots
 
 ARGUMENTS
-    None.
+    None, to see the map. Two more, to try out big blocks (UEFI only):
+
+    mem take <MB>       ask the firmware for a block of that many
+                        megabytes (1 - 1024) and keep it. In the
+                        desktop's Terminal the block counts as the
+                        Terminal's, so the Task Manager shows it there,
+                        and its End task button gives it back.
+    mem give            give back every block mem take took here
 
 SEE ALSO
-    sysinfo, ls, files
+    sysinfo, fetch, tasks, ls, files

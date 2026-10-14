@@ -48,6 +48,7 @@ cmd_table:
     COMMAND "uptime",   cmd_uptime,   "time since start-up",        man_uptime
     COMMAND "mem",      cmd_mem,      "memory and storage usage",   man_mem
     COMMAND "sysinfo",  cmd_sysinfo,  "system and CPU details",     man_sysinfo
+    COMMAND "fetch",    cmd_fetch,    "system summary with a cow",  man_fetch
     COMMAND "history",  cmd_history,  "list recent commands",       man_history
     COMMAND "login",    cmd_login,    "optional sign-in screen",    man_login
     COMMAND "format",   cmd_format,   "erase all files",            man_format
@@ -72,6 +73,7 @@ cmd_table:
     ALIAS "date",     cmd_time,     man_time
     ALIAS "about",    cmd_sysinfo,  man_sysinfo
     ALIAS "ver",      cmd_sysinfo,  man_sysinfo
+    ALIAS "neofetch", cmd_fetch,    man_fetch
     ALIAS "restart",  cmd_reboot,   man_reboot
     ALIAS "exit",     cmd_shutdown, man_shutdown
     ALIAS "poweroff", cmd_shutdown, man_shutdown
@@ -84,6 +86,7 @@ topic_table:                        ; manual pages that are not commands
     TOPIC "files",    man_files
     TOPIC "browser",  man_browser
     TOPIC "youtube",  man_youtube
+    TOPIC "tasks",    man_tasks
     dd 0
 
 ; ------------------------------------------------------------------ main loop

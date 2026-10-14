@@ -67,10 +67,24 @@ each step. The installer and disk persistence were verified across reboots.
   **Window manager** (`src/gui_win.asm`): one window per app, any number open, overlapping
   in a z-order; drag the title bar to move, any edge/corner (or the dotted grip) to resize,
   maximize (button or double-click title; dragging a maximized window restores it),
-  minimize to the taskbar, close (x or Esc). Keyboard: F1-F5 open apps, F6 next window,
-  F7/F8 move/resize with arrows, F9 minimize, F10 maximize. Apps: Terminal (runs real
-  commands), Text Editor and Script IDE (separate buffers; Run shows output in the Terminal),
-  Browser, Settings (lines clickable). Installed with `apt install desktop`.
+  minimize to the taskbar, close (x or Esc). Keyboard: F1-F5 and F11 open apps, F6 next
+  window, F7/F8 move/resize with arrows, F9 minimize, F10 maximize. Apps: Terminal (runs real
+  commands, keeps their colours), Text Editor and Script IDE (separate buffers; Run shows
+  output in the Terminal), Browser, Settings (lines clickable), Task Manager. Installed with
+  `apt install desktop`.
+- **Task Manager** (`gui tasks`, F11, taskbar "Tasks", `man tasks`; `src/gui_tasks.asm`):
+  open windows with state, CPU % and memory, and an End task button per row (closes the
+  window, calls the app's `end` hook, `big_free_owner`); CPU graph of the last 60 s; network
+  bytes/s in/out graph and totals (counters in `net_tx_frame` / `net_rx_poll`); memory:
+  kernel code/variables, fixed buffers, big blocks by owner, RAM installed and free from the
+  firmware's memory map (`efi_memmap`); uptime; frames per second. Updates once a second,
+  redrawing only its own content when it is the top window (`gui_content_dirty`); one column
+  with a scroll bar (wheel, PgUp/PgDn/Home/End) when narrow. `mem take <MB>` / `mem give`
+  (full kernel) take big blocks by hand, to try this out.
+- **fetch** (alias `neofetch`, both kernels, also in the desktop Terminal): an original ASCII
+  cow in colour beside user@host, OS, firmware, kernel and size, uptime, apt packages,
+  shell, resolution, CPU brand (CPUID) / processors (ACPI MADT) / TSC MHz, memory, MOOSFS,
+  network, and the 16 colours.
 - **Browser** (`gui browser [url]`, `man browser`): its own HTML engine (`src/html.asm`) and
   app (`src/browser.asm`) — see "Browser engine" below. Toolbar (Back/Forward/Reload/Home,
   address bar with a lock for HTTPS, Go), status line (progress, size, security, hovered
@@ -152,10 +166,10 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Networking | `src/net.asm` (PCI scan, card table, dispatch, RTL8139), `src/nic_e1000.asm`, `src/nic_rtl8168.asm`, `src/nic_snp.asm`, `src/net_arp.asm`, `src/net_ip.asm`, `src/net_dhcp.asm`, `src/net_dns.asm`, `src/net_tcp.asm`, `src/cmd_net.asm` |
 | Crypto | `src/crypto.asm` (SHA-256, HMAC, HKDF, RNG), `src/sha512.asm`, `src/aes.asm` (AES-128, GCM), `src/x25519.asm`, `src/rsa.asm`, `src/selftest.asm`; tables `src/crypto_tables.inc` (tools/gen_tables.py), test vectors `src/selftest_vectors.inc` (tools/gen_vectors.py) |
 | HTTPS | `src/tls.asm` (TLS 1.3 client, https_get), `src/x509.asm` (certificate checks), `src/roots.bin` (tools/gen_roots.py), `src/url.asm` (url_fetch, `get`) |
-| Shell + commands | `src/shell.asm`, `src/readline.asm`, `src/pager.asm`, `src/cmd_files.asm`, `src/cmd_system.asm`, `src/cmd_clock.asm`, `src/cmd_apt.asm`, `src/cmd_login.asm` |
+| Shell + commands | `src/shell.asm`, `src/readline.asm`, `src/pager.asm`, `src/cmd_files.asm`, `src/cmd_system.asm`, `src/cmd_clock.asm`, `src/cmd_apt.asm`, `src/cmd_login.asm`, `src/cmd_fetch.asm` |
 | Calc + scripting | `src/calc.asm`, `src/script.asm` |
 | Editor | `src/editor.asm` |
-| Graphics + GUI | `src/gfx.asm` (back buffer, clip rectangle, sized/styled glyphs, icons), `src/gui.asm` (desktop, taskbar, cursor, main loop), `src/gui_win.asm` (window manager), `src/gui_apps.asm` (terminal, editor, IDE, settings) |
+| Graphics + GUI | `src/gfx.asm` (back buffer, clip rectangle, sized/styled glyphs, icons), `src/gui.asm` (desktop, taskbar, cursor, main loop), `src/gui_win.asm` (window manager), `src/gui_apps.asm` (terminal, editor, IDE, settings), `src/gui_tasks.asm` (Task Manager, CPU accounting) |
 | Browser | `src/html.asm` (parser, layout, painter, forms), `src/browser.asm` (the app: toolbar, navigation, history, URLs) |
 | Manuals | `man/*.txt` (embedded into the kernel at build time) |
 | Font | `src/font8x16.bin` (public-domain VGA font, extracted by `tools/makefont.py`) |
@@ -180,7 +194,21 @@ Key mechanisms to understand before changing things:
   finds window + part (title, buttons, content, edges with `EDGE_*` bits) under the mouse;
   `gui_handle` turns press/hold/release into raise, button actions, `DRAG_MOVE`,
   `DRAG_SIZE` or `DRAG_APP` (the browser's scroll bar). Apps plug in through `app_init`,
-  `app_draw`, `app_title`, `app_click`, `app_key` (+ `brow_hover/wheel/drag`).
+  `app_draw`, `app_title`, `app_click`, `app_key` (+ `brow_hover/wheel/drag`), `app_tick`
+  (every round of the main loop while the window is open, even minimized: background work
+  such as feeding a sound card; return CF=1 when it did work) and `app_end` (End task: let
+  go of everything; big blocks owned by the app number are freed afterwards).
+- **CPU accounting** (`gui_tasks.asm`): every RDTSC cycle of the desktop is charged to one
+  owner: idle (rounds of `cmd_gui .loop` in which nothing happened - the polling), an app
+  (between `cpu_enter`/`cpu_leave`; the `APP_CALL owner, routine` macro wraps every call
+  into an app, including nested redraws while a page loads), or the desktop (`CPU_DESK`:
+  window manager, taskbar, cursor, presenting). Once 100 ticks have passed, `cpu_sample`
+  turns the counts into thousandths (`cpu_pm`), calibrates the TSC against the timer
+  (`cpu_mhz`), takes the network rates and fps, and appends to 60-entry rings (`cpuh_*`).
+  While an app holds the loop up (a long command, a page load) nothing is sampled; the
+  whole stretch is then averaged and fills one point per second. New apps must call
+  through `APP_CALL` (or the dispatchers) or their time lands on the desktop.
+  `screentest.py @peek=cpu_pm,17` reads the numbers from the guest.
 - **Browser engine** (`html.asm`): three stages. `html_parse` turns HTML into a compact node
   stream at `BR_NODES` (text already decoded to the CP437 font: entities, UTF-8, a
   Windows-1252 fallback, collapsed spaces; element open/close with only the attributes MOOS
@@ -221,7 +249,9 @@ Key mechanisms to understand before changing things:
 The source in `src/` and `efi/` is heavily commented on purpose. Comments do not affect the
 assembled binary, so a comment-stripped copy lives in `nocomments/` (about 29% smaller),
 generated by `tools/strip_comments.py` (`--check` rebuilds from it to prove it still works).
-The commented source is canonical.
+The commented source is canonical. (`nocomments/` was last regenerated before the media
+foundation; it was left alone on the `media/taskmgr` branch so parallel branches merge
+cleanly - run `python tools/strip_comments.py` once after merging them.)
 
 ## Known limitations / not done
 
@@ -267,8 +297,14 @@ The commented source is canonical.
   a title bar. The wheel code (Z of both pointer kinds) is untested on hardware.
 - **Drawing**: the desktop redraws fully on keys, clicks, drags (every mouse step while
   moving/resizing a window), hover changes over links, and clock ticks; plain mouse moves
-  just restore/redraw the cursor area (`gfx_copy_rect`, `gfx_present_rect`). Smooth in
-  QEMU at 1280x800; a dirty-rectangle scheme would make dragging cheaper.
+  just restore/redraw the cursor area (`gfx_copy_rect`, `gfx_present_rect`). An app whose
+  window is on top can ask for just its content box (`gui_content_dirty`, `gui_dirty` bit
+  4; the Task Manager does once a second). Smooth in QEMU at 1280x800; a dirty-rectangle
+  scheme would make dragging cheaper. Measured in QEMU without KVM (TCG, 1280x800): idle
+  desktop 0.1% busy, Task Manager on top 0.5-0.9%, Task Manager behind another window (a
+  full-screen redraw each second) 1.3-1.9%. Attribution checks: a 1,000,000-step script in
+  the Terminal showed Terminal 89.9% / desktop 3.4% / idle 6.2% for its stretch; a 400 KB
+  page typed into the Browser's address bar showed Browser 93.3% and 200 KB/s in for 2 s.
 - **Sign-in is light protection**, not real security (simple password hash, no encryption).
 
 ## Good next steps

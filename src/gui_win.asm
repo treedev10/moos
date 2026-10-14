@@ -10,10 +10,10 @@
 ;    maximized  - the middle title-bar button, or double-click the title bar
 ;    minimized  - the left title-bar button; the taskbar button brings it back
 ;    closed     - the red x, or Esc
-;  Without a mouse the same is done with keys: F1-F5 open or bring up an
-;  app, F6 goes to the next window, F7 moves and F8 resizes the focused
-;  window with the arrow keys (Enter when done), F9 minimizes and F10
-;  maximizes or restores it.
+;  Without a mouse the same is done with keys: F1-F5 and F11 open or bring
+;  up an app, F6 goes to the next window, F7 moves and F8 resizes the
+;  focused window with the arrow keys (Enter when done), F9 minimizes and
+;  F10 maximizes or restores it.
 ;
 ;  Apps:
 ;    1 Terminal   - type commands, see output (runs the real shell commands)
@@ -21,10 +21,22 @@
 ;    3 Script IDE - edit a .ms file and Run it (Run button or Ctrl+R)
 ;    4 Browser    - a web browser (browser.asm, html.asm)
 ;    5 Settings   - clock, colours, network
+;    6 Tasks      - the Task Manager: windows, CPU, memory, network
+;                   (gui_tasks.asm)
 ;
 ;  An app supplies: init (when its window opens), draw (into the content
 ;  box cb_x/cb_y/cb_w/cb_h, with drawing clipped to it), key, and if it
-;  wants them click, hover, wheel and drag.
+;  wants them click, hover, wheel and drag. Two more hooks:
+;    tick  called every round of the desktop's loop while its window is
+;          open (even minimized): for work in the background, such as a
+;          player feeding the sound card. Keep each call short, and return
+;          CF=1 when it did something (its time counts as the app's CPU
+;          use then; a tick that only looked counts as idle polling).
+;    end   "End task" in the Task Manager: let go of everything (stop
+;          sound, forget big blocks - the Task Manager then gives back
+;          whatever big blocks the app still owns, by its app number).
+;  Every call into an app goes through the dispatchers below, which charge
+;  the time it takes to that app (cpu_enter / cpu_leave, gui_tasks.asm).
 ; =============================================================================
 APP_NONE    equ 0
 APP_TERM    equ 1
@@ -32,7 +44,8 @@ APP_EDITOR  equ 2
 APP_IDE     equ 3
 APP_BROWSER equ 4
 APP_SETTINGS equ 5
-NAPPS       equ 5
+APP_TASKS   equ 6
+NAPPS       equ 6
 
 TITLE_H     equ 28                  ; title bar height
 BTN_W       equ 22                  ; title-bar buttons
@@ -113,14 +126,15 @@ gui_close_x resd 1
 gui_run_x   resd 1
 
 section .data
-win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set
+win_titles  dd 0, t_term, t_edit, t_ide, t_brow, t_set, t_tasks
 t_term      db "Terminal", 0
 t_edit      db "Text Editor", 0
 t_ide       db "Script IDE", 0
 t_brow      db "MOOS Browser", 0
 t_set       db "Settings", 0
-win_def_w   dd 0, 760, 720, 720, 1000, 640     ; first-time sizes
-win_def_h   dd 0, 460, 480, 480, 640, 440
+t_tasks     db "Task Manager", 0
+win_def_w   dd 0, 760, 720, 720, 1000, 640, 780  ; first-time sizes
+win_def_h   dd 0, 460, 480, 480, 640, 440, 600
 close_x     db "x", 0
 min_glyph   db "_", 0
 run_label   db "Run", 0
@@ -680,18 +694,29 @@ wm_draw:
     call gfx_clip_full
     ; the content, drawn by the app inside its box
     mov eax, [wd_app]
+    call wm_draw_content
+    popad
+    ret
+
+; wm_draw_content: EAX = app -> its content box (cb_*): the background,
+; then the app draws itself, clipped to the box and kept above the taskbar,
+; then the resize grip over its bottom-right corner
+wm_draw_content:
+    pushad
+    mov ebx, eax
     call wm_content
-    RECT [cb_x], [cb_y], [cb_w], [cb_h], C_WIN_BG
     mov ecx, [cb_x]
     mov edx, [cb_y]
     mov esi, [cb_w]
     mov edi, [cb_h]
     call gfx_clip_set
-    mov eax, [wd_app]
+    call wd_clip_desk
+    RECT [cb_x], [cb_y], [cb_w], [cb_h], C_WIN_BG
+    mov eax, ebx
     call app_draw
     call gfx_clip_full
+    call wd_clip_desk
     ; the resize grip: a triangle of dots in the bottom-right corner
-    mov ebx, [wd_app]
     test dword [wn_f + ebx * 4], WF_MAX
     jnz .done
     mov eax, 0x8A9AAA
@@ -712,6 +737,59 @@ wm_draw:
     inc ebp
     cmp ebp, 6
     jb .grip
+.done:
+    call gfx_clip_full
+    popad
+    ret
+
+; wd_clip_desk: narrow the clip rectangle to the desktop above the taskbar
+wd_clip_desk:
+    pushad
+    xor ecx, ecx
+    xor edx, edx
+    mov esi, [gfx_w]
+    mov edi, [gfx_h]
+    sub edi, TASKBAR_H
+    call gfx_clip_and
+    popad
+    ret
+
+; gui_content_dirty: EAX = app -> its content has changed and must be drawn
+; again. If its window is the top one on the screen, only its content box
+; is redrawn (gui_dirty bit 4), which is much cheaper than the whole
+; desktop; otherwise everything is (bit 1). Nothing if it is minimized.
+; (For apps whose drawing stays inside the clip rectangle wm_draw_content
+; gives them, like the Task Manager.)
+gui_content_dirty:
+    pushad
+    test dword [wn_f + eax * 4], WF_OPEN
+    jz .done
+    test dword [wn_f + eax * 4], WF_MIN
+    jnz .done
+    cmp dword [drag_mode], DRAG_NONE
+    jne .full                       ; (moving / resizing: all of it)
+    cmp dword [kmode], 0
+    jne .full
+    mov ecx, [z_n]                  ; the top window that is shown
+.top:
+    test ecx, ecx
+    jz .full
+    dec ecx
+    mov edx, [z_list + ecx * 4]
+    test dword [wn_f + edx * 4], WF_MIN
+    jnz .top
+    cmp edx, eax
+    jne .full                       ; (another window may cover part of it)
+    test byte [gui_dirty], 4
+    jz .set
+    cmp [gui_dirty_app], eax
+    jne .full
+.set:
+    mov [gui_dirty_app], eax
+    or byte [gui_dirty], 4
+    jmp .done
+.full:
+    or byte [gui_dirty], 1
 .done:
     popad
     ret
@@ -764,8 +842,16 @@ grip_dots   db 4, 4, 8, 4, 12, 4, 4, 8, 8, 8, 4, 12   ; from the corner
 section .text
 
 ; ------------------------------------------------- the app interface
+; Each dispatcher charges the app's time to it (APP_CALL), then picks the
+; app's routine.
+
+; (APP_CALL is in gui.asm.)
+
 ; app_init / app_draw / app_title: EAX = app
 app_init:
+    APP_CALL eax, .go
+    ret
+.go:
     cmp eax, APP_TERM
     je term_init
     cmp eax, APP_EDITOR
@@ -776,15 +862,22 @@ app_init:
     je brow_init
     cmp eax, APP_SETTINGS
     je settings_init
+    cmp eax, APP_TASKS
+    je tasks_init
     ret
 
 app_draw:
+    APP_CALL eax, .go
+    ret
+.go:
     cmp eax, APP_TERM
     je app_term_draw
     cmp eax, APP_BROWSER
     je app_brow_draw
     cmp eax, APP_SETTINGS
     je settings_draw
+    cmp eax, APP_TASKS
+    je tasks_draw
     jmp app_text_draw               ; editor / IDE share the text view
 
 ; app_title: EAX = app -> ESI = the text for its title bar
@@ -796,21 +889,47 @@ app_title:
 
 ; app_click: EAX = app, the mouse is in its content (cb_* set)
 app_click:
+    APP_CALL eax, .go
+    ret
+.go:
     cmp eax, APP_BROWSER
     je brow_click
     cmp eax, APP_SETTINGS
     je settings_click
+    cmp eax, APP_TASKS
+    je tasks_click
     ret
 
 ; app_key: EAX = key, for the focused app
 app_key:
+    APP_CALL [cur_app], .go
+    ret
+.go:
     cmp dword [cur_app], APP_TERM
     je term_key
     cmp dword [cur_app], APP_BROWSER
     je brow_key
     cmp dword [cur_app], APP_SETTINGS
     je settings_key
+    cmp dword [cur_app], APP_TASKS
+    je tasks_key
     jmp editor_app_key
+
+; app_tick: EAX = app, once every round of the desktop's loop while its
+; window is open -> CF=1 if the app did some work (the caller,
+; gui_app_ticks, charges the time to the app then, and to idle otherwise)
+app_tick:
+    cmp eax, APP_TASKS
+    je tasks_tick
+    cmp eax, APP_BROWSER            ; (pictures and video)
+    je brow_tick
+    clc                             ; (the other apps have nothing to do)
+    ret
+
+; app_end: EAX = app, before the Task Manager ends it (none of the
+; built-in apps holds anything that needs letting go)
+app_end:
+    ret
 
 ; ---------------------------------------------------------- the mouse
 ; gui_handle: called every round: clicks, drags, hovering
@@ -880,7 +999,7 @@ gui_handle:
     call gui_minimize
     jmp .done
 .run:
-    call ide_run
+    APP_CALL APP_IDE, ide_run
     jmp .done
 .title:
     mov ecx, [ticks]                ; a double click maximizes / restores
@@ -994,7 +1113,7 @@ wm_drag:
     call wm_content
     cmp eax, APP_BROWSER
     jne .done
-    call brow_drag
+    APP_CALL APP_BROWSER, brow_drag
 .done:
     popad
     ret
@@ -1079,12 +1198,12 @@ wm_hover:
     cmp dword [hit_part], PART_CONTENT
     jne .off
     call wm_content
-    call brow_hover
+    APP_CALL APP_BROWSER, brow_hover
     jmp .done
 .off:
     test dword [wn_f + APP_BROWSER * 4], WF_OPEN
     jz .done
-    call brow_unhover               ; (left the browser)
+    APP_CALL APP_BROWSER, brow_unhover ; (left the browser)
 .done:
     popad
     ret
@@ -1097,15 +1216,22 @@ gui_wheel:
     jz .done
     mov dword [mouse_wheel], 0
     call wm_hit
+    cmp eax, APP_TASKS
+    je .tasks
     cmp eax, APP_BROWSER
     jne .done
     call wm_content
     mov eax, ecx
-    call brow_wheel
+    APP_CALL APP_BROWSER, brow_wheel
     or byte [gui_dirty], 1
 .done:
     popad
     ret
+.tasks:
+    call wm_content
+    mov eax, ecx
+    APP_CALL APP_TASKS, tasks_wheel
+    jmp .done
 
 ; gui_taskbar_click: a taskbar button opens its app, brings it up, or
 ; minimizes it if it already has the focus. Quit leaves the desktop.
@@ -1124,9 +1250,9 @@ gui_taskbar_click:
 .r: ret
 
 ; ------------------------------------------------------------- the keys
-; gui_key: EAX = key. Window keys first (F1-F10, Esc, and the arrows while
+; gui_key: EAX = key. Window keys first (F1-F11, Esc, and the arrows while
 ; moving or resizing with F7 / F8), the rest to the focused app. On the
-; empty desktop 1-5 open the apps too.
+; empty desktop 1-6 open the apps too.
 gui_key:
     pushad
     cmp dword [pl_full], 0          ; a video in full screen takes the keys
@@ -1152,15 +1278,21 @@ gui_key:
     je .kmin
     cmp eax, KEY_F1 + 9
     je .kmax
+    cmp eax, KEY_F1 + 10            ; F11: the Task Manager
+    je .tasks
+    jmp .done
+.tasks:
+    mov eax, APP_TASKS
+    call gui_open
     jmp .done
 .notf:
     cmp dword [cur_app], APP_NONE
     jne .app
     cmp eax, '1'
     jb .done
-    cmp eax, '5'
+    cmp eax, '0' + NAPPS
     ja .done
-    sub eax, '0'                    ; '1' -> APP_TERM ... '5' -> APP_SETTINGS
+    sub eax, '0'                    ; '1' -> APP_TERM ... '6' -> APP_TASKS
     call gui_open
     jmp .done
 .app:
@@ -1265,6 +1397,7 @@ gui_key:
     ret
 
 %include "src/gui_apps.asm"
+%include "src/gui_tasks.asm"
 %include "src/html.asm"
 %include "src/browser.asm"
 %include "src/imgcache.asm"

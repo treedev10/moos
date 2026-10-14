@@ -3,7 +3,7 @@ NAME
 
 SYNOPSIS
     gui
-    gui term | editor | ide | browser | settings ...
+    gui term | editor | ide | browser | settings | tasks ...
     gui browser <address>
 
 DESCRIPTION
@@ -40,7 +40,9 @@ KEYS
     Everything also works without a mouse:
       F1 - F5   open (or bring to the front) Terminal, Editor, Script
                 IDE, Browser or Settings
-      1 - 5     the same, when no window has the focus
+      F11       open (or bring to the front) the Task Manager
+      1 - 6     the same, when no window has the focus (6 = Task
+                Manager)
       F6        next window
       F7        move the window with the arrow keys; Enter when done
       F8        resize the window with the arrow keys; Enter when done
@@ -71,9 +73,15 @@ APPS
                  colour, the timezone and the desktop colour, sync the
                  clock from the internet, or connect to the network -
                  click a line, or press its number (and + / -)
+    Task Manager the "Tasks" button or F11: every open window with how
+                 busy it keeps the processor and how much memory it
+                 has, and an "End task" button to close it; the CPU use
+                 of the last minute as a graph; network traffic; where
+                 the memory goes; uptime and frames per second - see
+                 man tasks
 
 INSTALLING
     The desktop is also offered as a package:  apt install desktop
 
 SEE ALSO
-    browser, apt, net, script, edit
+    browser, tasks, apt, net, script, edit

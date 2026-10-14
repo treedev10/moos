@@ -207,30 +207,43 @@ brow_init:
     popad
     ret
 
-; brow_tick: from the desktop's main loop: the browser's work in the
-; background - the video player's step, and the page's next picture (not
-; while a video loads or plays: fetching a picture would hold it up)
+; brow_tick: (the browser's app tick, while its window is open) the work
+; in the background - the video player's step, and the page's next picture
+; (not while a video loads or plays: fetching a picture would hold it up)
+; -> CF=1 if it did something
 brow_tick:
-    test dword [wn_f + APP_BROWSER * 4], WF_OPEN
-    jnz .open
-    cmp dword [br_loaded], 0        ; the window was closed: stop playing,
-    je .r                           ; and let go of the page's pictures
-    mov dword [br_loaded], 0        ; (it starts afresh when opened again)
-    call vid_reset
-    call imgc_reset
-    ret
-.open:
+    push eax
     call pl_tick
     mov eax, [pl_state]
     cmp eax, PS_LOADING
     jb .pic
     cmp eax, PS_PLAY
-    jbe .r
+    jbe .busy                       ; (the player is at work)
 .pic:
     call imgc_tick
-    jnc .r
+    jnc .idle
     mov dword [br_lw], 0            ; a picture came: lay the page out again
     or byte [gui_dirty], 1
+.busy:
+    pop eax
+    stc
+    ret
+.idle:
+    pop eax
+    clc
+    ret
+
+; brow_closed: (from the main loop) if the browser's window was closed,
+; stop its video and let go of the page's pictures (it starts afresh when
+; opened again)
+brow_closed:
+    test dword [wn_f + APP_BROWSER * 4], WF_OPEN
+    jnz .r
+    cmp dword [br_loaded], 0
+    je .r
+    mov dword [br_loaded], 0
+    call vid_reset
+    call imgc_reset
 .r: ret
 
 ; brow_open_url: ESI = an address -> go there ("gui browser <url>")

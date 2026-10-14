@@ -45,6 +45,7 @@ STEP 1 - LOOK AROUND
     ls            lists the files on the disk
     cat welcome.txt   shows what is inside the file welcome.txt
     sysinfo       tells you about the computer you are running on
+    fetch         the same at a glance, with the MOOS cow
 
 STEP 2 - MAKE YOUR OWN FILE
     Type:

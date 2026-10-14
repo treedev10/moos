@@ -204,6 +204,7 @@ zero_bss:
 %include "src/shell.asm"
 %include "src/cmd_files.asm"
 %include "src/cmd_system.asm"
+%include "src/cmd_fetch.asm"
 %include "src/cmd_net.asm"
 %include "src/cmd_clock.asm"
 %include "src/cmd_apt.asm"

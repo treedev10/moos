@@ -6,6 +6,12 @@
 ;  cb_h - see gui_win.asm), so it follows the window when it is moved or
 ;  resized. The Text Editor and the Script IDE can be open at the same time,
 ;  so each has its own text buffer (a TX_ block).
+;
+;  The Terminal keeps the colours commands print with: a change of colour
+;  is stored in its log as two bytes, TERM_MARK and then TERM_PLAIN (the
+;  normal colour) or 0x10 + one of the 16 text colours. Every line starts
+;  in the normal colour. The marks are below 32, so anything that does not
+;  know them (or half a mark, after the log was shortened) shows nothing.
 ; =============================================================================
 GUI_LOG     equ 16384
 APP_BUF     equ 4096
@@ -14,11 +20,18 @@ TX_DIRTY    equ 4                   ; 1 = changed since saved,
 TX_FILE     equ 8                   ; the file it belongs to,
 TX_BUF      equ 32                  ; then the text itself
 TX_SIZE     equ TX_BUF + APP_BUF
+TERM_MARK   equ 1                   ; colour marks in the terminal log
+TERM_PLAIN  equ 2
+TERM_COLOUR equ 0x10                ; + colour 0-15
 
 section .bss
 alignb 4
 gui_capture resb 1
 term_esc    resb 1
+term_base   resb 1                  ; text_attr when the command started
+term_lcode  resb 1                  ; colour set by a \x01 letter, 0 = none
+term_ccode  resb 1                  ; the colour the log is in now
+ta_esc      resb 1                  ; 1 = gui_textarea_from obeys the marks
 alignb 4
 term_log    resb GUI_LOG
 term_log_len resd 1
@@ -51,8 +64,12 @@ bl_run_blk   db "(that command needs the full screen - run it from the text cons
 
 section .text
 
-; gui_log_char: append AL to the terminal log (strips \x01 colour escapes).
-; gui_capture = 2 throws the text away instead (the browser, while loading).
+; gui_log_char: append AL to the terminal log, with a colour mark first
+; when the colour changed. The colour comes from text_attr (kprintf sets it
+; for \x01 escapes when printing to the screen; fetch and color set it
+; directly) or from a \x01 + letter escape in the text itself (pager
+; output). gui_capture = 2 throws the text away instead (the browser,
+; while loading).
 gui_log_char:
     cmp byte [gui_capture], 2
     jne .keep
@@ -60,7 +77,20 @@ gui_log_char:
 .keep:
     cmp byte [term_esc], 0
     je .not_esc
-    mov byte [term_esc], 0          ; drop the colour letter
+    mov byte [term_esc], 0          ; the colour letter after \x01
+    push eax
+    mov ah, C_DEFAULT
+    call colour_from_letter
+    and al, 0x0F
+    cmp al, C_DEFAULT
+    je .lplain                      ; \x01n: back to normal
+    or al, TERM_COLOUR
+    jmp .lset
+.lplain:
+    xor al, al
+.lset:
+    mov [term_lcode], al
+    pop eax
     ret
 .not_esc:
     cmp al, 1
@@ -70,6 +100,42 @@ gui_log_char:
 .store:
     cmp al, 13
     je .skip
+    cmp al, 10
+    je .newline
+    push eax
+    mov ah, [term_lcode]            ; AH = the colour this character has
+    test ah, ah
+    jnz .have
+    mov ah, TERM_PLAIN
+    mov al, [text_attr]
+    cmp byte [fetch_exact], 0       ; (fetch's colour blocks: exactly)
+    jne .exact
+    cmp al, [term_base]
+    je .have
+.exact:
+    and al, 0x0F
+    or al, TERM_COLOUR
+    mov ah, al
+.have:
+    cmp ah, [term_ccode]
+    je .same
+    mov [term_ccode], ah
+    mov al, TERM_MARK
+    call term_log_put
+    mov al, ah
+    call term_log_put
+.same:
+    pop eax
+    jmp term_log_put
+.newline:
+    mov byte [term_ccode], TERM_PLAIN ; (each line starts plain)
+    jmp term_log_put
+.skip:
+    ret
+
+; term_log_put: AL = a byte for the log (the oldest part is dropped when
+; it is full)
+term_log_put:
     push edi
     mov edi, [term_log_len]
     cmp edi, GUI_LOG - 1
@@ -80,7 +146,18 @@ gui_log_char:
     mov [term_log + edi], al
     inc dword [term_log_len]
     pop edi
-.skip:
+    ret
+
+; term_capture: start capturing command output into the log; colours are
+; compared with the colour in use now (text_attr)
+term_capture:
+    mov byte [gui_capture], 1
+    push eax
+    mov al, [text_attr]
+    mov [term_base], al
+    pop eax
+    mov byte [term_lcode], 0
+    mov byte [term_esc], 0
     ret
 
 ; term_log_scroll: discard the oldest quarter of the log
@@ -111,6 +188,10 @@ term_log_str:
 ; ---------------------------------------------------------------- Terminal
 term_init:
     mov dword [term_log_len], 0
+    mov byte [term_ccode], TERM_PLAIN
+    mov byte [term_lcode], 0
+    mov al, [text_attr]
+    mov [term_base], al
     mov dword [term_input_len], 0
     mov byte [term_input], 0
     mov esi, term_welcome
@@ -141,7 +222,9 @@ app_term_draw:
     jmp .back
 .start:
     mov byte [term_log + edx], 0    ; terminate the log for rendering
+    mov byte [ta_esc], 1            ; (in colour)
     call gui_textarea_from          ; ESI = start -> renders, EAX = rows used
+    mov byte [ta_esc], 0
     ; input line on the next row
     mov ecx, [ta_x]
     mov edx, eax
@@ -229,14 +312,14 @@ term_run:
     mov esi, term_input
     call str_len
     mov [line_len], ecx
-    mov byte [gui_capture], 1
+    call term_capture
     call shell_exec
     mov byte [gui_capture], 0
 .done:
     popad
     ret
 .blocked:
-    mov byte [gui_capture], 1
+    call term_capture
     mov esi, bl_run_blk
     call term_log_str
     mov byte [gui_capture], 0
@@ -441,7 +524,8 @@ ide_run:
     call gui_open
 .term_open:
     mov dword [term_log_len], 0     ; run with capture into the terminal log
-    mov byte [gui_capture], 1
+    mov byte [term_ccode], TERM_PLAIN
+    call term_capture
     lea esi, [tx_ide + TX_BUF]
     call script_run
     mov byte [gui_capture], 0
@@ -791,11 +875,14 @@ gui_text_tail:
     ret
 
 ; gui_textarea_from: ESI = NUL-terminated text, rendered wrapped into ta_*
+; (in ta_fg; with ta_esc = 1 the terminal's colour marks are obeyed)
 gui_textarea_from:
     pushad
     mov dword [gfx_scale], 1
     mov dword [gta_col], 0
     mov dword [gta_row], 0
+    mov eax, [ta_fg]
+    mov [gta_fg], eax
 .ch:
     mov al, [esi]
     test al, al
@@ -806,6 +893,8 @@ gui_textarea_from:
     je .newline
     cmp al, 9
     je .tab
+    cmp al, TERM_MARK
+    je .mark
     cmp al, 32
     jb .ch
     mov ecx, [gta_col]              ; x = ta_x + col*8
@@ -814,7 +903,7 @@ gui_textarea_from:
     mov edx, [gta_row]             ; y = ta_y + row*16
     shl edx, 4
     add edx, [ta_y]
-    mov eax, [ta_fg]
+    mov eax, [gta_fg]
     call gfx_rgb
     mov ebx, eax
     movzx eax, byte [gta_char]
@@ -824,7 +913,12 @@ gui_textarea_from:
     mov eax, [ta_cols]
     cmp [gta_col], eax
     jb .ch
+    cmp byte [gta_char], 10
+    jne .wrap
 .newline:
+    mov eax, [ta_fg]                ; (a new line starts plain)
+    mov [gta_fg], eax
+.wrap:
     mov dword [gta_col], 0
     inc dword [gta_row]
     mov eax, [ta_rows]
@@ -833,6 +927,30 @@ gui_textarea_from:
     jmp .done
 .tab:
     add dword [gta_col], 4
+    jmp .ch
+.mark:                              ; TERM_MARK + colour code
+    cmp byte [ta_esc], 0
+    je .ch
+    movzx eax, byte [esi]
+    test eax, eax
+    jz .done
+    inc esi
+    cmp eax, TERM_PLAIN
+    jne .colour
+    mov eax, [ta_fg]
+    mov [gta_fg], eax
+    jmp .ch
+.colour:
+    sub eax, TERM_COLOUR
+    cmp eax, 15
+    ja .ch
+    lea eax, [eax + eax * 2]        ; the VGA colour as 0xRRGGBB
+    movzx edx, byte [vga_rgb + eax]
+    shl edx, 8
+    mov dl, [vga_rgb + eax + 1]
+    shl edx, 8
+    mov dl, [vga_rgb + eax + 2]
+    mov [gta_fg], edx
     jmp .ch
 .done:
     mov eax, [gta_row]
@@ -844,6 +962,7 @@ gui_textarea_from:
 section .bss
 alignb 4
 gta_rows resd 1
+gta_fg   resd 1
 gta_col  resd 1
 gta_row  resd 1
 gta_char resb 1
