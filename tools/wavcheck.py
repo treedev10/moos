@@ -14,6 +14,7 @@ or old sound is played again).
             is off by more than --tol seconds, or if there is a click.
 --max-gap   the longest silence allowed between two expected tones
             (seconds); default: no limit.
+--clicks-ok do not count clicks as failures (tones cut off on purpose)
 Prints one line per piece ("tone 440.0 Hz  0.000 - 1.002 s ..."), then
 OK or FAIL with the reasons; the exit code is 0 for OK.
 
@@ -69,26 +70,27 @@ def tone_of(block, rate):
 def segments(x, rate):
     """Split into pieces of one tone or of silence -> [(freq, start, end, rms)]"""
     w = int(rate * WIN)
-    out = []
+    out = []                                # [freqs of the windows, start, end, rms]
     for i in range(0, len(x) - w + 1, w):
         f, r = tone_of(x[i:i + w, 0], rate)
         t0, t1 = i / rate, (i + w) / rate
-        if out and ((f == 0 and out[-1][0] == 0) or
-                    (f and out[-1][0] and abs(f - out[-1][0]) < 0.06 * out[-1][0])):
-            pf, ps, _, pr = out[-1]
-            out[-1] = (pf, ps, t1, max(pr, r))
+        last = out[-1][0][-1] if out else None
+        if out and ((f == 0 and last == 0) or
+                    (f and last and abs(f - last) < 0.06 * last)):
+            out[-1][0].append(f)
+            out[-1][2] = t1
+            out[-1][3] = max(out[-1][3], r)
         else:
-            out.append((f, t0, t1, r))
+            out.append([[f], t0, t1, r])
     # windows that straddle a change of tone come out as short odd pieces:
     # fold pieces under 2 windows into a neighbour
     merged = []
     for s in out:
-        if merged and s[2] - s[1] < 2.5 * WIN and s[0] != 0:
-            pf, ps, _, pr = merged[-1]
-            merged[-1] = (pf, ps, s[2], pr)
+        if merged and s[2] - s[1] < 2.5 * WIN and s[0][0] != 0:
+            merged[-1][2] = s[2]
         else:
             merged.append(s)
-    return merged
+    return [(float(np.median(f)), s, e, r) for f, s, e, r in merged]
 
 
 def refine_edges(x, rate, start, end):
@@ -126,6 +128,7 @@ def main():
     if not args:
         sys.exit(__doc__)
     path, expect, tol, max_gap, quiet = args.pop(0), None, 0.05, None, False
+    clicks_ok = False
     while args:
         opt = args.pop(0)
         if opt == '--expect':
@@ -136,6 +139,8 @@ def main():
             max_gap = float(args.pop(0))
         elif opt == '--quiet':
             quiet = True
+        elif opt == '--clicks-ok':
+            clicks_ok = True
         else:
             sys.exit('unknown option ' + opt)
     rate, chans, x = read_wav(path)
@@ -175,7 +180,7 @@ def main():
             fails.append('tone %d is %.1f Hz, not %.1f' % (i + 1, f, ef))
         if abs((e - s) - ed) > tol:
             fails.append('tone %d lasts %.3f s, not %.3f' % (i + 1, e - s, ed))
-        if ck:
+        if ck and not clicks_ok:
             fails.append('tone %d has %d click(s)' % (i + 1, len(ck)))
         if max_gap is not None and i and s - tones[i - 1][2] > max_gap:
             fails.append('a gap of %.3f s before tone %d' % (s - tones[i - 1][2], i + 1))

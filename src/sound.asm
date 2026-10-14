@@ -3337,6 +3337,8 @@ snd_test:
     call snd_played
     PRINTF `\x01rThe card did not keep up\x01n (%d frames played).\n`, eax
 .close:
+    mov ecx, 25                         ; (let what the card has taken but
+    call snd_sleep                      ; not yet sounded finish: 1/4 s)
     call snd_close
     popad
     ret

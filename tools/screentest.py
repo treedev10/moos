@@ -17,6 +17,10 @@ Options
     --audio FILE    add an Intel HD Audio card (and its output) and record
                     what MOOS plays into FILE (a .wav)
     --ac97 FILE     the same with an AC'97 card
+    --hda DEV       with --audio: the HDA controller (default intel-hda;
+                    ich9-intel-hda is the one of Q35 PCs)
+    --codec DEV     with --audio: the codec (default hda-output; also
+                    hda-duplex, hda-micro)
 
 STEP is either text to type (use \\n for Enter) or a command:
     @screen         print the screen (MOOS's own copy of it, found in memory)
@@ -225,6 +229,7 @@ def main():
     args = sys.argv[1:]
     image, drive, extra, uefi, mem, nic = IMAGE, None, '', False, None, 'rtl8139'
     audio = None
+    hda, codec = 'intel-hda', 'hda-output'
     while args and args[0].startswith('--'):
         opt = args.pop(0)
         if opt == '--uefi':
@@ -241,6 +246,10 @@ def main():
             nic = args.pop(0)
         elif opt in ('--audio', '--ac97'):
             audio = (opt, os.path.abspath(args.pop(0)))
+        elif opt == '--hda':
+            hda = args.pop(0)
+        elif opt == '--codec':
+            codec = args.pop(0)
         else:
             sys.exit('unknown option ' + opt)
     mem = mem or (256 if uefi else 32)
@@ -259,7 +268,7 @@ def main():
         cmd += ['-gdb', 'tcp:127.0.0.1:%d' % gdb_port]
     gdb = None
     if audio:
-        dev = ['-device', 'intel-hda', '-device', 'hda-output,audiodev=snd0'] \
+        dev = ['-device', hda, '-device', codec + ',audiodev=snd0'] \
             if audio[0] == '--audio' else ['-device', 'AC97,audiodev=snd0']
         cmd += ['-audiodev', 'wav,id=snd0,path=%s' % audio[1]] + dev
     if nic == 'none':
