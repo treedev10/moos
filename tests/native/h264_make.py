@@ -67,6 +67,19 @@ CASES = {
     "s176x144":   ("testsrc2", 176, 144, 30, "", None),
     "s640x360":   ("testsrc2", 640, 360, 60, "", None),
     "s1280x720":  ("testsrc2", 1280, 720, 20, "", None),
+    # (4:2:0 crops in units of 2 pixels, so odd sizes such as 33x17 cannot be coded)
+    "s34x18_m":   ("mandelbrot", 34, 18, 30, "-crf 10", None),
+    "s2x2":       ("testsrc2", 2, 2, 10, "", None),
+    "s18x10":     ("mandelbrot", 18, 10, 20, "-refs 4", None),
+    "s100x58_m":  ("mandelbrot", 100, 58, 30, "-refs 3", None),
+    # 640x360 (YouTube itag 18 size): moving content, intra only, slices, quality range
+    "m640_mandel": ("mandelbrot", 640, 360, 60, "-crf 23 -refs 3", None),
+    "m640_g1":    ("testsrc2", 640, 360, 10, "-g 1 -crf 23", None),
+    "m640_slices": ("mandelbrot", 640, 360, 20, "-x264-params slices=4:ref=4", None),
+    "m640_qp0":   ("noisy", 640, 360, 5, "-qp 1", "qp=0"),
+    "m640_crf1":  ("noisy", 640, 360, 5, "-crf 1", None),
+    "m640_crf51": ("mandelbrot", 640, 360, 30, "-crf 51", None),
+    "m640_dbk":   ("noisy", 640, 360, 15, "-x264-params deblock=-2,3:ref=16", None),
     # intra only, deblocking variations
     "i_nodbk":    ("testsrc2", 64, 48, 5, "-g 1 -x264-params no-deblock=1", None),
     "i_dbk":      ("testsrc2", 64, 48, 5, "-g 1", None),

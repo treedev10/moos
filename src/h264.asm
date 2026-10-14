@@ -97,6 +97,8 @@ H264F_FLAGS     equ 32              ; bit 0: concealed (damaged), bit 1: IDR
 H264F_SARW      equ 36              ; sample aspect ratio (0:0 = unknown)
 H264F_SARH      equ 40
 H264F_SIZE      equ 44
+H264F_YS        equ H264F_YSTRIDE   ; the names the video player uses
+H264F_CS        equ H264F_CSTRIDE
 
 ; ---- limits ---------------------------------------------------------------
 H264_NSLOT      equ 18              ; frame buffers
