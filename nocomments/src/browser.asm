@@ -183,26 +183,35 @@ brow_init:
     ret
 
 brow_tick:
-    test dword [wn_f + APP_BROWSER * 4], WF_OPEN
-    jnz .open
-    cmp dword [br_loaded], 0
-    je .r
-    mov dword [br_loaded], 0
-    call vid_reset
-    call imgc_reset
-    ret
-.open:
+    push eax
     call pl_tick
     mov eax, [pl_state]
     cmp eax, PS_LOADING
     jb .pic
     cmp eax, PS_PLAY
-    jbe .r
+    jbe .busy
 .pic:
     call imgc_tick
-    jnc .r
+    jnc .idle
     mov dword [br_lw], 0
     or byte [gui_dirty], 1
+.busy:
+    pop eax
+    stc
+    ret
+.idle:
+    pop eax
+    clc
+    ret
+
+brow_closed:
+    test dword [wn_f + APP_BROWSER * 4], WF_OPEN
+    jnz .r
+    cmp dword [br_loaded], 0
+    je .r
+    mov dword [br_loaded], 0
+    call vid_reset
+    call imgc_reset
 .r: ret
 
 brow_open_url:

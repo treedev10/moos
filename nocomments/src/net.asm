@@ -79,6 +79,12 @@ udp_src_port    resd 1
 net_scratch     resd 1
 nic_wait        resd 1
 
+alignb 4
+net_tx_bytes    resd 2
+net_rx_bytes    resd 2
+net_tx_pkts     resd 1
+net_rx_pkts     resd 1
+
 section .data
 mac_bcast       db 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
 err_no_nic      db "no supported network card found - type 'net cards' to see what MOOS found", 0
@@ -430,6 +436,11 @@ nic_link_wait:
 net_tx_frame:
     cmp ecx, 1792
     ja .r
+    cmp byte [nic_kind], NIC_NONE
+    je .r
+    add [net_tx_bytes], ecx
+    adc dword [net_tx_bytes + 4], 0
+    inc dword [net_tx_pkts]
     cmp byte [nic_kind], NIC_E1000
     je e1000_tx
     cmp byte [nic_kind], NIC_RTL8168
@@ -441,6 +452,17 @@ net_tx_frame:
 .r: ret
 
 net_rx_poll:
+    call .card
+    jc .r
+    push eax
+    mov eax, [rx_len]
+    add [net_rx_bytes], eax
+    adc dword [net_rx_bytes + 4], 0
+    inc dword [net_rx_pkts]
+    pop eax
+    clc
+.r: ret
+.card:
     cmp byte [nic_kind], NIC_E1000
     je e1000_rx
     cmp byte [nic_kind], NIC_RTL8168

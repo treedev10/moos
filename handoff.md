@@ -146,6 +146,19 @@ python tools/screentest.py "apt install /treedev10/moos\n" @wait=20 @screen
 python packages/serve.py          # local package repo on :8000 (apt repo http://10.0.2.2:8000)
 ```
 
+**Native module tests**: the self-contained modules (`src/mp4.asm`, `src/json.asm`, and
+the other media decoders) are also assembled on their own and linked with C test programs
+on Linux, which check them against independent references (ffprobe for MP4, Python's
+`json` module for JSON) with guard pages around every buffer, fuzz them, and time them.
+`tests/native/README.md` has the module rules and the API contracts.
+
+```
+python3 tests/native/mp4_data.py && python3 tests/native/run.py mp4      # 32 files vs ffprobe
+python3 tests/native/run.py mp4 fuzz 2000                                  # mutated moov boxes
+python3 tests/native/json_data.py && python3 tests/native/run.py json    # ~32k documents vs Python
+python3 tests/native/run.py json fuzz 20000 ; python3 tests/native/run.py json bench
+```
+
 For TLS debugging, `get -v` prints every record and handshake message and the handshake
 secret; compare with a local Python TLS 1.3 server that writes an SSLKEYLOGFILE
 (`ssl.SSLContext.keylog_filename`). Negative tests need servers with bad certificates
@@ -171,6 +184,7 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Editor | `src/editor.asm` |
 | Graphics + GUI | `src/gfx.asm` (back buffer, clip rectangle, sized/styled glyphs, icons), `src/gui.asm` (desktop, taskbar, cursor, main loop), `src/gui_win.asm` (window manager), `src/gui_apps.asm` (terminal, editor, IDE, settings), `src/gui_tasks.asm` (Task Manager, CPU accounting) |
 | Browser | `src/html.asm` (parser, layout, painter, forms), `src/browser.asm` (the app: toolbar, navigation, history, URLs) |
+| Media / data modules (UEFI kernel only) | `src/mp4.asm` (MP4 demuxer: find the moov box, tracks, sample tables), `src/json.asm` (JSON tokenizer); self-contained (`src/module.inc`), tested natively in `tests/native/` |
 | Manuals | `man/*.txt` (embedded into the kernel at build time) |
 | Font | `src/font8x16.bin` (public-domain VGA font, extracted by `tools/makefont.py`) |
 
@@ -305,6 +319,15 @@ cleanly - run `python tools/strip_comments.py` once after merging them.)
   full-screen redraw each second) 1.3-1.9%. Attribution checks: a 1,000,000-step script in
   the Terminal showed Terminal 89.9% / desktop 3.4% / idle 6.2% for its stretch; a 400 KB
   page typed into the Browser's address bar showed Browser 93.3% and 200 KB/s in for 2 s.
+- **MP4 demuxer limits** (`src/mp4.asm`): plays the first H.264 (avc1/avc3) and the first
+  AAC track; fragmented MP4 (moof, as in DASH) is refused (-3); edit lists: leading empty
+  edits and the first real edit's start only (later edits and edit rates are ignored);
+  files and boxes must be under 4 GB (64-bit sizes are read, but only below 4 GB); sample
+  times are 32-bit in the track's time scale. HE-AAC is recognised (the output rate is
+  reported) but whether it plays is up to the AAC decoder.
+- **JSON limits** (`src/json.asm`): UTF-8 inside strings is passed through without being
+  validated; numbers are kept as text (json_int reads int32 only); nesting is limited to
+  1000 levels.
 - **Sign-in is light protection**, not real security (simple password hash, no encryption).
 
 ## Good next steps

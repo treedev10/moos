@@ -213,6 +213,8 @@ zero_bss:
 %ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/mp4.asm"                ; MP4 demuxer (self-contained module)
+%include "src/json.asm"               ; JSON tokenizer (self-contained module)
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif

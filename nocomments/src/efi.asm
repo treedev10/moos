@@ -182,6 +182,7 @@ OWN_SOUND   equ 16
 OWN_NET     equ 17
 OWN_MEDIA   equ 18
 OWN_IMAGES  equ 19
+OWN_SHELL   equ 20
 
 section .bss
 alignb 4
@@ -288,6 +289,31 @@ big_owned:
     pop ecx
     ret
 
+%ifdef FULL
+
+MM_BUF_SIZE equ 16384
+
+section .bss
+alignb 8
+mm_buf      resb MM_BUF_SIZE
+mm_size     resq 1
+mm_key      resq 1
+mm_dsize    resq 1
+mm_dver     resq 1
+mm_free_kb  resd 1
+section .text
+
+efi_memmap:
+    xor eax, eax
+    xor edx, edx
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    jne .r
+    mov eax, efi_memmap64
+    call efi64
+    mov edx, [mm_free_kb]
+.r: ret
+%endif
+
 efi_mouse_poll:
     cmp byte [mouse_ok], 0
     je .r
@@ -341,6 +367,60 @@ efi_freepages64:
     call [rax + 48]
     xor eax, eax
     LEAVE64
+
+%ifdef FULL
+
+efi_memmap64:
+    ENTER64
+    mov qword [rel mm_size], MM_BUF_SIZE
+    mov rax, [rel bootinfo + BI.bs]
+    lea rcx, [rel mm_size]
+    lea rdx, [rel mm_buf]
+    lea r8, [rel mm_key]
+    lea r9, [rel mm_dsize]
+    lea r10, [rel mm_dver]
+    mov [rsp + 32], r10
+    call [rax + 56]
+    test rax, rax
+    jnz .fail
+    mov r9, [rel mm_dsize]
+    cmp r9, 40
+    jb .fail
+    lea rsi, [rel mm_buf]
+    mov rcx, rsi
+    add rcx, [rel mm_size]
+    xor edx, edx
+    xor r8d, r8d
+.entry:
+    lea rax, [rsi + 32]
+    cmp rax, rcx
+    ja .total
+    mov eax, [rsi]
+    cmp eax, 7
+    jne .used
+    add r8, [rsi + 24]
+.used:
+    test eax, eax
+    jz .skip
+    cmp eax, 8
+    je .skip
+    cmp eax, 10
+    ja .skip
+    add rdx, [rsi + 24]
+.skip:
+    add rsi, r9
+    jmp .entry
+.total:
+    shl r8, 2
+    mov [rel mm_free_kb], r8d
+    shl rdx, 2
+    mov eax, edx
+    LEAVE64
+.fail:
+    xor eax, eax
+    mov [rel mm_free_kb], eax
+    LEAVE64
+%endif
 
 efi_readkey64:
     ENTER64

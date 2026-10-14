@@ -161,6 +161,7 @@ zero_bss:
 %include "src/shell.asm"
 %include "src/cmd_files.asm"
 %include "src/cmd_system.asm"
+%include "src/cmd_fetch.asm"
 %include "src/cmd_net.asm"
 %include "src/cmd_clock.asm"
 %include "src/cmd_apt.asm"
@@ -169,6 +170,8 @@ zero_bss:
 %ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%include "src/mp4.asm"
+%include "src/json.asm"
 %else
 %include "src/lite.asm"
 %endif

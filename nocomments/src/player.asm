@@ -756,6 +756,24 @@ pl_setup:
     mov esi, [pl_file]
     add esi, [pl_moov_off]
     CCALL mp4_parse_moov, esi, dword [pl_moov_len], dword [pl_info], dword [pl_work], dword [pl_worklen]
+    cmp eax, MP4_EWORK
+    jne .parsed
+    mov eax, [pl_work]
+    call big_free
+    mov ebx, [pl_info]
+    mov ecx, [ebx + MP4I_NEED]
+    cmp ecx, 512 * 1024 * 1024
+    ja .nomem
+    mov [pl_worklen], ecx
+    mov edx, OWN_MEDIA
+    call big_alloc
+    test eax, eax
+    jz .nomem
+    mov [pl_work], eax
+    mov esi, [pl_file]
+    add esi, [pl_moov_off]
+    CCALL mp4_parse_moov, esi, dword [pl_moov_len], dword [pl_info], dword [pl_work], dword [pl_worklen]
+.parsed:
     test eax, eax
     js .badfile
     mov dword [pl_moov_ok], 1

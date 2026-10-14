@@ -166,3 +166,146 @@ mem_copy:
     pop esi
     pop ecx
     ret
+
+sb_str:
+    push eax
+    push esi
+.l: lodsb
+    test al, al
+    jz .e
+    stosb
+    jmp .l
+.e: mov byte [edi], 0
+    pop esi
+    pop eax
+    ret
+
+sb_char:
+    stosb
+    mov byte [edi], 0
+    ret
+
+sb_uint:
+    push ebx
+    push ecx
+    push esi
+    mov ebx, 10
+    call fmt_uint
+    call sb_str
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+
+sb_tenths:
+    push eax
+    push ecx
+    push edx
+    xor edx, edx
+    mov ecx, 10
+    div ecx
+    call sb_uint
+    mov al, '.'
+    call sb_char
+    lea eax, [edx + '0']
+    call sb_char
+    pop edx
+    pop ecx
+    pop eax
+    ret
+
+sb_permille:
+    push eax
+    call sb_tenths
+    mov al, '%'
+    call sb_char
+    pop eax
+    ret
+
+sb_bytes:
+    push ecx
+    push edx
+    xor ecx, ecx
+    xor edx, edx
+    call sb_size
+    pop edx
+    pop ecx
+    ret
+sb_kb:
+    push ecx
+    push edx
+    mov ecx, 1
+    xor edx, edx
+    call sb_size
+    pop edx
+    pop ecx
+    ret
+sb_size:
+    pushad
+.down:
+    test edx, edx
+    jnz .shift
+    cmp eax, 1024 * 1024
+    jb .small
+.shift:
+    shrd eax, edx, 10
+    shr edx, 10
+    inc ecx
+    jmp .down
+.small:
+    cmp eax, 1024
+    jb .whole
+    imul eax, eax, 10
+    add eax, 512
+    shr eax, 10
+    inc ecx
+    cmp eax, 100
+    jb .dec
+    add eax, 5
+    xor edx, edx
+    mov ebx, 10
+    div ebx
+.whole:
+    call sb_uint
+    jmp .unit
+.dec:
+    call sb_tenths
+.unit:
+    cmp ecx, 4
+    jbe .u
+    mov ecx, 4
+.u: mov al, ' '
+    call sb_char
+    mov esi, [sb_units + ecx * 4]
+    call sb_str
+    mov [esp], edi
+    popad
+    ret
+
+section .data
+sb_units    dd sb_u0, sb_u1, sb_u2, sb_u3, sb_u4
+sb_u0       db "B", 0
+sb_u1       db "KB", 0
+sb_u2       db "MB", 0
+sb_u3       db "GB", 0
+sb_u4       db "TB", 0
+section .text
+
+sb_ip:
+    push eax
+    push ecx
+    push edx
+    mov edx, eax
+    mov ecx, 4
+.l: movzx eax, dl
+    call sb_uint
+    shr edx, 8
+    dec ecx
+    jz .e
+    mov al, '.'
+    call sb_char
+    jmp .l
+.e: pop edx
+    pop ecx
+    pop eax
+    ret

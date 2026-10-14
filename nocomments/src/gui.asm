@@ -2,8 +2,8 @@ TASKBAR_H   equ 34
 CUR_W       equ 24
 CUR_H       equ 20
 CUR_DX      equ 6
-TB_N        equ 6
-TB_QUIT     equ 5
+TB_N        equ 7
+TB_QUIT     equ 6
 
 %macro RECT 5
     mov ecx, %1
@@ -13,6 +13,15 @@ TB_QUIT     equ 5
     mov eax, %5
     call gfx_rgb
     call gfx_fillrect
+%endmacro
+
+%macro APP_CALL 2
+    push eax
+    mov eax, %1
+    call cpu_enter
+    pop eax
+    call %2
+    call cpu_leave
 %endmacro
 
 %macro TEXT 5
@@ -31,7 +40,9 @@ alignb 4
 gui_quit    resb 1
 gui_active  resb 1
 gui_dirty   resb 1
+
 alignb 4
+gui_dirty_app resd 1
 gc_mx       resd 1
 gc_my       resd 1
 cur_under   resd CUR_W * CUR_H
@@ -50,7 +61,7 @@ desktop_marker db "desktop.inst", 0
 gui_title   db "MOOS", 0
 gui_sub     db "Mightily Optimized Operating System", 0
 gui_hint1   db "Click an app on the taskbar, or press its key:", 0
-gui_hint2   db "F1 Terminal   F2 Editor   F3 Script IDE   F4 Browser   F5 Settings", 0
+gui_hint2   db "F1 Terminal  F2 Editor  F3 Script IDE  F4 Browser  F5 Settings  F11 Tasks", 0
 gui_hint3   db "Drag a title bar to move a window, an edge or corner to resize it.", 0
 gui_hint4   db "Keys: F6 next window  F7 move  F8 resize  F9 minimize  F10 maximize", 0
 gui_hint5   db "Esc closes a window. Esc on the empty desktop leaves.", 0
@@ -60,13 +71,16 @@ ga_editor   db "editor", 0
 ga_ide      db "ide", 0
 ga_browser  db "browser", 0
 ga_settings db "settings", 0
-tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_quit
-tb_lens     db 8, 6, 10, 7, 8, 4
+ga_tasks    db "tasks", 0
+tb_labels   dd tb_l_term, tb_l_edit, tb_l_ide, tb_l_brow, tb_l_set, tb_l_tasks
+            dd tb_l_quit
+tb_lens     db 8, 6, 10, 7, 8, 5, 4
 tb_l_term   db "Terminal", 0
 tb_l_edit   db "Editor", 0
 tb_l_ide    db "Script IDE", 0
 tb_l_brow   db "Browser", 0
 tb_l_set    db "Settings", 0
+tb_l_tasks  db "Tasks", 0
 tb_l_quit   db "Quit", 0
 
 DESK_NCOLORS equ 8
@@ -341,6 +355,20 @@ tb_hit:
     pop ecx
     ret
 
+gui_mouse_busy:
+    push eax
+    mov eax, [mouse_x]
+    cmp eax, [gc_mx]
+    jne .r
+    mov eax, [mouse_y]
+    cmp eax, [gc_my]
+    jne .r
+    mov eax, [mouse_btn]
+    or eax, [prev_btn]
+    or eax, [mouse_wheel]
+.r: pop eax
+    ret
+
 gui_hover_check:
     push eax
     call tb_hit
@@ -424,6 +452,7 @@ section .text
 
 gui_redraw:
     pushad
+    inc dword [gui_frames]
     cmp dword [pl_full], 0
     je .desk
     call pl_full_draw
@@ -431,20 +460,55 @@ gui_redraw:
     call gfx_present
     jmp .done
 .desk:
+    test byte [gui_dirty], 1
+    jz .part
     call gui_wallpaper
     call gui_windows
     call gui_taskbar
     call gui_cursor_show
-    test byte [gui_dirty], 1
-    jz .bar
     call gfx_present
     jmp .done
-.bar:
+.part:
+    call cur_rect
+    mov ebx, cur_under
+    mov eax, 1
+    call gfx_copy_rect
+    test byte [gui_dirty], 4
+    jz .no_content
+    mov eax, [gui_dirty_app]
+    call wm_draw_content
+.no_content:
+    test byte [gui_dirty], 2
+    jz .no_bar
+    call gui_taskbar
+.no_bar:
+    call gui_cursor_show
+    test byte [gui_dirty], 4
+    jz .show_bar
+    mov eax, [gui_dirty_app]
+    call wm_content
+    mov ecx, [cb_x]
+    mov edx, [cb_y]
+    mov esi, [cb_w]
+    mov edi, [gfx_h]
+    sub edi, TASKBAR_H
+    sub edi, edx
+    jle .show_bar
+    cmp edi, [cb_h]
+    jle .h
+    mov edi, [cb_h]
+.h: call gfx_present_rect
+.show_bar:
+    test byte [gui_dirty], 2
+    jz .show_cur
     xor ecx, ecx
     mov edx, [gfx_h]
     sub edx, TASKBAR_H
     mov esi, [gfx_w]
     mov edi, TASKBAR_H
+    call gfx_present_rect
+.show_cur:
+    call cur_rect
     call gfx_present_rect
 .done:
     mov byte [gui_dirty], 0
@@ -481,6 +545,7 @@ cmd_gui:
     mov eax, [ticks]
     mov [gui_clk_tick], eax
     mov byte [gui_clk_sec], 0xFF
+    call cpu_reset
     cmp dword [argc], 2
     jb .start
     mov ebx, 1
@@ -505,6 +570,10 @@ cmd_gui:
     mov edi, ga_settings
     call str_icmp
     je .open
+    mov eax, APP_TASKS
+    mov edi, ga_tasks
+    call str_icmp
+    je .open
     mov eax, APP_BROWSER
     mov edi, ga_browser
     call str_icmp
@@ -514,7 +583,7 @@ cmd_gui:
     jae .start
     mov esi, [argv + ebx * 4]
     inc ebx
-    call brow_open_url
+    APP_CALL APP_BROWSER, brow_open_url
     jmp .arg
 .open:
     call gui_open
@@ -522,27 +591,59 @@ cmd_gui:
 .start:
     mov byte [gui_dirty], 1
     call gui_redraw
+    mov eax, CPU_IDLE
+    call cpu_switch
+
 .loop:
     call efi_mouse_poll
+    call gui_mouse_busy
+    jz .quiet
+    mov eax, CPU_DESK
+    call cpu_switch
     call gui_hover_check
     call gui_handle
     call gui_wheel
+    mov eax, CPU_IDLE
+    call cpu_switch
+.quiet:
     call gui_clock_check
-    call brow_tick
+    call gui_app_ticks
+    call brow_closed
+    call cpu_sample_check
 .keys:
     call kbd_poll
     test eax, eax
     jz .draw
+    push eax
+    mov eax, CPU_DESK
+    call cpu_switch
+    pop eax
     call gui_key
+    mov eax, CPU_IDLE
+    call cpu_switch
     cmp byte [gui_quit], 0
     je .keys
 .draw:
     cmp byte [gui_quit], 0
     jne .exit
-    call gui_cursor_update
+    mov eax, [mouse_x]
+    cmp eax, [gc_mx]
+    jne .work
+    mov eax, [mouse_y]
+    cmp eax, [gc_my]
+    jne .work
     cmp byte [gui_dirty], 0
     je .loop
+.work:
+    mov eax, CPU_DESK
+    call cpu_switch
+    call gui_cursor_update
+    cmp byte [gui_dirty], 0
+    je .drawn
     call gui_redraw
+.drawn:
+    mov eax, CPU_IDLE
+    call cpu_switch
     jmp .loop
 .exit:
     call vid_reset

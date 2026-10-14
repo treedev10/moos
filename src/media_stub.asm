@@ -2,8 +2,8 @@
 ;  media_stub.asm - STAND-INS, to be replaced
 ;
 ;  The browser's picture cache, video player and YouTube pages call the
-;  streaming HTTP client, the MP4/JSON readers, the H.264 / AAC / JPEG / PNG /
-;  GIF decoders and the sound driver. Until those modules are added, these
+;  streaming HTTP client, the H.264 / AAC / JPEG / PNG / GIF decoders and
+;  the sound driver. Until those modules are added, these
 ;  stand-ins let the kernel assemble: every one of them reports failure, so
 ;  pictures show their alt text and a video says it could not be loaded.
 ; =============================================================================
@@ -21,27 +21,6 @@ url_body_type resd 1
 url_headers resd 1
 url_agent   resd 1
 section .text
-MP4S_OFF    equ 0
-MP4S_SIZE   equ 4
-MP4S_PTS    equ 8
-MP4S_FLAGS  equ 12
-MP4I_V_OK   equ 0
-MP4I_V_W    equ 4
-MP4I_V_H    equ 8
-MP4I_V_SCALE equ 12
-MP4I_V_DUR  equ 16
-MP4I_V_AVCC equ 20
-MP4I_V_AVCCLEN equ 24
-MP4I_V_N    equ 28
-MP4I_V_SAMP equ 32
-MP4I_A_OK   equ 40
-MP4I_A_SCALE equ 44
-MP4I_A_DUR  equ 48
-MP4I_A_ASC  equ 52
-MP4I_A_ASCLEN equ 56
-MP4I_A_N    equ 60
-MP4I_A_SAMP equ 64
-MP4I_SIZE   equ 128
 H264F_Y     equ 0
 H264F_U     equ 4
 H264F_V     equ 8
@@ -72,8 +51,6 @@ snd_resume:
 snd_close:
 snd_volume:
     ret
-mp4_parse_moov:
-mp4_find_sync:
 h264_init:
 h264_decode_avcc:
 h264_decode_nal:
@@ -81,10 +58,6 @@ h264_flush:
 aac_init:
 aac_info:
 aac_decode:
-json_parse:
-json_key:
-json_index:
-json_str:
 png_info:
 png_decode:
 gif_info:
@@ -94,7 +67,6 @@ jpeg_decode:
     mov eax, -1
     ret
 h264_get_frame:
-json_eq:
     xor eax, eax
     ret
 h264_ctx_size:
