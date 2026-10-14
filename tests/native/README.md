@@ -81,8 +81,17 @@ int mp4_find_moov(const uint8_t *data, uint32_t len, uint32_t *moov_off, uint32_
    box starts (fetch from there); -1 not an MP4. */
 int mp4_parse_moov(const uint8_t *moov, uint32_t len, MP4INFO *info, uint8_t *work,
                    uint32_t worklen);
-/* MP4INFO and MP4SAMPLE layouts are in src/mp4.asm (equ offsets) and mp4_test.c. */
+/* MP4INFO and MP4SAMPLE layouts are in src/mp4.asm (equ offsets) and mp4_test.c.
+   0 ok; -1 damaged / no tracks, -2 work too small (MP4I_NEED = bytes needed; a work of
+   moov_len * 6 + 1 MB is always enough when sample sizes are listed in stsz, as ffmpeg
+   and YouTube write them), -3 fragmented (moof), -4 no H.264 / AAC track. The sample
+   arrays and configs are copied into work, so the moov buffer may be freed after. */
+int mp4_find_sync(const MP4SAMPLE *samples, uint32_t count, uint32_t time);
+/* seeking: index of the last sync sample with pts <= time (track time scale); the first
+   sync sample if none is that early; 0 if there are none */
 ```
+Test: `python3 tests/native/mp4_data.py` (ffmpeg makes the files, ffprobe gives the
+references), then `run.py mp4`, `run.py mp4 fuzz [N] [seed]`, `run.py mp4 bench`.
 
 ### h264.asm
 ```c
@@ -114,5 +123,14 @@ int json_index(const JTOK *toks, int ntoks, int arr, int i);
 int json_str(const char *js, const JTOK *tok, char *out, uint32_t cap);
 int json_int(const char *js, const JTOK *tok, int32_t *out);
 int json_eq(const char *js, const JTOK *tok, const char *s);
-/* JTOK layout: see src/json.asm */
+/* JTOK layout: see src/json.asm (16 bytes: u8 type 1 object 2 array 3 string 4 primitive,
+   pad[3], u32 start, u32 end (strings: without the quotes), u32 next = index of the first
+   token after its subtree; a key's value is part of the key's subtree).
+   json_parse: toks = NULL only counts. -1 invalid, -2 more than maxtoks tokens, -3 the
+   text ends early, -4 nested deeper than 1000.
+   json_key / json_index: token index or -1. json_str: decoded length (UTF-8, NUL added),
+   -1 bad escape, -2 out too small. json_int: 0 ok, -1 not an integer, -2 out of int32
+   range (clamped). json_eq: 1 equal, 0 not. */
 ```
+Test: `python3 tests/native/json_data.py` (references from Python's json module), then
+`run.py json`, `run.py json fuzz [N] [seed]`, `run.py json bench`.
