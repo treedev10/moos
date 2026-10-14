@@ -290,24 +290,41 @@ def insert_fs_region(image, region):
 
 
 # ------------------------------------------------------------------- build
+def check_room(what, kernel):
+    """The kernel header says where the kernel's variables end and how far
+    they may go (below the stack); stop if they do not fit."""
+    bss_end, limit = struct.unpack_from("<II", kernel, 8 + 36)
+    if bss_end > limit:
+        sys.exit("error: the %s's code and variables (%d KB) go past its limit (%d KB)"
+                 % (what, bss_end >> 10, limit >> 10))
+
+
 def build(fresh):
     os.makedirs(BUILD, exist_ok=True)
     nasm = nasm_path()
     boot = assemble(nasm, "src/boot.asm", "build/boot.bin")
     assert len(boot) == SECTOR, "the boot sector must be exactly 512 bytes"
-    kernel = assemble(nasm, "src/kernel.asm", "build/kernel.bin")
-    moved = assemble(nasm, "src/kernel.asm", "build/kernel-moved.bin", ["KORG=%#x" % KERNEL_ORG2])
+    # Two kernels: the BIOS one (text only, must fit the reserved sectors)
+    # and the full one for UEFI PCs (desktop, browser, media), which goes
+    # inside BOOTX64.EFI. The full one is assembled twice, at two addresses,
+    # to find the places the UEFI loader must adjust.
+    bios_kernel = assemble(nasm, "src/kernel.asm", "build/kernel-bios.bin")
+    if len(bios_kernel) > L["PART_KERNEL_SECTS"] * SECTOR:
+        sys.exit("error: the BIOS kernel is bigger than the room reserved for it")
+    check_room("BIOS kernel", bios_kernel)
+    kernel = assemble(nasm, "src/kernel.asm", "build/kernel.bin", ["FULL"])
+    moved = assemble(nasm, "src/kernel.asm", "build/kernel-moved.bin",
+                     ["FULL", "KORG=%#x" % KERNEL_ORG2])
     os.remove(os.path.join(BUILD, "kernel-moved.bin"))
     relocs = find_relocations(kernel, moved, KERNEL_ORG2 - KERNEL_ORG)
     with open(os.path.join(BUILD, "kernel.rel"), "wb") as f:
         f.write(struct.pack("<I", len(relocs)) + b"".join(struct.pack("<I", r) for r in relocs))
-    if len(kernel) > L["PART_KERNEL_SECTS"] * SECTOR:
-        sys.exit("error: the kernel is bigger than the room reserved for it")
+    check_room("UEFI kernel", kernel)
     efi = assemble(nasm, "efi/loader.asm", "build/BOOTX64.EFI")
 
     partition = make_fat16(PART_SECTORS, L["PART_RESERVED"], PART_START,
                            {"EFI/BOOT/BOOTX64.EFI": efi},
-                           {L["PART_KERNEL_LBA"]: kernel})
+                           {L["PART_KERNEL_LBA"]: bios_kernel})
     image = bytearray(DISK_SECTORS * SECTOR)
     image[0:SECTOR] = make_mbr(boot, PART_START, PART_SECTORS)
     image[PART_START * SECTOR:] = partition
@@ -323,7 +340,8 @@ def build(fresh):
         f.write(image)
 
     print("MOOS built: %s (%d MB)" % (os.path.relpath(IMAGE, ROOT), len(image) >> 20))
-    print("  kernel        %6d bytes (%d addresses adjusted by the UEFI loader)" % (len(kernel), len(relocs)))
+    print("  BIOS kernel   %6d bytes (text system)" % len(bios_kernel))
+    print("  UEFI kernel   %6d bytes (everything; %d addresses adjusted by the loader)" % (len(kernel), len(relocs)))
     print("  BOOTX64.EFI   %6d bytes (UEFI loader + kernel)" % len(efi))
     print("  starts on     BIOS PCs (boot sector) and UEFI PCs (\\EFI\\BOOT\\BOOTX64.EFI)")
     print("  disk          %s" % ("your saved files were kept" if kept else "empty file system (created on first start)"))

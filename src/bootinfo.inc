@@ -21,6 +21,8 @@ struc KH
     .gdt        resd 1              ; buffer for the GDT under UEFI
     .gdtmax     resd 1              ; its size
     .stack      resd 1              ; offset of the stack top
+    .bssend     resd 1              ; offset of the end of the variables
+    .limit      resd 1              ; how far code + variables may go
 endstruc
 
 ; ---- boot information

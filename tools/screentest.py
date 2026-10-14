@@ -14,6 +14,9 @@ Options
     --nic MODEL     the emulated network card: rtl8139 (default), e1000,
                     e1000e, virtio-net-pci, ...; "none" for no card
     --mem MB        memory size
+    --audio FILE    add an Intel HD Audio card (and its output) and record
+                    what MOOS plays into FILE (a .wav)
+    --ac97 FILE     the same with an AC'97 card
 
 STEP is either text to type (use \\n for Enter) or a command:
     @screen         print the screen (MOOS's own copy of it, found in memory)
@@ -66,7 +69,7 @@ def kernel_symbols(names):
         with open(wrap, 'w') as f:
             f.write('[map symbols %s]\n%%include "src/kernel.asm"\n'
                     % os.path.join(tmp, 'k.map').replace('\\', '/'))
-        subprocess.run(['nasm', '-f', 'bin', '-w-error=label-redef-late', wrap,
+        subprocess.run(['nasm', '-f', 'bin', '-w-error=label-redef-late', '-DFULL', wrap,
                         '-o', os.path.join(tmp, 'k.bin')], cwd=ROOT, check=True)
         found = {}
         for line in open(os.path.join(tmp, 'k.map')):
@@ -123,6 +126,13 @@ class Gdb:
         self.go()
         if reply != b'OK':
             raise RuntimeError('gdbstub write failed: %r' % reply)
+
+
+def free_port():
+    """A TCP port nobody uses now (so several tests can run at once)."""
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
 
 
 def key_for(ch):
@@ -214,6 +224,7 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8')
     args = sys.argv[1:]
     image, drive, extra, uefi, mem, nic = IMAGE, None, '', False, None, 'rtl8139'
+    audio = None
     while args and args[0].startswith('--'):
         opt = args.pop(0)
         if opt == '--uefi':
@@ -228,6 +239,8 @@ def main():
             mem = int(args.pop(0))
         elif opt == '--nic':
             nic = args.pop(0)
+        elif opt in ('--audio', '--ac97'):
+            audio = (opt, os.path.abspath(args.pop(0)))
         else:
             sys.exit('unknown option ' + opt)
     mem = mem or (256 if uefi else 32)
@@ -235,8 +248,8 @@ def main():
     tmpdir = tempfile.mkdtemp(prefix='moostest')
     disk = os.path.join(tmpdir, 'disk' + os.path.splitext(image)[1])
     shutil.copy(image, disk)
-    port = 45454
-    gdb_port = 45455
+    port = free_port()
+    gdb_port = free_port()
     want_ptr = any(a.startswith(('@ptr=', '@wheel=')) for a in args)
     cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
@@ -245,6 +258,10 @@ def main():
         syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
         cmd += ['-gdb', 'tcp:127.0.0.1:%d' % gdb_port]
     gdb = None
+    if audio:
+        dev = ['-device', 'intel-hda', '-device', 'hda-output,audiodev=snd0'] \
+            if audio[0] == '--audio' else ['-device', 'AC97,audiodev=snd0']
+        cmd += ['-audiodev', 'wav,id=snd0,path=%s' % audio[1]] + dev
     if nic == 'none':
         cmd += ['-nic', 'none']         # (else QEMU adds an e1000 by itself)
     else:

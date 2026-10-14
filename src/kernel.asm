@@ -25,8 +25,15 @@
 ;    0x101000  file system data cache (32 slots x 4 KB)
 ;    0x200000  scratch buffer (64 KB) - text being written / copied / edited
 ;    0x210000  output buffer (60 KB) - text shown by the pager
-;    0x220000  network buffers, downloads, the desktop's back buffer, HTTPS
-;    0x7E0000  the web browser's pages, layout and history (2 MB)
+;    0x220000  network buffers, downloads, HTTPS
+;
+;  Two kernels are built from this source:
+;    BIOS  (the boot sector loads it): the text system, in the map above. It
+;          has to fit the 256 KB reserved for it, and below the stack.
+;    FULL  (inside BOOTX64.EFI, UEFI only): everything, including the
+;          desktop, the browser and the media players. It has much more
+;          room (see FULL below); big buffers (video, pictures) are asked
+;          from the UEFI firmware while MOOS runs (big_alloc, efi.asm).
 ; =============================================================================
 bits 32
 %ifndef KORG
@@ -39,22 +46,47 @@ org KORG
 
 %define KV(a) (kbase + ((a) - 0x10000))
 
+%ifdef FULL
+; FULL (UEFI) kernel: code + variables may use 0x010000 - 0x400000 (4 MB),
+; the stack is below 0x480000; the buffers follow.
+STACK_OFF    equ 0x480000
+%define STACK_TOP    KV(0x480000)
+%define UEFI_BOUNCE  KV(0x480000)    ; disk transfers through the firmware (64K)
+BOUNCE_OFF   equ 0x480000
+%define FS_DIR       KV(0x500000)
+%define FS_DATA      KV(0x501000)
+%define SCRATCH      KV(0x600000)
+%define OUTBUF       KV(0x610000)
+%define NET_BUF      KV(0x620000)    ; NIC DMA buffers + network scratch (64K)
+%define PKG_BUF      KV(0x630000)    ; downloads (4M)
+%define GUI_BB       KV(0xA30000)    ; GUI back buffer (up to 1280x1024x4 = 5M)
+%define NET_RING     KV(0xF30000)    ; NIC receive ring: 32K + wrap room
+%define TLS_BASE     KV(0xF40000)    ; HTTPS buffers (128K, see tls.asm)
+%define BR_BASE      KV(0xF60000)    ; web browser (2M, see html.asm)
+KMEM_END     equ 0x1160000
+KERNEL_LIMIT equ 0x400000           ; (build.py checks the kernel fits)
+PKG_BUF_SIZE equ 0x400000
+%else
+; BIOS kernel: the classic map, all below 8 MB
+STACK_OFF    equ 0x90000
 %define STACK_TOP    KV(0x90000)
 %define UEFI_BOUNCE  KV(0xA0000)
+BOUNCE_OFF   equ 0xA0000
 %define FS_DIR       KV(0x100000)
 %define FS_DATA      KV(0x101000)
 %define SCRATCH      KV(0x200000)
 %define OUTBUF       KV(0x210000)
 %define NET_BUF      KV(0x220000)    ; NIC DMA buffers + network scratch (64K)
 %define PKG_BUF      KV(0x230000)    ; downloaded package (512K, under KMEM)
-%define GUI_BB       KV(0x2B0000)    ; GUI back buffer (up to 1280x1024x4 = 5M)
 %define NET_RING     KV(0x7B0000)    ; NIC receive ring: 32K + wrap room
 %define TLS_BASE     KV(0x7C0000)    ; HTTPS buffers (128K, see tls.asm)
-%define BR_BASE      KV(0x7E0000)    ; web browser (2M, see html.asm)
+KMEM_END     equ 0x7E0000
+KERNEL_LIMIT equ 0x80000            ; (below the stack's last 64 KB)
+PKG_BUF_SIZE equ 0x80000
+%endif
 SCRATCH_SIZE equ 0x10000
 OUTBUF_SIZE  equ 0xF000
-PKG_BUF_SIZE equ 0x80000
-KMEM_SIZE    equ 0x9E0000 - 0x10000 ; everything above, from kbase
+KMEM_SIZE    equ KMEM_END - 0x10000 ; everything above, from kbase
 
 VGA_MEM      equ screen_buf         ; all drawing goes to this copy of the
 SCR_COLS     equ 80                 ; screen; screen_present shows it
@@ -78,7 +110,9 @@ kernel_header:                      ; read by the UEFI loader
     dd efi_tick - kbase
     dd uefi_gdt - kbase
     dd UEFI_GDT_MAX
-    dd 0x90000 - 0x10000
+    dd STACK_OFF - 0x10000
+    dd bss_end - kbase              ; (for build.py: where the variables end)
+    dd KERNEL_LIMIT - 0x10000       ; (... and how far they may go)
 
 ; ---------------------------------------------------------------- BIOS start
 kernel_entry_bios:
@@ -175,8 +209,12 @@ zero_bss:
 %include "src/cmd_apt.asm"
 %include "src/cmd_login.asm"
 %include "src/script.asm"
+%ifdef FULL
 %include "src/gfx.asm"
 %include "src/gui.asm"
+%else
+%include "src/lite.asm"               ; (the BIOS kernel has no desktop)
+%endif
 %include "src/calc.asm"
 %include "src/editor.asm"
 %include "src/installer.asm"

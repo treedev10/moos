@@ -201,6 +201,129 @@ efi_mouse_init:
     mov [mouse_y], eax
     ret
 
+; ------------------------------------------------------- big memory
+; Video, pictures and sound need far more memory than the kernel's fixed
+; map has. On UEFI PCs it is asked from the firmware while MOOS runs: any
+; size, in whole 4 KB pages, below 4 GB (MOOS is 32-bit), cleared. Each
+; block is noted with its owner (an app number or OWN_*) so the Task
+; Manager can show who uses what.
+BIG_MAX     equ 64                      ; blocks at the same time
+OWN_SYSTEM  equ 0                       ; owners: 1-15 are desktop apps,
+OWN_SOUND   equ 16                      ; these the rest of the system
+OWN_NET     equ 17
+OWN_MEDIA   equ 18
+OWN_IMAGES  equ 19
+
+section .bss
+alignb 4
+big_addr    resd BIG_MAX                ; the blocks: where, how big, whose
+big_size    resd BIG_MAX
+big_owner   resd BIG_MAX
+big_total   resd 1                      ; bytes in use
+section .text
+
+; big_alloc: ECX = bytes, EDX = owner -> EAX = the block (4 KB aligned,
+; cleared), 0 if there is no such memory (or this is not a UEFI PC)
+big_alloc:
+    pushad
+    cmp dword [bootinfo + BI.platform], PLATFORM_UEFI
+    jne .fail
+    test ecx, ecx
+    jz .fail
+    xor esi, esi                        ; a free slot in the table
+.slot:
+    cmp dword [big_addr + esi * 4], 0
+    je .have_slot
+    inc esi
+    cmp esi, BIG_MAX
+    jb .slot
+    jmp .fail
+.have_slot:
+    lea ebx, [ecx + 4095]
+    shr ebx, 12                         ; EBX = pages
+    mov eax, efi_allocpages64
+    call efi64
+    test eax, eax
+    jz .fail
+    mov [big_addr + esi * 4], eax
+    mov ecx, ebx
+    shl ecx, 12
+    mov [big_size + esi * 4], ecx
+    mov [big_owner + esi * 4], edx
+    add [big_total], ecx
+    mov edi, eax                        ; clear it
+    shr ecx, 2
+    push eax
+    xor eax, eax
+    rep stosd
+    pop eax
+    mov [esp + 28], eax                 ; (EAX after popad)
+    popad
+    ret
+.fail:
+    popad
+    xor eax, eax
+    ret
+
+; big_free: EAX = a block from big_alloc -> given back to the firmware
+big_free:
+    pushad
+    test eax, eax
+    jz .done
+    xor esi, esi
+.find:
+    cmp [big_addr + esi * 4], eax
+    je .found
+    inc esi
+    cmp esi, BIG_MAX
+    jb .find
+    jmp .done
+.found:
+    mov ebx, eax                        ; EBX = address, ECX = pages
+    mov ecx, [big_size + esi * 4]
+    sub [big_total], ecx
+    shr ecx, 12
+    mov dword [big_addr + esi * 4], 0
+    mov eax, efi_freepages64
+    call efi64
+.done:
+    popad
+    ret
+
+; big_free_owner: EDX = owner -> every block of that owner is given back
+big_free_owner:
+    pushad
+    xor esi, esi
+.l: mov eax, [big_addr + esi * 4]
+    test eax, eax
+    jz .n
+    cmp [big_owner + esi * 4], edx
+    jne .n
+    call big_free
+.n: inc esi
+    cmp esi, BIG_MAX
+    jb .l
+    popad
+    ret
+
+; big_owned: EDX = owner -> EAX = bytes that owner has
+big_owned:
+    push ecx
+    push esi
+    xor eax, eax
+    xor esi, esi
+.l: cmp dword [big_addr + esi * 4], 0
+    je .n
+    cmp [big_owner + esi * 4], edx
+    jne .n
+    add eax, [big_size + esi * 4]
+.n: inc esi
+    cmp esi, BIG_MAX
+    jb .l
+    pop esi
+    pop ecx
+    ret
+
 ; efi_mouse_poll: refresh mouse_x / mouse_y / mouse_btn from the device
 efi_mouse_poll:
     cmp byte [mouse_ok], 0
@@ -232,6 +355,36 @@ bits 64
 efi_tick:
     inc dword [rel ticks]
     ret
+
+; efi_allocpages64: EBX = pages -> EAX = their address (below 4 GB), 0 if
+; the firmware has none
+efi_allocpages64:
+    ENTER64
+    mov eax, 0xFFFFFFFF                 ; the highest address allowed
+    mov [rel efi_tmp], rax
+    mov rax, [rel bootinfo + BI.bs]
+    mov ecx, 1                          ; AllocateMaxAddress
+    mov edx, 2                          ; EfiLoaderData
+    mov r8d, ebx
+    lea r9, [rel efi_tmp]
+    call [rax + 40]                     ; AllocatePages
+    test rax, rax
+    jnz .no
+    mov rax, [rel efi_tmp]
+    LEAVE64
+.no:
+    xor eax, eax
+    LEAVE64
+
+; efi_freepages64: EBX = address, ECX = pages -> given back
+efi_freepages64:
+    ENTER64
+    mov edx, ecx
+    mov ecx, ebx
+    mov rax, [rel bootinfo + BI.bs]
+    call [rax + 48]                     ; FreePages
+    xor eax, eax
+    LEAVE64
 
 ; efi_readkey64: -> EAX = scan code << 16 | character, 0 if no key arrived
 ; within about half a second
@@ -296,7 +449,7 @@ efi_disk64:
     jz .error
     cmp ebx, 2
     je .flush
-    lea rdi, [rel kbase + 0x90000]      ; UEFI_BOUNCE
+    lea rdi, [rel kbase + BOUNCE_OFF - 0x10000]      ; UEFI_BOUNCE
     cmp ebx, 1
     jne .read
     mov rsi, r15                        ; write: copy into the bounce buffer
@@ -307,7 +460,7 @@ efi_disk64:
     mov edx, [rax]                      ; MediaId
     mov r8, r14
     mov r9, r13
-    lea rax, [rel kbase + 0x90000]
+    lea rax, [rel kbase + BOUNCE_OFF - 0x10000]
     mov [rsp + 32], rax
     call [r12 + 32]                     ; WriteBlocks
     test rax, rax
@@ -319,12 +472,12 @@ efi_disk64:
     mov edx, [rax]
     mov r8, r14
     mov r9, r13
-    lea rax, [rel kbase + 0x90000]
+    lea rax, [rel kbase + BOUNCE_OFF - 0x10000]
     mov [rsp + 32], rax
     call [r12 + 24]                     ; ReadBlocks
     test rax, rax
     jnz .error
-    lea rsi, [rel kbase + 0x90000]
+    lea rsi, [rel kbase + BOUNCE_OFF - 0x10000]
     mov rdi, r15
     mov rcx, r13
     rep movsb
