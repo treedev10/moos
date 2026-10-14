@@ -176,6 +176,7 @@ zero_bss:
 %include "src/mp4.asm"
 %include "src/json.asm"
 %include "src/aac.asm"
+%include "src/sound.asm"
 %else
 %include "src/lite.asm"
 %endif

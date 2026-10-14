@@ -394,8 +394,13 @@ efi_mouse_poll:
 bits 64
 
 ; efi_tick: timer callback, called by the firmware 100 times a second
+; (it interrupts whatever MOOS is doing). In the full kernel it also keeps
+; a playing sound card's ring silent behind the card (sound.asm).
 efi_tick:
     inc dword [rel ticks]
+%ifdef FULL
+    call snd_sync64
+%endif
     ret
 
 ; efi_allocpages64: EBX = pages -> EAX = their address (below 4 GB), 0 if

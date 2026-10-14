@@ -51,6 +51,7 @@ cmd_table:
     COMMAND "color",    cmd_color,    "change screen colours",      man_color
     COMMAND "time",     cmd_time,     "show date and time",         man_time
     COMMAND "clock",    cmd_clock,    "clock settings, time sync",  man_clock
+    COMMAND "sound",    cmd_sound,    "sound card status and test", man_sound
     COMMAND "net",      cmd_net,      "connect to the network",     man_net
     COMMAND "apt",      cmd_apt_top,  "install packages",           man_apt
     COMMAND "get",      cmd_get,      "download a web page (https)", man_get

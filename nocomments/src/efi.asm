@@ -347,6 +347,9 @@ bits 64
 
 efi_tick:
     inc dword [rel ticks]
+%ifdef FULL
+    call snd_sync64
+%endif
     ret
 
 efi_allocpages64:

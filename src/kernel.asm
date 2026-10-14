@@ -220,6 +220,7 @@ zero_bss:
 %include "src/mp4.asm"                ; MP4 demuxer (self-contained module)
 %include "src/json.asm"               ; JSON tokenizer (self-contained module)
 %include "src/aac.asm"                ; AAC-LC audio decoder (self-contained module)
+%include "src/sound.asm"              ; sound cards (HDA, AC'97)
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)
 %endif
