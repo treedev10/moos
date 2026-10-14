@@ -339,6 +339,17 @@ def edge_cases():
               "[1,,2]", "]", "}", ":", ",", "[\x0b1]", "\x0c[]", "[1]\x00", '"\\U0041"', '"\\u"x',
               "0x10", "1_000", "[1;2]", "/*c*/1", "1//c"]:
         add(s, "-1")
+    # every control byte inside a string is refused, wherever it is: in the
+    # 16-byte SSE scan (early in a long string) and in the byte-by-byte tail;
+    # space, DEL and the bytes around 0x1F / 0x20 are fine
+    for c in range(0x20):
+        ch = chr(c)
+        for s in ['"' + ch + "a" * 40 + '"', '"' + "a" * 7 + ch + "a" * 30 + '"',
+                  '"' + "a" * 15 + ch + "a" * 30 + '"', '"ab' + ch + '"', '"' + ch + '"',
+                  '["' + "a" * 20 + ch + 'b"]', '{"k' + ch + '":1}']:
+            add(s, "-1")
+    for s in ['"' + " " * 40 + '"', '"' + "\x7f" * 40 + '"', '"' + "!\x7f ~" * 10 + '"', '" \x7f"']:
+        add(s)
     for s in ["", " ", "\n\t\r ", "[", "{", '{"a"', '{"a":', '{"a":1', '{"a":1,', '{"a":1,"b"',
               "[1", "[1,", '"', '"abc', '"\\', '"\\u', '"\\u00', '"\\u004', "-", "1e", "1e+", "1.",
               "-0.", "t", "tr", "tru", "n", "nu", "nul", "f", "fa", "fal", "fals", "[" * 1000,
