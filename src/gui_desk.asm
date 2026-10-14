@@ -35,7 +35,7 @@ IV_FILES    equ 1
 CELL_W      equ 96                  ; one icon with its name
 CELL_H      equ 84
 LBL_MAX     equ 11                  ; characters of a name shown under an icon
-RN_W        equ FS_NAME_MAX * 8 + 12    ; the rename box
+RN_W        equ FS_NAME_MAX * 8 + 12    ; the rename box: at most this wide
 RN_H        equ 20
 DC_TICKS    equ 50                  ; a double click: within half a second
 FT_H        equ 36                  ; the Files app: toolbar height,
@@ -100,6 +100,10 @@ rn_len      resd 1
 rn_cur      resd 1                  ; the text cursor
 rn_all      resd 1                  ; 1 = the whole name is selected
 rn_bx       resd 1                  ; where the edit box was drawn
+rn_w        resd 1                  ; (and how wide: it grows with the name)
+rn_cx       resd 1                  ; the cell of the icon being renamed
+rn_cy       resd 1                  ; (iv_draw: the box goes on top last)
+rn_seen     resd 1
 rn_by       resd 1
 rn_buf      resb 24
 ni_kind     resd 1                  ; (new_item: 0 folder, 1 file,
@@ -897,9 +901,14 @@ dk_cut:
     mov ecx, LBL_MAX - 3
     call mem_copy
     add edi, ecx
+    cmp byte [edi - 1], '.'         ; ("name...." would read badly)
+    jne .dots
+    dec edi
+.dots:
     mov esi, dk_dots
     call str_copy
-    mov ecx, LBL_MAX
+    mov esi, dk_lbl                 ; (its length now)
+    call str_len
 .r: pop edi
     pop esi
     ret
@@ -910,6 +919,7 @@ iv_draw:
     mov [iv_v], ebp
     mov dword [gfx_scale], 1
     mov dword [iv_p], 0
+    mov dword [rn_seen], 0
 .l: mov ebp, [iv_v]
     mov ecx, [iv_p]
     cmp ecx, [iv_n + ebp * 4]
@@ -964,7 +974,11 @@ iv_draw:
     mov eax, [iv_e]
     cmp eax, [rn_entry]
     jne .name
-    call rn_draw
+    mov eax, [iv_cx]                ; (drawn after the others, on top)
+    mov [rn_cx], eax
+    mov eax, [iv_cy]
+    mov [rn_cy], eax
+    mov dword [rn_seen], 1
     jmp .next
 .name:
     mov ebx, [iv_e]
@@ -990,7 +1004,11 @@ iv_draw:
     inc dword [iv_p]
     jmp .l
 .done:
-    popad
+    cmp dword [rn_seen], 0          ; the rename box, over the neighbours
+    je .r
+    mov ebp, [iv_v]
+    call rn_draw
+.r: popad
     ret
 
 ; iv_open: EBP = view, EBX = entry -> open it: a folder in Files (the
@@ -1388,29 +1406,47 @@ rn_start:
     popad
     ret
 
-; rn_draw: the edit box for the cell at iv_cx / iv_cy
+; rn_draw: EBP = view -> the edit box under the icon at rn_cx / rn_cy: as
+; wide as the name needs (at least the cell), kept inside the view's area
 rn_draw:
     pushad
-    mov ecx, [iv_cx]
-    add ecx, CELL_W / 2 - RN_W / 2
-    cmp ecx, 2                      ; (kept on the screen)
-    jge .l
-    mov ecx, 2
-.l: mov eax, [gfx_w]
-    sub eax, RN_W + 2
+    mov eax, [rn_len]               ; the width
+    shl eax, 3
+    add eax, 18
+    cmp eax, CELL_W - 8
+    jge .wmin
+    mov eax, CELL_W - 8
+.wmin:
+    cmp eax, RN_W
+    jle .wmax
+    mov eax, RN_W
+.wmax:
+    mov [rn_w], eax
+    shr eax, 1                      ; centred under the icon ...
+    mov ecx, [rn_cx]
+    add ecx, CELL_W / 2
+    sub ecx, eax
+    mov eax, [iv_x + ebp * 4]       ; ... but not out of the view
+    add eax, [iv_w + ebp * 4]
+    sub eax, [rn_w]
     cmp ecx, eax
     jle .r
     mov ecx, eax
-.r: mov [rn_bx], ecx
-    mov edx, [iv_cy]
+.r: cmp ecx, [iv_x + ebp * 4]
+    jge .l
+    mov ecx, [iv_x + ebp * 4]
+.l: mov [rn_bx], ecx
+    mov edx, [rn_cy]
     add edx, 46
     mov [rn_by], edx
-    RECT [rn_bx], [rn_by], RN_W, RN_H, 0x8FC3EA
+    RECT [rn_bx], [rn_by], [rn_w], RN_H, 0x8FC3EA
     mov ecx, [rn_bx]
     inc ecx
     mov edx, [rn_by]
     inc edx
-    RECT ecx, edx, RN_W - 2, RN_H - 2, 0xFFFFFF
+    mov esi, [rn_w]
+    sub esi, 2
+    RECT ecx, edx, esi, RN_H - 2, 0xFFFFFF
     mov ebx, 0x101418               ; the text colour
     cmp dword [rn_all], 0
     je .text
@@ -1451,7 +1487,7 @@ rn_in_box:
     mov eax, [mouse_x]
     sub eax, [rn_bx]
     jl .no
-    cmp eax, RN_W
+    cmp eax, [rn_w]
     jge .no
     mov ecx, [mouse_y]
     sub ecx, [rn_by]
@@ -1977,9 +2013,10 @@ files_open_at:
 files_init:
     ret
 
-; files_title: -> ESI = "Files - /the/folder"
+; files_title: -> ESI = "Files - /the/folder" (other registers kept)
 files_title:
     push eax
+    push ecx
     push edi
     mov edi, fa_title
     mov esi, fa_s_files
@@ -1990,6 +2027,7 @@ files_title:
     call fs_path
     mov esi, fa_title
     pop edi
+    pop ecx
     pop eax
     ret
 

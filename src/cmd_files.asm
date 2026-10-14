@@ -236,6 +236,7 @@ cmd_ls:
 ls_line:
     pushad
     mov eax, [edi + DE_MTIME]
+    mov ebp, eax                    ; (0: the date is not known)
     call unpack_mtime
     test byte [edi + DE_FLAGS], FLAG_DIR
     jnz .folder
@@ -249,7 +250,13 @@ ls_line:
     call str_append
     PRINTF `  \x01b%20s\x01n   folder  `, edi
 .date:
+    test ebp, ebp                   ; no date known: "-"
+    jnz .dated
+    PRINTF `-\n`
+    jmp .done
+.dated:
     PRINTF `%d-%02d-%02d %02d:%02d\n`, dword [dt_year], dword [dt_mon], dword [dt_day], dword [dt_hour], dword [dt_min]
+.done:
     popad
     ret
 

@@ -365,8 +365,14 @@ app_text_draw:
     mov ebp, -1
     pop edx
     call gfx_text
-    mov ecx, [ta_x]
-    add ecx, 8 * 14
+    call str_len                    ; the hint after the name (a path can be
+    add ecx, 3                      ; long), at least 14 columns in
+    cmp ecx, 14
+    jae .hx
+    mov ecx, 14
+.hx:
+    shl ecx, 3
+    add ecx, [ta_x]
     mov esi, edit_hint
     cmp dword [txd_app], APP_IDE
     jne .h

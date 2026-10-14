@@ -783,13 +783,16 @@ mb_layout:
 ; mb_close: CF=0 OK was pressed (its action runs), CF=1 Cancel
 mb_close:
     pushad
-    mov dword [mb_open], 0
-    or byte [gui_dirty], 1
-    jc .done
+    mov dword [mb_open], 0          ; (mov keeps CF; the "or" below would
+    jc .shut                        ; clear it, so test it first)
     mov eax, [mb_action]
+    or byte [gui_dirty], 1
     test eax, eax
     jz .done
     call gui_action
+    jmp .done
+.shut:
+    or byte [gui_dirty], 1
 .done:
     popad
     ret
