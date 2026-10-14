@@ -29,7 +29,9 @@
 ;  wants them click, hover, wheel and drag. Two more hooks:
 ;    tick  called every round of the desktop's loop while its window is
 ;          open (even minimized): for work in the background, such as a
-;          player feeding the sound card. Keep each call short.
+;          player feeding the sound card. Keep each call short, and return
+;          CF=1 when it did something (its time counts as the app's CPU
+;          use then; a tick that only looked counts as idle polling).
 ;    end   "End task" in the Task Manager: let go of everything (stop
 ;          sound, forget big blocks - the Task Manager then gives back
 ;          whatever big blocks the app still owns, by its app number).
@@ -692,18 +694,29 @@ wm_draw:
     call gfx_clip_full
     ; the content, drawn by the app inside its box
     mov eax, [wd_app]
+    call wm_draw_content
+    popad
+    ret
+
+; wm_draw_content: EAX = app -> its content box (cb_*): the background,
+; then the app draws itself, clipped to the box and kept above the taskbar,
+; then the resize grip over its bottom-right corner
+wm_draw_content:
+    pushad
+    mov ebx, eax
     call wm_content
-    RECT [cb_x], [cb_y], [cb_w], [cb_h], C_WIN_BG
     mov ecx, [cb_x]
     mov edx, [cb_y]
     mov esi, [cb_w]
     mov edi, [cb_h]
     call gfx_clip_set
-    mov eax, [wd_app]
+    call wd_clip_desk
+    RECT [cb_x], [cb_y], [cb_w], [cb_h], C_WIN_BG
+    mov eax, ebx
     call app_draw
     call gfx_clip_full
+    call wd_clip_desk
     ; the resize grip: a triangle of dots in the bottom-right corner
-    mov ebx, [wd_app]
     test dword [wn_f + ebx * 4], WF_MAX
     jnz .done
     mov eax, 0x8A9AAA
@@ -724,6 +737,59 @@ wm_draw:
     inc ebp
     cmp ebp, 6
     jb .grip
+.done:
+    call gfx_clip_full
+    popad
+    ret
+
+; wd_clip_desk: narrow the clip rectangle to the desktop above the taskbar
+wd_clip_desk:
+    pushad
+    xor ecx, ecx
+    xor edx, edx
+    mov esi, [gfx_w]
+    mov edi, [gfx_h]
+    sub edi, TASKBAR_H
+    call gfx_clip_and
+    popad
+    ret
+
+; gui_content_dirty: EAX = app -> its content has changed and must be drawn
+; again. If its window is the top one on the screen, only its content box
+; is redrawn (gui_dirty bit 4), which is much cheaper than the whole
+; desktop; otherwise everything is (bit 1). Nothing if it is minimized.
+; (For apps whose drawing stays inside the clip rectangle wm_draw_content
+; gives them, like the Task Manager.)
+gui_content_dirty:
+    pushad
+    test dword [wn_f + eax * 4], WF_OPEN
+    jz .done
+    test dword [wn_f + eax * 4], WF_MIN
+    jnz .done
+    cmp dword [drag_mode], DRAG_NONE
+    jne .full                       ; (moving / resizing: all of it)
+    cmp dword [kmode], 0
+    jne .full
+    mov ecx, [z_n]                  ; the top window that is shown
+.top:
+    test ecx, ecx
+    jz .full
+    dec ecx
+    mov edx, [z_list + ecx * 4]
+    test dword [wn_f + edx * 4], WF_MIN
+    jnz .top
+    cmp edx, eax
+    jne .full                       ; (another window may cover part of it)
+    test byte [gui_dirty], 4
+    jz .set
+    cmp [gui_dirty_app], eax
+    jne .full
+.set:
+    mov [gui_dirty_app], eax
+    or byte [gui_dirty], 4
+    jmp .done
+.full:
+    or byte [gui_dirty], 1
 .done:
     popad
     ret
@@ -850,10 +916,12 @@ app_key:
     jmp editor_app_key
 
 ; app_tick: EAX = app, once every round of the desktop's loop while its
-; window is open (the caller, gui_app_ticks, charges the time)
+; window is open -> CF=1 if the app did some work (the caller,
+; gui_app_ticks, charges the time to the app then, and to idle otherwise)
 app_tick:
     cmp eax, APP_TASKS
     je tasks_tick
+    clc                             ; (the other apps have nothing to do)
     ret
 
 ; app_end: EAX = app, before the Task Manager ends it (none of the
@@ -1137,6 +1205,8 @@ gui_wheel:
     jz .done
     mov dword [mouse_wheel], 0
     call wm_hit
+    cmp eax, APP_TASKS
+    je .tasks
     cmp eax, APP_BROWSER
     jne .done
     call wm_content
@@ -1146,6 +1216,11 @@ gui_wheel:
 .done:
     popad
     ret
+.tasks:
+    call wm_content
+    mov eax, ecx
+    APP_CALL APP_TASKS, tasks_wheel
+    jmp .done
 
 ; gui_taskbar_click: a taskbar button opens its app, brings it up, or
 ; minimizes it if it already has the focus. Quit leaves the desktop.

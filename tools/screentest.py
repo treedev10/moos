@@ -32,6 +32,9 @@ STEP is either text to type (use \\n for Enter) or a command:
                     this is how the desktop's mouse handling is tested.
                     Several in a row make a drag.
     @wheel=N        turn MOOS's mouse wheel N notches (+ = away from you)
+    @peek=NAME[,N]  print N (default 1) 32-bit numbers stored at the kernel
+                    label NAME, e.g. @peek=cpu_busy or @peek=cpu_pm,17
+                    (the full kernel, so with --uefi)
     @mon=COMMAND    run a QEMU monitor command and print its answer
     @exit           check that QEMU has exited (after "shutdown")
 
@@ -251,11 +254,19 @@ def main():
     port = free_port()
     gdb_port = free_port()
     want_ptr = any(a.startswith(('@ptr=', '@wheel=')) for a in args)
+    peeks = {a[6:].split(',')[0] for a in args if a.startswith('@peek=')}
+    syms = {}
+    if peeks:
+        syms = kernel_symbols(peeks | {'screen_magic', 'mouse_x', 'mouse_wheel'})
+        missing = peeks - set(syms)
+        if missing:
+            sys.exit('no such kernel label: ' + ', '.join(sorted(missing)))
     cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
          '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
     if want_ptr:
-        syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
+        if not syms:
+            syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
         cmd += ['-gdb', 'tcp:127.0.0.1:%d' % gdb_port]
     gdb = None
     if audio:
@@ -316,6 +327,13 @@ def main():
                     gdb.write(base + syms['mouse_x'],
                               b''.join(int(x).to_bytes(4, 'little') for x in v[:3]))
                 time.sleep(0.15)
+            elif step.startswith('@peek='):
+                name, _, count = step[6:].partition(',')
+                count = int(count or 1)
+                base = screen.addr - 16 - syms['screen_magic']
+                data = screen.dump(base + syms[name], 4 * count)
+                values = [int.from_bytes(data[i:i + 4], 'little') for i in range(0, 4 * count, 4)]
+                print('%s = %s' % (name, ' '.join(str(v) for v in values)))
             elif step == '@click':
                 mon.cmd('mouse_button 1')
                 time.sleep(0.2)

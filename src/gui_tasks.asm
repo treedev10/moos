@@ -11,11 +11,13 @@
 ;
 ;  It is measured with the time-stamp counter (RDTSC, in cycles). Every
 ;  cycle is charged to exactly one owner:
-;    CPU_IDLE   the main loop's polls of the mouse and the keyboard
+;    CPU_IDLE   the main loop's rounds in which nothing happens: polling
+;               the mouse and the keyboard, glancing at the clock, ticks
+;               that found nothing to do
 ;    1 - 15     a desktop app: everything between cpu_enter and cpu_leave
 ;               around a call into the app (init, draw, key, click, wheel,
-;               hover, drag, and the tick every app gets each round)
-;    CPU_DESK   the rest of the desktop: window manager, taskbar,
+;               hover, drag, and a tick that did some work)
+;    CPU_DESK   the rest of the desktop's work: window manager, taskbar,
 ;               wallpaper, mouse cursor, copying frames to the screen
 ;  Owners nest: cpu_enter keeps the previous owner on a small stack and
 ;  cpu_leave goes back to it (the browser redraws the whole desktop while a
@@ -38,8 +40,14 @@
 ;      firmware's memory map, efi_memmap)
 ;    - uptime and the desktop's frames per second
 ;  Keys: Up / Down pick a row, Enter brings that window to the front,
-;  Delete (or E) ends it. The layout follows the window's size: two
-;  columns when it is wide, one when it is narrow.
+;  Delete (or E) ends it; Page Up / Page Down / Home / End and the mouse
+;  wheel scroll when it does not all fit. The layout follows the window's
+;  size: two columns when it is wide, one when it is narrow, and the graphs
+;  grow into any room left at the bottom.
+;
+;  Once a second only the Task Manager's own content is drawn again and
+;  copied to the screen when its window is on top (gui_content_dirty), so
+;  watching the numbers costs little of what it measures.
 ; =============================================================================
 CPU_IDLE    equ 0                   ; owners of CPU time (see above)
 CPU_DESK    equ 16
@@ -64,6 +72,12 @@ TK_C_GRID   equ 0x1E2A36
 TK_C_FRAME  equ 0x3A4A5A
 TK_C_SEL    equ 0x24384C
 TK_C_BTN    equ 0x7A2E2E
+TK_LEFT_FIX equ 118                 ; the left column without its graphs
+TK_GH_CPU   equ 90                  ; graph heights side by side with the
+TK_GH_NET   equ 70                  ; memory list (more if there is room)
+TK_GH_CPU1  equ 64                  ; ... and in one column
+TK_GH_NET1  equ 56
+TK_GH_MAX   equ 280                 ; never taller than this
 
 section .bss
 alignb 8
@@ -99,6 +113,12 @@ tk_cx       resd 1                  ; the column being drawn
 tk_cw       resd 1
 tk_ytop     resd 1
 tk_yleft    resd 1
+tk_y0       resd 1                  ; where the content starts (scrolled)
+tk_scroll   resd 1                  ; pixels scrolled down
+tk_content_h resd 1                 ; the content's height, last drawn
+tk_mem_h    resd 1                  ; the memory list's height, last drawn
+tk_gh_cpu   resd 1                  ; the graphs' heights this time
+tk_gh_net   resd 1
 tk_wide     resd 1
 tk_full     resd 1
 tk_col_st   resd 1                  ; table columns (from tk_x)
@@ -302,6 +322,14 @@ cpu_leave:
     popfd
     ret
 
+; cpu_leave_idle: like cpu_leave, but the time since cpu_enter was only
+; polling: it is charged to idle
+cpu_leave_idle:
+    pushfd
+    mov dword [cpu_owner], CPU_IDLE
+    popfd
+    jmp cpu_leave
+
 ; cpu_sample_check: called every round of the main loop; samples once a
 ; second
 cpu_sample_check:
@@ -473,14 +501,21 @@ cpu_sample:
     ret
 
 ; gui_app_ticks: every open app's tick (a chance to work in the background,
-; e.g. a player feeding the sound card), each charged to its app
+; e.g. a player feeding the sound card), charged to the app when it did
+; something (CF=1) and to idle when it only looked
 gui_app_ticks:
     pushad
     mov eax, 1
 .l: test dword [wn_f + eax * 4], WF_OPEN
     jz .n
     call cpu_enter
+    push eax
     call app_tick
+    pop eax                         ; (keeps CF)
+    jc .worked
+    call cpu_leave_idle
+    jmp .n
+.worked:
     call cpu_leave
 .n: inc eax
     cmp eax, NAPPS
@@ -493,23 +528,28 @@ gui_app_ticks:
 tasks_init:
     mov dword [tk_sel], 0
     mov dword [tk_rows], 0
+    mov dword [tk_scroll], 0
+    mov dword [tk_content_h], 0
+    mov dword [tk_mem_h], 300       ; (a guess until it is drawn)
     jmp tasks_refresh
 
 ; tasks_tick: after each new sample: read the memory map again and redraw
-; (if the window can be seen)
+; (if the window can be seen) -> CF=1 if it did that
 tasks_tick:
     push eax
     mov eax, [cpu_samples]
     cmp eax, [tk_seen]
-    je .r
+    je .idle
     mov [tk_seen], eax
     call tasks_refresh
-    mov eax, [wn_f + APP_TASKS * 4]
-    and eax, WF_OPEN | WF_MIN
-    cmp eax, WF_OPEN
-    jne .r
-    or byte [gui_dirty], 1
-.r: pop eax
+    mov eax, APP_TASKS              ; (just its content, if it is on top;
+    call gui_content_dirty          ; nothing if it is minimized)
+    pop eax
+    stc
+    ret
+.idle:
+    pop eax
+    clc
     ret
 
 ; tasks_refresh: the RAM installed and free, from the firmware's map now
@@ -571,7 +611,10 @@ tasks_click:
     cmp eax, [tk_rows]
     jae .done
     mov [tk_sel], eax
-    or byte [gui_dirty], 1
+    push eax
+    mov eax, APP_TASKS
+    call gui_content_dirty
+    pop eax
     mov ecx, [mouse_x]
     sub ecx, [cb_x]
     cmp ecx, [tk_btn_x]
@@ -593,7 +636,7 @@ tasks_click:
     ret
 
 ; tasks_key: EAX = key. Up / Down pick a row, Enter brings its window to
-; the front, Delete or E ends it.
+; the front, Delete or E ends it; Page Up / Page Down / Home / End scroll.
 tasks_key:
     pushad
     mov ecx, [tk_sel]
@@ -601,6 +644,20 @@ tasks_key:
     je .up
     cmp eax, KEY_DOWN
     je .down
+    mov edx, [wn_h + APP_TASKS * 4] ; a page: the content's height, less
+    sub edx, TITLE_H + 2 + 40       ; a little to keep the place
+    cmp edx, TK_LINE
+    jge .page
+    mov edx, TK_LINE
+.page:
+    cmp eax, KEY_PGUP
+    je .pgup
+    cmp eax, KEY_PGDN
+    je .pgdn
+    cmp eax, KEY_HOME
+    je .home
+    cmp eax, KEY_END
+    je .end_key
     cmp ecx, [tk_rows]
     jae .done
     mov ebx, [tk_row_app + ecx * 4]
@@ -631,9 +688,44 @@ tasks_key:
     cmp ecx, [tk_rows]
     jae .done
     mov [tk_sel], ecx
+    jmp .done
+.pgup:
+    neg edx
+.pgdn:
+    mov eax, edx
+    call tk_scroll_by
+    jmp .done
+.home:
+    mov dword [tk_scroll], 0
+    jmp .done
+.end_key:
+    mov dword [tk_scroll], 0x7FFFFFF ; (drawing stops it at the end)
 .done:
-    or byte [gui_dirty], 1
+    mov eax, APP_TASKS
+    call gui_content_dirty
     popad
+    ret
+
+; tasks_wheel: EAX = wheel notches (+ = away from you: up) -> scroll three
+; lines a notch
+tasks_wheel:
+    push eax
+    imul eax, eax, -3 * TK_LINE
+    call tk_scroll_by
+    mov eax, APP_TASKS
+    call gui_content_dirty
+    pop eax
+    ret
+
+; tk_scroll_by: EAX = pixels (+ = down) -> tk_scroll, not above the top
+; (tasks_draw keeps it from going past the end)
+tk_scroll_by:
+    push eax
+    add eax, [tk_scroll]
+    jns .s
+    xor eax, eax
+.s: mov [tk_scroll], eax
+    pop eax
     ret
 
 ; -------------------------------------------------------- drawing helpers
@@ -837,12 +929,23 @@ tk_hist_max:
 tasks_draw:
     pushad
     mov dword [gfx_scale], 1
+    mov eax, [tk_content_h]         ; never scrolled past the end (as tall
+    sub eax, [cb_h]                 ; as it was last time)
+    jns .maxok
+    xor eax, eax
+.maxok:
+    cmp [tk_scroll], eax
+    jle .scrollok
+    mov [tk_scroll], eax
+.scrollok:
     mov eax, [cb_x]
     add eax, 10
     mov [tk_x], eax
     mov eax, [cb_y]
     add eax, 8
+    sub eax, [tk_scroll]
     mov [tk_y], eax
+    mov [tk_y0], eax
     mov eax, [cb_w]
     sub eax, 20
     mov [tk_w], eax
@@ -872,6 +975,7 @@ tasks_draw:
     mov [tk_cw], eax
     mov eax, [tk_y]
     mov [tk_ytop], eax
+    call tk_graph_sizes
     call tk_draw_cpu
     call tk_draw_net
     cmp dword [tk_wide], 0
@@ -888,8 +992,123 @@ tasks_draw:
     sub eax, 24
     mov [tk_cw], eax
 .stack:
+    mov ebx, [tk_y]                 ; (measure the memory list)
     call tk_draw_mem
     call tk_draw_footer
+    mov eax, [tk_y]
+    sub eax, ebx
+    mov [tk_mem_h], eax
+    ; the content's height: down to the lower column, and a margin
+    mov eax, [tk_y]
+    cmp dword [tk_wide], 0
+    je .lower
+    cmp eax, [tk_yleft]
+    jge .lower
+    mov eax, [tk_yleft]
+.lower:
+    sub eax, [tk_y0]
+    add eax, 16
+    mov [tk_content_h], eax
+    call tk_scrollbar
+    popad
+    ret
+
+; tk_graph_sizes: tk_gh_cpu / tk_gh_net = the graphs' heights for this
+; window: the usual ones, plus a share of the room left at the bottom (60%
+; to the CPU graph), up to TK_GH_MAX each. tk_y = where the CPU part starts.
+tk_graph_sizes:
+    pushad
+    mov eax, TK_GH_CPU
+    mov ebx, TK_GH_NET
+    mov ecx, TK_LEFT_FIX            ; ECX = the rest of the (left) column
+    cmp dword [tk_wide], 0
+    jne .room
+    mov eax, TK_GH_CPU1             ; one column: the memory list is
+    mov ebx, TK_GH_NET1             ; below the graphs too
+    add ecx, [tk_mem_h]
+.room:
+    mov edx, [cb_y]                 ; EDX = the room left over: from here
+    add edx, [cb_h]                 ; (unscrolled) to the bottom margin,
+    sub edx, 8                      ; less everything in the column
+    sub edx, [tk_y]
+    sub edx, [tk_scroll]
+    sub edx, ecx
+    sub edx, eax
+    sub edx, ebx
+    jle .set
+    mov esi, edx                    ; 60% to the CPU graph, the rest to
+    imul esi, esi, 6                ; the network graph
+    push eax
+    push edx
+    mov eax, esi
+    xor edx, edx
+    mov esi, 10
+    div esi
+    mov esi, eax
+    pop edx
+    pop eax
+    sub edx, esi
+    add eax, esi
+    add ebx, edx
+    cmp eax, TK_GH_MAX
+    jbe .cpu_ok
+    mov eax, TK_GH_MAX
+.cpu_ok:
+    cmp ebx, TK_GH_MAX
+    jbe .set
+    mov ebx, TK_GH_MAX
+.set:
+    mov [tk_gh_cpu], eax
+    mov [tk_gh_net], ebx
+    popad
+    ret
+
+; tk_scrollbar: when the content is taller than the window, a thin bar at
+; the right edge shows which part of it is in view
+tk_scrollbar:
+    pushad
+    mov ebx, [tk_content_h]         ; EBX = content height
+    mov ebp, [cb_h]                 ; EBP = window height
+    cmp ebx, ebp
+    jle .done
+    mov ecx, [cb_x]                 ; the track
+    add ecx, [cb_w]
+    sub ecx, 6
+    mov edx, [cb_y]
+    add edx, 2
+    mov esi, 4
+    lea edi, [ebp - 4]
+    mov eax, TK_C_GRID
+    call tk_rect
+    mov eax, edi                    ; the thumb: as tall as the part in
+    mul ebp                         ; view, at least 16
+    div ebx
+    cmp eax, 16
+    jge .th
+    mov eax, 16
+.th:
+    push eax
+    sub edi, eax                    ; EDI = the track's free length
+    mov eax, edi
+    mul dword [tk_scroll]
+    mov ecx, ebx
+    sub ecx, ebp                    ; / the most it can scroll
+    div ecx
+    cmp eax, edi
+    jbe .ty
+    mov eax, edi
+.ty:
+    mov edx, [cb_y]
+    add edx, 2
+    add edx, eax
+    pop edi
+    mov ecx, [cb_x]
+    add ecx, [cb_w]
+    sub ecx, 6
+    mov esi, 4
+    mov eax, TK_C_DIM
+    call tk_rect
+.done:
     popad
     ret
 
@@ -1116,11 +1335,7 @@ tk_draw_cpu:
     mov [tk_gy], eax
     mov eax, [tk_cw]
     mov [tk_gw], eax
-    mov eax, 64
-    cmp dword [tk_wide], 0
-    je .gh
-    mov eax, 90
-.gh:
+    mov eax, [tk_gh_cpu]
     mov [tk_gh], eax
     call tk_graph_box
     mov dword [tk_gscale], 1000
@@ -1194,11 +1409,7 @@ tk_draw_net:
     mov [tk_gy], eax
     mov eax, [tk_cw]
     mov [tk_gw], eax
-    mov eax, 56
-    cmp dword [tk_wide], 0
-    je .gh
-    mov eax, 70
-.gh:
+    mov eax, [tk_gh_net]
     mov [tk_gh], eax
     call tk_graph_box
     mov ebx, cpuh_rx
