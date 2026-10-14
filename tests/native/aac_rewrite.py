@@ -16,6 +16,7 @@ identity_check), so each change below is the only difference:
   tns_high    TNS filters of order 9-12 on long windows
   pns_ms      ms_used set on noise bands of both channels of a pair
   split       eight-short-window channels: every window its own group
+  one_group   eight-short-window channels: all windows in one group
   ms_all      ms_mask_present 1 with every bit set -> ms_mask_present 2
   separate    common_window 1 without M/S -> two ics_info (common_window 0)
   cce         a coupling channel element with real spectral data, an
@@ -708,6 +709,53 @@ def split_groups(els, rnd):
     return done
 
 
+def one_group(els, rnd):
+    """eight short windows: all in one group (scale_factor_grouping 0x7F).
+    The group takes the first group's scale factors; a band is coded with
+    book 11 (which holds any value) where some window had values. Changes
+    the sound; channels with noise or intensity bands are left alone."""
+    done = 0
+    for e in els:
+        if not hasattr(e, "ch"):
+            continue
+        chans = [c for c in e.ch if c.info.seq == EIGHT_SHORT and len(c.info.glen) > 1]
+        if not chans or any(cb >= NOISE for c in chans for row in c.bt for cb in row):
+            continue
+        if e.id == CPE and e.common and len(chans) != 2:
+            continue
+        saved = [(c.info, c.bt, c.sf, c.sections) for c in chans], e.ms_used
+        new_infos = {}
+        for c in chans:
+            old = c.info
+            if id(old) not in new_infos:
+                ni = old.copy()
+                ni.grouping, ni.glen = 0x7F, [8]
+                new_infos[id(old)] = ni
+            nb = old.max_sfb
+            used = [any(c.bt[g][b] != ZERO for g in range(len(old.glen))) for b in range(nb)]
+            first = [c.sf[0][b] for b in range(nb) if c.bt[0][b] != ZERO]
+            sf, last = [], first[0] if first else c.gain
+            for b in range(nb):
+                if c.bt[0][b] != ZERO:
+                    last = c.sf[0][b]
+                sf.append(last if used[b] else 0)
+            c.info = new_infos[id(old)]
+            c.bt = [[11 if u else ZERO for u in used]]
+            c.sf = [sf]
+            c.sections = [None]
+        if e.ms_used:
+            e.ms_used = [e.ms_used[0]]
+        try:
+            for c in e.ch:
+                c.write(Writer(), e.id == CPE and e.common)
+            done += 1
+        except BadStream:
+            for c, (info, bt, sf, secs) in zip(chans, saved[0]):
+                c.info, c.bt, c.sf, c.sections = info, bt, sf, secs
+            e.ms_used = saved[1]
+    return done
+
+
 def ms_all(els, rnd):
     done = 0
     for e in els:
@@ -816,7 +864,7 @@ def cce_front(els, rnd):
 
 CHANGES = {"pulses": pulses, "tns_high": tns_high, "pns_ms": pns_ms, "split": split_groups,
            "ms_all": ms_all, "separate": separate, "as_lfe": as_lfe, "cce": cce_front,
-           "shapes": shapes}
+           "shapes": shapes, "one_group": one_group}
 
 
 def rewrite(frames, sfi, change, seed=1):

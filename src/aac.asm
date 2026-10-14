@@ -199,6 +199,8 @@ AAC_S_DSE_ALIGN equ 48              ; DSE with data_byte_align_flag
 AAC_S_EXPLICIT  equ 49              ; aac_init: explicit sampling rate
 AAC_S_PCE_CFG   equ 50              ; aac_init: channelConfiguration 0 (PCE)
 AAC_S_SBR_CFG   equ 51              ; aac_init: HE-AAC object type 5 / 29
+AAC_S_ONEGROUP  equ 52              ; eight short windows in one group
+AAC_S_SPLIT     equ 53              ; eight short windows in eight groups
 AAC_S_COUNT     equ 64
 %ifdef NATIVE
 %macro AAC_STAT 1
@@ -1298,12 +1300,20 @@ aac_ics_info:
     je .counted_shape
     AAC_STAT AAC_S_KBD
 .counted_shape:
+    cmp dword [ebp + AAC_I_NWIN], 8
+    jne .counted
     mov eax, [ebp + AAC_I_NGRP]
     cmp eax, 1
-    je .counted
+    je .one_group
     cmp eax, 8
-    je .counted
+    je .split
     AAC_STAT AAC_S_GROUPED
+    jmp .counted
+.one_group:
+    AAC_STAT AAC_S_ONEGROUP
+    jmp .counted
+.split:
+    AAC_STAT AAC_S_SPLIT
 .counted:
 %endif
     ret

@@ -54,6 +54,7 @@ static const char *stat_name[64] = {
     [42] = "book 10", [43] = "book 11", [45] = "book 13 (noise)",
     [46] = "book 14 (intensity)", [47] = "book 15 (intensity)", [48] = "DSE aligned",
     [49] = "explicit rate", [50] = "PCE config", [51] = "HE-AAC config",
+    [52] = "short, one group", [53] = "short, 8 groups",
 };
 static uint64_t stat_total[64];
 

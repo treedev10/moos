@@ -42,9 +42,11 @@ and written back), for what ffmpeg's encoder never writes:
                data stream element and a PCE before each frame's elements
   *_lfe        mono as an LFE element (PCE configuration with one LFE)
   *_shapes     window shapes (sine / KBD) flipped in about half the frames
-Changes that alter the sound (pulses, tnshigh, pnsms, shapes) are compared with
-ffmpeg's decode of the rewritten stream; the others must decode exactly
-like the original, which is also checked with ffmpeg where it can read them.
+  *_onegroup   short windows: all eight in one group
+Changes that alter the sound (pulses, tnshigh, pnsms, shapes, onegroup) are
+compared with ffmpeg's decode of the rewritten stream; the others must
+decode exactly like the original, which is also checked with ffmpeg where
+it can read them.
 All files go to build/aac/. Needs ffmpeg, ffprobe, numpy.
 """
 import os
@@ -469,6 +471,8 @@ def rewritten(lines, quick):
         ("pns_ms", "pnsms", ["pns_pink_64k", "pns_music_48k"], "pns"),
         ("shapes", "shapes", ["music_44100_s", "clicks_128k", "clicks_64k_m", "tns_clicks",
                               "music_8000_s"], "snr"),
+        ("one_group", "onegroup", ["clicks_128k", "clicks_64k_m", "tns_clicks",
+                                   "clicks_48k_48000"], "snr"),
         ("split", "split", ["clicks_128k", "clicks_64k_m", "tns_clicks", "clicks_48k_48000"],
          "same"),
         ("separate", "separate", ["music_44100_s", "noms_music"], "same"),
