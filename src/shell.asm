@@ -85,6 +85,7 @@ topic_table:                        ; manual pages that are not commands
     TOPIC "keys",     man_keys
     TOPIC "files",    man_files
     TOPIC "browser",  man_browser
+    TOPIC "tasks",    man_tasks
     dd 0
 
 ; ------------------------------------------------------------------ main loop

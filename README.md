@@ -88,7 +88,7 @@ inside MOOS.
 | `write`, `append` | `run` run a MOOS script | `get` download (HTTPS) |
 | `rm` delete (asks first) | `echo` print / save a line | `gui` graphical desktop (UEFI) |
 | `rename`, `copy` | `color` colours and themes | `login` optional sign-in |
-| `find` search in files | `help`, `man` | `time`, `clock`, `uptime`, `mem`, `sysinfo` |
+| `find` search in files | `help`, `man` | `time`, `clock`, `uptime`, `mem`, `sysinfo`, `fetch` |
 | `wc`, `hexdump` | `clear` | `install`, `format`, `reboot`, `shutdown` |
 
 Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, `grep`, `cls`,
@@ -116,8 +116,9 @@ Familiar aliases work too: `nano`, `notepad`, `dir`, `type`, `del`, `mv`, `cp`, 
 - **Desktop** (`apt install desktop`, then `gui`): a plain-colour desktop, a taskbar, a mouse
   (USB or PS/2, wheel included, through the firmware), and overlapping windows you can drag,
   resize from any edge or corner, maximize (button or double-click) and minimize to the taskbar —
-  or do all that with F1–F10. Apps: Terminal, Text Editor, Script IDE, Browser and Settings.
-  UEFI only.
+  or do all that with F1–F11. Apps: Terminal, Text Editor, Script IDE, Browser, Settings and
+  a Task Manager (open windows with CPU % and memory, End task, CPU and network graphs,
+  memory by owner, frames per second). UEFI only.
 - **Web browser** (`gui browser <address>`, `man browser`): MOOS's own HTML engine parses pages
   (entities, UTF-8, scripts and hidden parts dropped) and lays them out to the window's width —
   headings in larger type, bold/italic/underline, code, lists, tables with aligned columns,

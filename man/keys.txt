@@ -80,6 +80,7 @@ THE DESKTOP
     In the graphical desktop (gui, UEFI PCs):
 
     F1 - F5          open Terminal, Editor, Script IDE, Browser, Settings
+    F11              open the Task Manager
     F6               next window
     F7 / F8          move / resize the window with the arrow keys
     F9 / F10         minimize / maximize (or put back) the window
@@ -88,5 +89,8 @@ THE DESKTOP
     The browser's own keys (Ctrl+L, Tab, Backspace, ...) are in
     man browser .
 
+    In the Task Manager: Up / Down pick a window, Enter brings it to the
+    front, Delete (or E) ends it - see  man tasks .
+
 SEE ALSO
-    intro, history, man, edit, gui, browser
+    intro, history, man, edit, gui, browser, tasks

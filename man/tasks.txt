@@ -1,0 +1,72 @@
+NAME
+    tasks - the desktop's Task Manager
+
+SYNOPSIS
+    gui tasks
+    (in the desktop: the Tasks button on the taskbar, or F11)
+
+DESCRIPTION
+    The Task Manager shows what the desktop is doing, updated every
+    second. Like the rest of the desktop it needs a UEFI PC. Its window
+    can be moved, resized and maximized like any other; when it is
+    narrow, everything is shown in one column.
+
+WINDOWS
+    One row for each open window, and one for the desktop itself:
+
+    State      focused (gets the keys), running, or minimized
+    CPU        how much of the last second the processor spent on it:
+               its drawing, its keys and clicks, and whatever it waited
+               for (a web page loading, a command in the Terminal)
+    Memory     its part of MOOS's memory, plus any big blocks it asked
+               the firmware for (pictures, video, sound)
+    End task   closes the window and gives every big block the app still
+               has back to the firmware
+
+    The Desktop row is the window manager, the taskbar, the background,
+    the mouse pointer and copying each finished picture to the screen.
+
+    Keys: Up / Down pick a row, Enter brings that window to the front,
+    Delete (or E) ends it.
+
+CPU
+    MOOS runs no programs side by side: the desktop is one loop that
+    keeps asking the keyboard and the mouse whether anything happened.
+    Time spent asking while nothing happens is "idle"; everything else
+    is work, charged to the app doing it or to the desktop. MOOS counts
+    the processor's own clock ticks (the time-stamp counter) to measure
+    this, and the timer to turn them into seconds - the "TSC" line shows
+    the rate it measured, in MHz.
+
+    The graph shows the last 60 seconds, newest on the right. While one
+    thing holds the desktop up (a page loading, a long command), nothing
+    is drawn; afterwards that whole stretch is shown at its average.
+
+    In an emulator without hardware help (QEMU without KVM) drawing is
+    many times slower than on a real PC, so the numbers are much higher
+    there.
+
+NETWORK
+    Bytes received (green) and sent (orange) per second, the busiest
+    second at the top of the graph, and the totals since start-up -
+    every frame the network card sent or received, headers included.
+    Below: the address and the card, or "not connected".
+
+MEMORY
+    Kernel code + data    the MOOS program itself, with its manuals
+    Kernel variables      its variables
+    Fixed buffers         memory MOOS takes for itself at start-up: the
+                          screen's back buffer, downloads, web pages,
+                          the stack and room for the kernel to grow,
+                          files, network and HTTPS buffers
+    Big blocks            memory asked from the firmware while MOOS
+                          runs, by owner (apps, sound, video, pictures)
+    MOOS in total         all of the above
+    RAM installed         from the firmware's memory map
+    Free (firmware)       what the firmware's memory map shows as free
+                          now
+
+    Below them: how long the computer has been running.
+
+SEE ALSO
+    gui, fetch, mem, uptime, net
