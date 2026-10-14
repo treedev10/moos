@@ -85,6 +85,8 @@ fs_tsc          db " @ ", 0
 fs_open         db " (", 0
 fs_close        db ")", 0
 fs_comma        db ", ", 0
+fs_proc         db " Processor"     ; (dropped from the end of CPU names)
+FS_PROC_LEN     equ $ - fs_proc
 
 ; The cow: 14 rows of text, each followed by its colours (a hex digit =
 ; one of the 16 text colours, a space = the normal colour).
@@ -555,8 +557,9 @@ fi_cpu:
 .r: ret
 
 ; fi_brand: the processor's name, tidied: no (R) / (TM), no "@ 3.70GHz"
-; (the measured clock follows), single spaces, at most FETCH_BRAND_MAX
-; characters. The maker's name if the processor gives no brand string.
+; (the measured clock follows), no " Processor" at the end, single spaces,
+; at most FETCH_BRAND_MAX characters (cut at a word). The maker's name if
+; the processor gives no brand string.
 fi_brand:
     pushad
     mov esi, cpu_brand
@@ -597,12 +600,40 @@ fi_brand:
     je .l
 .put:
     cmp ecx, FETCH_BRAND_MAX
-    jae .end
+    jae .cut
     mov dl, al
     stosb
     inc ecx
     jmp .l
+.cut:                               ; too long: end at a whole word
+    cmp al, ' '
+    je .end                         ; (the last word was complete)
+    mov eax, edi
+.back:
+    cmp eax, ebx
+    je .end                         ; (one long word: keep it cut)
+    dec eax
+    cmp byte [eax], ' '
+    jne .back
+    mov edi, eax
 .end:
+    mov eax, edi                    ; "... 8-Core Processor": the last
+    sub eax, ebx                    ; word says nothing new
+    cmp eax, FS_PROC_LEN
+    jb .trail
+    push esi
+    push edi
+    push ecx
+    mov esi, fs_proc
+    sub edi, FS_PROC_LEN
+    mov ecx, FS_PROC_LEN
+    repe cmpsb
+    pop ecx
+    pop edi
+    pop esi
+    jne .trail
+    sub edi, FS_PROC_LEN
+.trail:
     cmp edi, ebx                    ; drop a space at the end
     je .empty
     cmp byte [edi - 1], ' '

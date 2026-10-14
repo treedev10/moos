@@ -10,7 +10,9 @@ Options
     --uefi          start the PC with UEFI firmware instead of a BIOS
     --drive ARGS    replace the QEMU disk arguments; {disk} stands for the
                     copied image, e.g. "-machine q35 -drive file={disk},format=raw"
-    --extra ARGS    more QEMU arguments (a second disk, a USB keyboard, ...)
+    --extra ARGS    more QEMU arguments (a second disk, a USB keyboard, ...);
+                    quote an argument that has spaces, e.g.
+                    --extra "-cpu 'max,model-id=AMD Ryzen 7 5800X'"
     --nic MODEL     the emulated network card: rtl8139 (default), e1000,
                     e1000e, virtio-net-pci, ...; "none" for no card
     --mem MB        memory size
@@ -41,6 +43,7 @@ STEP is either text to type (use \\n for Enter) or a command:
 The image is copied first, so tests never touch your real disk image.
 """
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -62,6 +65,12 @@ PLAIN = {' ': 'spc', '\n': 'ret', '.': 'dot', ',': 'comma', '/': 'slash',
          '[': 'bracket_left', ']': 'bracket_right', '\\': 'backslash',
          '`': 'grave_accent', '\t': 'tab'}
 MAGIC = b'MOOSSCRN'
+
+
+def split_args(text):
+    """QEMU arguments: split at spaces, or like a shell when quotes are used
+    (plain splitting keeps Windows paths with backslashes intact)."""
+    return shlex.split(text) if ("'" in text or '"' in text) else text.split()
 
 
 def kernel_symbols(names):
@@ -261,9 +270,10 @@ def main():
         missing = peeks - set(syms)
         if missing:
             sys.exit('no such kernel label: ' + ', '.join(sorted(missing)))
-    cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + extra.split() + \
+    cmd = [qemu_path()] + drive.replace('{disk}', disk).split() + \
         ['-m', str(mem), '-rtc', 'base=localtime', '-display', 'none',
-         '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port]
+         '-cpu', 'max', '-monitor', 'tcp:127.0.0.1:%d,server,nowait' % port] + \
+        split_args(extra)               # (after -cpu max, so it can replace it)
     if want_ptr:
         if not syms:
             syms = kernel_symbols({'screen_magic', 'mouse_x', 'mouse_wheel'})
