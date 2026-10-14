@@ -37,10 +37,12 @@
 ;       frame's second half.
 ;    7. The channels are mixed into the output: mono, stereo, or for more
 ;       channels a stereo downmix:
-;           left  = FL + a (FC + left surround + back centre)
-;           right = FR + a (FC + right surround + back centre)
-;       with a = 0.7071, both scaled so the left weights add up to 1, and
-;       LFE left out. (This is what ffmpeg does when asked for stereo.)
+;           left  = FL + FLC + a (FC + left surround) + a^2 back centre
+;           right = FR + FRC + a (FC + right surround) + a^2 back centre
+;       with a = 0.7071 (a lone back or side centre channel is split
+;       between the two surrounds, -3 dB each), both scaled so the left
+;       weights add up to 1, and LFE left out. This is the matrix ffmpeg
+;       uses when asked for stereo (-ac 2); aac_make.py checks that.
 ;       Clipped to 16 bits, rounded to nearest.
 ;
 ;  Configurations: channelConfiguration 1-7, 11, 12, 14, or 0 with a
@@ -322,9 +324,10 @@ aac_rate_limits dd 92017, 75132, 55426, 46009, 37566, 27713, 23004, 18783
                 dd 13856, 11502, 9391, 0
 ; output weights (left, right) of each channel role:
 ;   0 none/LFE, 1 front centre, 2 front left, 3 front right, 4 left
-;   surround, 5 right surround, 6 back centre, 7 both at full level
-aac_role_l      dd 0.0, 0.70710678, 1.0, 0.0, 0.70710678, 0.0, 0.70710678, 1.0
-aac_role_r      dd 0.0, 0.70710678, 0.0, 1.0, 0.0, 0.70710678, 0.70710678, 1.0
+;   surround, 5 right surround, 6 back centre (0.7071 of a surround on
+;   each side), 7 both at full level
+aac_role_l      dd 0.0, 0.70710678, 1.0, 0.0, 0.70710678, 0.0, 0.5, 1.0
+aac_role_r      dd 0.0, 0.70710678, 0.0, 1.0, 0.0, 0.70710678, 0.5, 1.0
 ; element order of the channel configurations 0-15: S = SCE, C = CPE,
 ; L = LFE (Table 1.19); 0 = not supported here (0 itself uses the PCE)
 %macro AAC_SEQ 1
@@ -590,8 +593,9 @@ aac_default_map:
     AAC_FAIL AAC_E_CONFIG
 
 ; aac_pce_map: read the program_config_element of the config (4.4.1.1) and
-; give its elements slots by tag: front SCE = centre, first front CPE =
-; left/right, other CPEs = surround, other SCEs = back centre, LFE = none.
+; give its elements slots by tag: front SCE = centre, front CPEs = left/
+; right (the first one, and wide / centre pairs at the same level), side
+; and back CPEs = surround, other SCEs = back centre, LFE = none.
 ; In: EBX = context.
 aac_pce_map:
     mov dword [ebx + AAC_C_PCE], 1
@@ -611,7 +615,6 @@ aac_pce_map:
     call aac_pce_mixdowns
     xor edx, edx                    ; next free slot
     xor edi, edi                    ; channels in the configuration
-    mov dword [aac_ncpe], 0         ; front pairs so far
     xor esi, esi                    ; part: 0 front, 1 side, 2 back
 .part:
     mov ecx, [aac_tmp + esi * 4]
@@ -650,13 +653,10 @@ aac_pce_map:
     cmp byte [ebx + AAC_C_CPE + eax], 0
     jge .element
     mov [ebx + AAC_C_CPE + eax], dl
-    mov eax, 4                      ; surround, unless the first front pair
+    mov eax, 4                      ; surround, unless a front pair
     test esi, esi
     jnz .cpe_role
-    cmp dword [aac_ncpe], 0
-    jne .cpe_role
     mov eax, 2
-    inc dword [aac_ncpe]
 .cpe_role:
     call aac_set_role
     inc edx

@@ -378,10 +378,18 @@ def pce_roles(asc):
     return roles
 
 
-def channel_roles(path):
+def probe(path):
     out = run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
                "stream=channel_layout,channels", "-of", "default=nw=1", path]).decode()
-    info = dict(l.split("=", 1) for l in out.split())
+    return dict(l.split("=", 1) for l in out.split())
+
+
+def channel_layout(path):
+    return probe(path).get("channel_layout", "")
+
+
+def channel_roles(path):
+    info = probe(path)
     layout = info.get("channel_layout", "")
     n = int(info["channels"])
     names = {
@@ -403,12 +411,13 @@ def channel_roles(path):
     return roles
 
 
-# the downmix aac.asm does (documented there): left = FL + A*(FC + SL + BL +
-# BC + FLC), right = FR + A*(FC + SR + BR + BC + FRC), both divided by the sum
-# of the weights that feed the left output; LFE is left out.
+# the downmix aac.asm does (documented there): left = FL + FLC + A*(FC + SL +
+# BL) + A*A*BC, right = FR + FRC + A*(FC + SR + BR) + A*A*BC, both divided by
+# the sum of the weights that feed the left output; LFE is left out. Where
+# ffmpeg knows the layout, make_ref checks this against its own -ac 2.
 def downmix(pcm, roles):
-    wl = {"FL": 1, "FC": A, "SL": A, "BL": A, "BC": A, "FLC": A}
-    wr = {"FR": 1, "FC": A, "SR": A, "BR": A, "BC": A, "FRC": A}
+    wl = {"FL": 1, "FLC": 1, "FC": A, "SL": A, "BL": A, "BC": A * A}
+    wr = {"FR": 1, "FRC": 1, "FC": A, "SR": A, "BR": A, "BC": A * A}
     norm = sum(wl.get(r, 0) for r in roles)
     left = sum(pcm[:, i] * wl.get(r, 0) for i, r in enumerate(roles)) / norm
     right = sum(pcm[:, i] * wr.get(r, 0) for i, r in enumerate(roles)) / norm
@@ -426,6 +435,14 @@ def make_ref(adts, ref, ch):
     mix = downmix(f, roles) * 32768.0
     mix = np.clip(np.rint(mix), -32768, 32767).astype("<i2")
     open(ref, "wb").write(mix.tobytes())
+    if channel_layout(adts) != "unknown":       # the same as ffmpeg's -ac 2?
+        own = np.frombuffer(run(["ffmpeg", "-v", "error", "-f", "aac", "-i", adts, "-ac", "2",
+                                 "-f", "s16le", "-"]), dtype="<i2").astype(np.float64)
+        m = mix.reshape(-1).astype(np.float64)[:len(own)]
+        err = ((own - m) ** 2).sum()
+        snr = 99.0 if err == 0 else 10 * np.log10((m ** 2).sum() / err)
+        if len(own) != mix.size or snr < 90:
+            sys.exit("%s: the stereo downmix differs from ffmpeg's -ac 2 (%.1f dB)" % (adts, snr))
 
 
 def write_case(name, frames, asc):
