@@ -222,6 +222,10 @@ zero_bss:
 %include "src/aac.asm"                ; AAC-LC audio decoder (self-contained module)
 %include "src/sound.asm"              ; sound cards (HDA, AC'97)
 %include "src/h264.asm"               ; H.264 video decoder (module)
+%include "src/jpeg.asm"               ; JPEG picture decoder (module)
+%include "src/inflate.asm"            ; DEFLATE / zlib / gzip decompressor (module)
+%include "src/png.asm"                ; PNG picture decoder (module)
+%include "src/gif.asm"                ; GIF picture decoder (module)
 section .text
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)

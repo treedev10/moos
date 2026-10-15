@@ -1336,4 +1336,3 @@ gui_key:
 %include "src/imgcache.asm"
 %include "src/player.asm"
 %include "src/youtube.asm"
-%include "src/media_stub.asm"

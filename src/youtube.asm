@@ -132,16 +132,16 @@ yt_s_head1  db "<title>", 0
 yt_s_head2  db " - YouTube</title><form action='https://www.youtube.com/results'><p>"
             db "<input type=text name=search_query size=40 value='", 0
 yt_s_head3  db "'> <input type=submit value='Search'></p></form><h2>Results for ", 0
-yt_s_head4  db "</h2><table>", 0
-yt_s_item1  db "<tr><td><a href='https://www.youtube.com/watch?v=", 0
+yt_s_head4  db "</h2>", 0
+yt_s_item1  db "<p><a href='https://www.youtube.com/watch?v=", 0
 yt_s_item2  db "'><img src='", 0
 yt_vi       db "/vi/", 0
-yt_s_item3  db "/mqdefault.jpg' width=240 height=135 alt='video'></a></td><td><b><a href='https://www.youtube.com/watch?v=", 0
+yt_s_item3  db "/mqdefault.jpg' width=240 height=135 alt='video'></a><br><b><a href='https://www.youtube.com/watch?v=", 0
 yt_s_item4  db "'>", 0
 yt_s_item5  db "</a></b><br>", 0
 yt_s_sep    db " &middot; ", 0
-yt_s_item6  db "</td></tr>", 0
-yt_s_tail   db "</table>", 0
+yt_s_item6  db "</p>", 0
+yt_s_tail   db "", 0
 yt_s_none   db "<p>No videos found.</p>", 0
 yt_w1       db "<title>", 0
 yt_w2       db " - YouTube</title><form action='https://www.youtube.com/results'><p>"
