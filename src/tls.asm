@@ -715,6 +715,7 @@ https_get:
     sub ecx, SCRATCH
     CCALL tls_write, SCRATCH, ecx
     mov dword [pkg_len], 0
+    mov byte [pkg_trunc], 0
     call http_complete_reset
 .read:
     call tls_read_record
@@ -740,7 +741,10 @@ https_get:
     mov esi, PKG_BUF
     mov ecx, [pkg_len]
     call http_is_complete
-    jc .read
+    jnc .done
+    cmp ecx, PKG_BUF_SIZE - 1           ; full: stop rather than read (and
+    jb .read                            ; throw away) the rest of a big page
+    mov byte [pkg_trunc], 1
     jmp .done
 .alert:
     cmp dword [tls_alert], 0            ; close_notify = normal end

@@ -109,9 +109,14 @@ url_parse:
     ret
 
 ; url_fetch: ESI = URL. Downloads it into PKG_BUF (pkg_len = body length,
-; http_status set). CF=1 on failure with url_err pointing at a message.
+; http_status set; pkg_trunc = 1 if it was bigger than PKG_BUF). CF=1 on
+; failure with url_err pointing at a message. A net_hook that sets
+; net_cancel stops it early, keeping whatever had arrived.
 url_fetch:
     pushad
+    mov byte [net_cancel], 0
+    mov byte [pkg_trunc], 0
+    mov dword [pkg_len], 0
     call url_parse
     jnc .parsed
     mov dword [url_err], ue_bad
@@ -216,6 +221,10 @@ cmd_get:
     mov esi, str_secure_tls
 .sec:
     PRINTF `\x01gHTTP %d\x01n, %d bytes (%s)\n`, dword [http_status], dword [pkg_len], esi
+    cmp byte [pkg_trunc], 0
+    je .whole
+    PRINTF `\x01yNote:\x01n it is bigger than that - MOOS keeps the first %d KB.\n`, PKG_BUF_SIZE / 1024
+.whole:
     cmp dword [get_file], 0
     jne .save
     mov esi, PKG_BUF                    ; show it (text) through the pager

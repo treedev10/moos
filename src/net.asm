@@ -683,6 +683,9 @@ rtl39_tx:
 
 section .bss
 net_scratch_deadline resd 1
+net_hook        resd 1              ; called while waiting on the network (0 = none)
+net_hook_tick   resd 1              ; when it last ran
+net_cancel      resb 1              ; 1 = give up waiting (set by the hook)
 section .text
 
 ; rtl39_rx: if a packet is waiting, copy it to NET_RXP and set rx_frame /
@@ -833,11 +836,15 @@ net_up_bring:
 
 ; net_wait_ticks_rx: poll for a received packet until the deadline in
 ; net_scratch_deadline (a ticks value). CF=0 if one arrived. Keeps the
-; screen/clock alive.
+; screen/clock alive. Once net_cancel is set it gives up at once (CF=1, as
+; if the deadline had passed), so a stopped download ends quickly.
 net_poll_until:                     ; EAX = deadline in ticks
     push eax
     mov [net_scratch_deadline], eax
 .loop:
+    call net_run_hook
+    cmp byte [net_cancel], 0
+    jne .give_up
     call net_rx_poll
     jnc .got
     call status_tick
@@ -845,6 +852,7 @@ net_poll_until:                     ; EAX = deadline in ticks
     mov eax, [ticks]
     cmp eax, [net_scratch_deadline]
     jb .loop
+.give_up:
     pop eax
     stc
     ret
@@ -852,3 +860,22 @@ net_poll_until:                     ; EAX = deadline in ticks
     pop eax
     clc
     ret
+
+; net_run_hook: about four times a second, call net_hook if one is set (the
+; desktop's browser shows progress with it and watches for Esc). The hook
+; may set net_cancel; it must not use the network itself.
+net_run_hook:
+    cmp dword [net_hook], 0
+    je .r
+    push eax
+    mov eax, [ticks]
+    sub eax, [net_hook_tick]
+    cmp eax, 25
+    jb .p
+    mov eax, [ticks]
+    mov [net_hook_tick], eax
+    pushad
+    call [net_hook]
+    popad
+.p: pop eax
+.r: ret

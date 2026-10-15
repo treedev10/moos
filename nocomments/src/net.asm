@@ -621,6 +621,9 @@ rtl39_tx:
 
 section .bss
 net_scratch_deadline resd 1
+net_hook        resd 1
+net_hook_tick   resd 1
+net_cancel      resb 1
 section .text
 
 rtl39_rx:
@@ -764,6 +767,9 @@ net_poll_until:
     push eax
     mov [net_scratch_deadline], eax
 .loop:
+    call net_run_hook
+    cmp byte [net_cancel], 0
+    jne .give_up
     call net_rx_poll
     jnc .got
     call status_tick
@@ -771,6 +777,7 @@ net_poll_until:
     mov eax, [ticks]
     cmp eax, [net_scratch_deadline]
     jb .loop
+.give_up:
     pop eax
     stc
     ret
@@ -778,3 +785,19 @@ net_poll_until:
     pop eax
     clc
     ret
+
+net_run_hook:
+    cmp dword [net_hook], 0
+    je .r
+    push eax
+    mov eax, [ticks]
+    sub eax, [net_hook_tick]
+    cmp eax, 25
+    jb .p
+    mov eax, [ticks]
+    mov [net_hook_tick], eax
+    pushad
+    call [net_hook]
+    popad
+.p: pop eax
+.r: ret

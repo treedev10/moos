@@ -17,7 +17,8 @@ DESCRIPTION
 
     URLs may start with https:// (encrypted, checked) or http:// (neither).
     Without either, http:// is assumed. Saved files are limited to 4096
-    bytes, like every MOOS file.
+    bytes, like every MOOS file. Downloads stop at 512 KB; get says so
+    when a page was bigger than that.
 
     -k  do not check the server's certificate (see below)
     -v  show each TLS record and handshake message (for debugging)

@@ -101,6 +101,9 @@ url_parse:
 
 url_fetch:
     pushad
+    mov byte [net_cancel], 0
+    mov byte [pkg_trunc], 0
+    mov dword [pkg_len], 0
     call url_parse
     jnc .parsed
     mov dword [url_err], ue_bad
@@ -203,6 +206,10 @@ cmd_get:
     mov esi, str_secure_tls
 .sec:
     PRINTF `\x01gHTTP %d\x01n, %d bytes (%s)\n`, dword [http_status], dword [pkg_len], esi
+    cmp byte [pkg_trunc], 0
+    je .whole
+    PRINTF `\x01yNote:\x01n it is bigger than that - MOOS keeps the first %d KB.\n`, PKG_BUF_SIZE / 1024
+.whole:
     cmp dword [get_file], 0
     jne .save
     mov esi, PKG_BUF

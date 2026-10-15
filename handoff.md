@@ -203,6 +203,17 @@ Key mechanisms to understand before changing things:
   CertificateVerify/Finished, check the Finished MAC → `tls_check_server` (x509.asm) →
   application keys → our Finished. Records are read through `tcp_pump` into a 32 KB stream
   buffer (`TLS_BASE` in kernel.asm's memory map).
+- **Downloads and the desktop**: fetching is synchronous. Every network wait goes through
+  `net_poll_until`, which calls `net_hook` (if set) about 4×/s; the browser sets it to
+  `brow_fetch_hook`, which updates the status line ("Loading … N KB (Esc stops)") and the
+  taskbar clock and sets `net_cancel` on Esc. `net_cancel` makes `net_poll_until` give up at
+  once; `url_fetch` clears it, and the page keeps whatever arrived. `https_get` and
+  `tcp_recv_all` stop once `PKG_BUF` (512 KB) is full and set `pkg_trunc`, instead of reading
+  and discarding the rest. **Keep the hook cheap**: a whole-desktop redraw in it stalled
+  downloads — the firmware SNP driver's RX ring (8 KB on QEMU's RTL8139 via iPXE) overflowed
+  while MOOS was busy drawing, and since the TCP client only ACKs, each lost segment costs a
+  retransmission timeout with backoff. The hook therefore redraws only the status line and
+  the taskbar (`gfx_present_rect`).
 - **Certificate trust** fails closed: unknown algorithm, unknown issuer, non-CA issuer,
   bad date, wrong name or bad signature all refuse the connection. `get -k` is the only way
   to skip it (prints a warning; apt never uses it).
@@ -243,7 +254,11 @@ The commented source is canonical.
 - **Networking** uses one card at a time, one ARP cache, no IP fragmentation, and a TCP client
   that assumes in-order, lossless delivery and retransmits nothing but its SYN (3 tries) —
   fine behind QEMU's SLIRP, which does the real TCP; fragile on a real lossy network. Downloads are limited to the
-  512 KB package buffer; saved files to 4 KB (the MOOSFS limit).
+  512 KB package buffer (bigger ones stop there: `pkg_trunc`); saved files to 4 KB (the
+  MOOSFS limit). A dropped segment is only recovered by the server's retransmission
+  timeout, so anything that keeps MOOS from polling the card mid-download slows it badly.
+  YouTube's ~1 MB+ home page takes ~35 s for its first 512 KB in QEMU (and shows the
+  "Nothing to show" note, since it is all JavaScript).
 - **GUI apps are deliberately simple**: the editor is append/backspace/enter (no mid-line
   cursor). One window per app.
 - **Browser limits**: no CSS (beyond a few inline properties: display/visibility, colour,

@@ -47,6 +47,8 @@ br_want     resd 1
 br_kind     resd 1
 br_redirs   resd 1
 br_bytes    resd 1
+br_trunc    resd 1
+br_stopped  resd 1
 KIND_HTML   equ 0
 KIND_TEXT   equ 1
 KIND_OTHER  equ 2
@@ -154,6 +156,7 @@ br_test_page:
     db "</body></html>", 0
 br_test     db "about:test", 0
 
+br_stopped_msg db "loading was stopped (Esc) before the page arrived", 0
 err_p1      db "<title>Problem loading page</title><h2>Could not load this page</h2><p><b>", 0
 err_p2      db "</b></p><p>", 0
 err_p3      db ".</p><p>Check the address, or try again with Reload. MOOS speaks "
@@ -163,6 +166,12 @@ oth_p1      db "<title>Cannot show this</title><h2>MOOS cannot show this file</h
 oth_p2      db "</b>, not a web page or text. To save it, use the Terminal: "
             db "<code>get &lt;address&gt; &lt;file&gt;</code></p>", 0
 oth_unknown db "a file of an unknown type", 0
+emp_p1      db "<title>", 0
+emp_p2      db "</title><h2>Nothing to show</h2><p>The page arrived, but nothing in "
+            db "it can be shown here: everything on it is made by JavaScript, "
+            db "which the MOOS Browser does not run. Many big sites (YouTube, "
+            db "web apps) are built this way.</p><p>Text-based sites work best - "
+            db "see the <a href=", 34, "about:home", 34, ">start page</a> for some.</p>", 0
 
 section .text
 
@@ -1623,15 +1632,16 @@ brow_load:
     mov dword [br_secure], 0
     mov dword [br_redirs], 0
     mov dword [br_kind], KIND_HTML
+    mov dword [br_trunc], 0
+    mov dword [br_stopped], 0
     mov edi, br_about
     xchg esi, edi
     call str_iprefix
     xchg esi, edi
     je .about
 
-    call out_begin
-    PRINTF `Loading %s ...`, br_url
-    call brow_status_outbuf
+    mov dword [pkg_len], 0
+    call brow_loading_status
     mov byte [gui_dirty], 1
     call gui_redraw
 .again:
@@ -1646,9 +1656,24 @@ brow_load:
 .get:
     mov byte [url_insecure], 0
     mov byte [gui_capture], 2
+    mov dword [net_hook], brow_fetch_hook
+    mov eax, [ticks]
+    mov [net_hook_tick], eax
     call url_fetch
+    mov dword [net_hook], 0
     mov byte [gui_capture], 0
-    jc .failed
+    jnc .fetched
+    cmp byte [net_cancel], 0
+    je .failed
+    mov dword [br_stopped], 1
+    mov dword [url_err], br_stopped_msg
+    jmp .failed
+.fetched:
+    cmp byte [net_cancel], 0
+    je .redir_check
+    mov dword [br_stopped], 1
+    jmp .got
+.redir_check:
     mov eax, [http_status]
     cmp eax, 301
     je .redir
@@ -1675,9 +1700,8 @@ brow_load:
     call brow_split_frag
     mov edi, br_url
     call str_copy
-    call out_begin
-    PRINTF `Loading %s ... (redirected)`, br_url
-    call brow_status_outbuf
+    mov dword [pkg_len], 0
+    call brow_loading_status
     mov byte [gui_dirty], 1
     call gui_redraw
     jmp .again
@@ -1685,6 +1709,8 @@ brow_load:
     mov dword [br_loaded], 1
     movzx eax, byte [url_scheme]
     mov [br_secure], eax
+    movzx eax, byte [pkg_trunc]
+    mov [br_trunc], eax
     call brow_dechunk
     mov esi, PKG_BUF
     mov ecx, [pkg_len]
@@ -1740,6 +1766,16 @@ brow_load:
     call brow_page_w
     mov [br_lw], eax
     call html_layout
+    cmp dword [ly_n], 0
+    jne .shown
+    cmp dword [br_loaded], 0
+    je .shown
+    cmp dword [br_kind], KIND_HTML
+    jne .shown
+    call brow_empty_page
+    mov eax, [br_lw]
+    call html_layout
+.shown:
     call brow_set_title
 
     mov esi, br_url
@@ -1833,7 +1869,16 @@ brow_done_status:
     mov eax, [br_bytes]
     add eax, 1023
     shr eax, 10
+    cmp dword [br_stopped], 0
+    je .done_kb
+    PRINTF `Stopped - %d KB loaded`, eax
+    jmp .code
+.done_kb:
     PRINTF `Done - %d KB`, eax
+    cmp dword [br_trunc], 0
+    je .code
+    PRINTF ` (only the first %d KB of a bigger page)`, PKG_BUF_SIZE / 1024
+.code:
     cmp dword [http_status], 200
     je .ok
     PRINTF ` - the server answered %d`, dword [http_status]
@@ -1849,9 +1894,81 @@ brow_done_status:
     PRINTF `MOOS Browser - built-in page`
     jmp .show
 .failed:
+    cmp dword [br_stopped], 0
+    jne .stopped
     PRINTF `Could not load the page.`
+    jmp .show
+.stopped:
+    PRINTF `Stopped.`
 .show:
     call brow_status_outbuf
+    popad
+    ret
+
+brow_loading_status:
+    pushad
+    movzx eax, byte [gui_capture]
+    push eax
+    mov byte [gui_capture], 0
+    call out_begin
+    PRINTF `Loading %s ...`, br_url
+    mov eax, [pkg_len]
+    test eax, eax
+    jz .esc
+    add eax, 1023
+    shr eax, 10
+    PRINTF ` %d KB`, eax
+.esc:
+    PRINTF `   (Esc stops)`
+    call brow_status_outbuf
+    pop eax
+    mov [gui_capture], al
+    popad
+    ret
+
+brow_fetch_hook:
+    pushad
+.keys:
+    call kbd_poll
+    test eax, eax
+    jz .show
+    cmp eax, 27
+    jne .keys
+    mov byte [net_cancel], 1
+.show:
+    call brow_loading_status
+    mov eax, [z_n]
+    test eax, eax
+    jz .bar
+    cmp dword [z_list + eax * 4 - 4], APP_BROWSER
+    jne .bar
+    test dword [wn_f + APP_BROWSER * 4], WF_MIN
+    jnz .bar
+    mov eax, APP_BROWSER
+    call wm_content
+    mov ecx, [cb_x]
+    mov edx, [cb_y]
+    mov esi, [cb_w]
+    mov edi, [cb_h]
+    call gfx_clip_set
+    call brow_draw_status
+    mov ecx, [cb_x]
+    mov edx, [cb_y]
+    add edx, [cb_h]
+    sub edx, BS_H
+    mov esi, [cb_w]
+    mov edi, BS_H
+    call gfx_present_rect
+.bar:
+    call gfx_clip_full
+    call gui_clock_check
+    call gui_taskbar
+    xor ecx, ecx
+    mov edx, [gfx_h]
+    sub edx, TASKBAR_H
+    mov esi, [gfx_w]
+    mov edi, TASKBAR_H
+    call gfx_present_rect
     popad
     ret
 
@@ -1978,6 +2095,21 @@ brow_error_page:
     mov esi, [url_err]
     call html_escape_append
     mov esi, err_p3
+    call str_append
+    mov esi, BR_TMP
+    call str_len
+    call html_parse
+    popad
+    ret
+
+brow_empty_page:
+    pushad
+    mov edi, BR_TMP
+    mov esi, emp_p1
+    call str_copy
+    mov esi, br_title
+    call html_escape_append
+    mov esi, emp_p2
     call str_append
     mov esi, BR_TMP
     call str_len

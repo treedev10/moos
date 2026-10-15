@@ -26,8 +26,13 @@ DESCRIPTION
 THE WINDOW
     Along the top: Back, Forward, Reload, Home (the start page), the
     address bar, and Go. Along the bottom: the status line - what is
-    loading, how big the page was and how safely it came, or where the
-    link under the mouse leads. The scroll bar is on the right.
+    loading and how much of it has arrived, how big the page was and how
+    safely it came, or where the link under the mouse leads. The scroll
+    bar is on the right.
+
+    While a page loads, the rest of the desktop waits; the status line
+    and the clock keep going, and Esc stops the loading (the page shows
+    what had arrived).
 
     Click a link to follow it; the mouse pointer becomes a hand over
     links. Drag the scroll bar, click above or below its thumb, or turn
@@ -36,7 +41,8 @@ THE WINDOW
 KEYS
     Ctrl+L          type an address (typing on the page does it too)
     Enter           go to the address / follow the link chosen with Tab
-    Esc             stop typing (the address bar shows the page again)
+    Esc             stop typing (the address bar shows the page again);
+                    while a page loads: stop loading it
     Tab             choose the next link on the page
     Up, Down        scroll a little
     PgUp, PgDn      scroll a window's height (Space too)
@@ -70,10 +76,13 @@ MESSAGES
     MOOS cannot show this file
         The address is a picture, a program or another kind of file.
         It can be saved from the Terminal with  get <address> <file>.
+    Nothing to show
+        The page arrived but had nothing the browser can show: it is
+        made entirely by JavaScript (YouTube is one such site).
 
 TIPS
-    Pages up to 512 KB are loaded; a bigger one is shown as far as it
-    came. Text-based sites work best. The browser keeps no cookies, so
+    Pages up to 512 KB are loaded; of a bigger one, the first 512 KB
+    are shown and the status line says so. Text-based sites work best. The browser keeps no cookies, so
     sites that need you to sign in will not let you.
 
 SEE ALSO

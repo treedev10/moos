@@ -33,6 +33,8 @@ tcp_rx_flags    resb 1
 alignb 4
 tcp_deadline    resd 1
 pkg_len         resd 1              ; bytes received into PKG_BUF
+pkg_trunc       resb 1              ; 1 = PKG_BUF filled up; the rest was not read
+alignb 4
 http_status     resd 1
 http_date       resb 40
 http_location   resb 512            ; Location: (where a redirect points)
@@ -362,25 +364,33 @@ tcp_close:
 .r: ret
 
 ; tcp_recv_all: read the reply into PKG_BUF (up to PKG_BUF_SIZE-1) until the
-; server closes, ~5 s pass with nothing new, or the HTTP response is complete
-; (Content-Length reached). Sets pkg_len.
+; server closes, ~5 s pass with nothing new, the HTTP response is complete
+; (Content-Length reached) or PKG_BUF is full (pkg_trunc = 1: the rest is
+; not waited for). Sets pkg_len, also as it goes (for progress displays).
 tcp_recv_all:
     pushad
     mov edi, PKG_BUF
     mov ecx, PKG_BUF_SIZE - 1
     call tcp_set_dst
     call http_complete_reset
+    mov byte [pkg_trunc], 0
 .loop:
     mov eax, [ticks]
     add eax, 500
     call tcp_pump
     jc .done
-    mov esi, PKG_BUF
     mov ecx, [tcp_dst_len]
+    mov [pkg_len], ecx
+    mov esi, PKG_BUF
     call http_is_complete
     jnc .done
+    cmp ecx, PKG_BUF_SIZE - 1
+    jae .full
     cmp byte [tcp_closed], 0
     je .loop
+    jmp .done
+.full:
+    mov byte [pkg_trunc], 1
 .done:
     call tcp_close
     mov edi, [tcp_dst_len]
