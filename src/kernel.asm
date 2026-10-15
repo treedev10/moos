@@ -225,6 +225,7 @@ zero_bss:
 %include "src/jpeg.asm"               ; JPEG picture decoder (module)
 %include "src/inflate.asm"            ; DEFLATE / zlib / gzip decompressor (module)
 %include "src/png.asm"                ; PNG picture decoder (module)
+%include "src/gif.asm"                ; GIF picture decoder (module)
 section .text
 %else
 %include "src/lite.asm"               ; (the BIOS kernel has no desktop)

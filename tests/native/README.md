@@ -62,6 +62,8 @@ int inflate_buf(const uint8_t *src, uint32_t srclen, uint8_t *dst, uint32_t dstc
    0 ok; -1 bad data, -2 dst too small (*outlen = bytes written), -3 input ends early,
    -4 checksum wrong. */
 ```
+Test: `python3 tests/native/inflate_data.py` (streams from Python's zlib), then
+`run.py inflate`, `run.py inflate fuzz [N] [seed]`, `run.py inflate bench`.
 
 ### png.asm / gif.asm / jpeg.asm (same shape)
 ```c
@@ -72,6 +74,10 @@ int png_decode(const uint8_t *data, uint32_t len, uint32_t *out, uint32_t stride
    Transparent pixels are blended over bg (0x00RRGGBB). worksize = bytes of scratch the
    decode needs. */
 ```
+The blend is `(a * c + (255 - a) * bg) / 255` per channel, rounded. Test:
+`python3 tests/native/img_data.py [jpeg] [png] [gif]` (test pictures and Pillow's pixels
+in `build/img/`), then `run.py jpeg|png|gif`, `run.py <fmt> fuzz [N] [seed]`,
+`run.py <fmt> bench` (shared driver: `imgtest.h`).
 
 ### mp4.asm
 ```c

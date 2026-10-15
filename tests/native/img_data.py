@@ -337,6 +337,179 @@ def make_png():
     ix.close()
 
 
+def gif_lzw(idx, m, noclear=False):
+    """LZW-code the indices for GIF (minimum code size m); with noclear the
+    table stays full instead of being cleared"""
+    clear, eoi = 1 << m, (1 << m) + 1
+    codes, sizes = [clear], [m + 1]
+    table, nxt, csize = {}, eoi + 1, m + 1
+    cur = None
+    for b in idx:
+        b = int(b)
+        if cur is None:
+            cur = b
+            continue
+        if (cur, b) in table:
+            cur = table[(cur, b)]
+            continue
+        codes.append(cur)
+        sizes.append(csize)
+        if nxt < 4096:
+            table[(cur, b)] = nxt
+            nxt += 1
+            if nxt > (1 << csize) and csize < 12:
+                csize += 1
+        elif not noclear:
+            codes.append(clear)
+            sizes.append(csize)
+            table, nxt, csize = {}, eoi + 1, m + 1
+        cur = b
+    if cur is not None:
+        codes.append(cur)
+        sizes.append(csize)
+        if nxt < 4096:
+            nxt += 1
+            if nxt > (1 << csize) and csize < 12:
+                csize += 1
+    codes.append(eoi)
+    sizes.append(csize)
+    acc = n = 0
+    out = bytearray()
+    for c, sz in zip(codes, sizes):
+        acc |= c << n
+        n += sz
+        while n >= 8:
+            out.append(acc & 255)
+            acc >>= 8
+            n -= 8
+    if n:
+        out.append(acc & 255)
+    return bytes(out)
+
+
+def gif_write(sw, sh, frame, fx=0, fy=0, gct=None, lct=None, trans=None, interlace=0, m=8,
+              noclear=False, blk=255, bgi=0):
+    """a GIF: screen sw x sh, one frame (h x w indices) at fx, fy"""
+    fh, fw = frame.shape
+    def tab(t):
+        n = len(t)
+        size = max(0, (n - 1).bit_length() - 1)
+        pad = (2 << size) - n
+        return size, bytes(np.asarray(t, dtype=np.uint8).reshape(-1)) + bytes(3 * pad)
+    out = b"GIF89a"
+    flags = 0
+    gdata = b""
+    if gct is not None:
+        size, gdata = tab(gct)
+        flags = 0x80 | 0x70 | size
+    out += struct.pack("<HHBBB", sw, sh, flags, bgi, 0) + gdata
+    out += b"!\xfe\x05hello\0"                                   # a comment
+    if trans is not None:
+        out += b"!\xf9\x04" + bytes([1, 10, 0, trans]) + b"\0"
+    lflags, ldata = 0, b""
+    if lct is not None:
+        size, ldata = tab(lct)
+        lflags = 0x80 | size
+    if interlace:
+        lflags |= 0x40
+        order = [y for (s0, st) in ((0, 8), (4, 8), (2, 4), (1, 2)) for y in range(s0, fh, st)]
+        frame = frame[order] if fh else frame
+    out += b"," + struct.pack("<HHHHB", fx, fy, fw, fh, lflags) + ldata
+    z = gif_lzw(frame.reshape(-1), m, noclear)
+    out += bytes([m])
+    for i in range(0, len(z), blk):
+        out += bytes([len(z[i:i + blk])]) + z[i:i + blk]
+    return out + b"\0;"
+
+
+def gif_model(sw, sh, frame, fx, fy, gct, lct, trans, bg):
+    fh, fw = frame.shape
+    w, h = max(sw, fx + fw), max(sh, fy + fh)
+    tab = lct if lct is not None else gct
+    pal = np.zeros((256, 3), np.uint8)
+    if tab is None:
+        pal[:] = np.arange(256)[:, None]
+    else:
+        pal[:len(tab)] = tab
+    bgc = np.array([(bg >> 16) & 255, (bg >> 8) & 255, bg & 255], np.uint8)
+    canvas = np.zeros((h, w), np.uint32) + (trans if trans is not None else 0)
+    canvas[fy:fy + fh, fx:fx + fw] = frame
+    rgb = pal[canvas]
+    if trans is not None:
+        rgb[canvas == trans] = bgc
+    return rgb
+
+
+def make_gif():
+    ix = Index("gif")
+    rnd = np.random.default_rng(5)
+    n = 0
+    cases = []
+    for (w, h) in ((1, 1), (2, 2), (7, 3), (16, 16), (33, 20), (100, 75), (320, 180), (3, 41)):
+        for m, ncol in ((2, 2), (2, 4), (3, 8), (4, 16), (5, 32), (8, 256), (8, 200), (4, 5)):
+            cases.append(dict(w=w, h=h, m=m, ncol=ncol))
+    for c in cases:
+        w, h, m, ncol = c["w"], c["h"], c["m"], c["ncol"]
+        frame = rnd.integers(0, ncol, (h, w))
+        frame[: h // 2] = frame[0, 0]                      # runs (KwKwK codes)
+        if n % 3 == 0:
+            frame = (np.add.outer(np.arange(h), np.arange(w)) // 3 % ncol)
+        tab = rnd.integers(0, 256, (ncol, 3))
+        kind = n % 6
+        sw, sh, fx, fy = w, h, 0, 0
+        gct = lct = trans = None
+        if kind == 0:
+            gct = tab
+        elif kind == 1:
+            gct, trans = tab, int(frame[-1, -1])
+        elif kind == 2:
+            gct, lct = rnd.integers(0, 256, (4, 3)), tab
+        elif kind == 3:                                    # frame inside a bigger screen
+            gct, sw, sh, fx, fy = tab, w + 5, h + 3, 2, 1
+            if n % 4 == 0:
+                trans = int(frame[0, 0])
+        elif kind == 4:                                    # frame beyond the screen
+            lct, sw, sh, fx, fy = tab, max(1, w - 1), max(1, h // 2), 1, 2
+        else:                                              # no colour table
+            pass
+        interlace = n % 2
+        data = gif_write(sw, sh, frame, fx, fy, gct, lct, trans, interlace, m,
+                         noclear=(n % 5 == 0), blk=[255, 1, 7, 100][n % 4])
+        rgb = gif_model(sw, sh, frame, fx, fy, gct, lct, trans, BG)
+        im = Image.open(io.BytesIO(data))
+        ref = blend(np.asarray(im.convert("RGBA")), BG) if trans is not None else \
+            np.asarray(im.convert("RGB"))
+        assert ref.shape == rgb.shape and (ref == rgb).all(), c
+        ix.add_ref("h%03d_%dx%d_m%d_c%d_k%d_i%d.gif" % (n, w, h, m, ncol, kind, interlace), data, rgb)
+        n += 1
+    big = rnd.integers(0, 256, (300, 400))                 # full table, no clear codes
+    data = gif_write(400, 300, big, gct=rnd.integers(0, 256, (256, 3)), noclear=True)
+    ix.add("noclear_big.gif", data)
+    for (w, h) in ((320, 180), (17, 33), (1, 1), (640, 480)):
+        base = Image.fromarray(picture(w, h, w))
+        for colors in (2, 16, 256):
+            im = base.quantize(colors)
+            for il in (False, True):
+                ix.add("pil_%dx%d_c%d_i%d.gif" % (w, h, colors, il),
+                       save(im, format="GIF", interlace=il))
+        im = base.quantize(64)
+        ix.add("pil_%dx%d_trans.gif" % (w, h), save(im, format="GIF", transparency=5))
+        ix.add("pil_%dx%d_opt.gif" % (w, h), save(im, format="GIF", optimize=True))
+        frames = [base.quantize(32), base.rotate(90).quantize(32)]
+        ix.add("pil_%dx%d_anim.gif" % (w, h), save(frames[0], format="GIF", save_all=True,
+                                                   append_images=frames[1:], duration=100))
+    if shutil.which("convert"):
+        src = os.path.join(ix.dir, "src.png")
+        Image.fromarray(picture(150, 90, 9)).save(src)
+        out = os.path.join(ix.dir, "tmp.gif")
+        for args in ([], ["-interlace", "GIF"], ["-colors", "7"], ["-transparent", "white"]):
+            if subprocess.run(["convert", src] + args + [out]).returncode == 0:
+                ix.add("im_%d.gif" % len(ix.lines), open(out, "rb").read())
+        os.remove(out)
+        os.remove(src)
+    ix.close()
+
+
 def main():
     which = sys.argv[1:] or ["jpeg", "png", "gif"]
     random.seed(1)
