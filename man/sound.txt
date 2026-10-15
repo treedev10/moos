@@ -1,2 +1,44 @@
 NAME
     sound - the sound card
+
+SYNOPSIS
+    sound
+    sound test
+    sound volume <0-100>
+
+DESCRIPTION
+    MOOS plays sound on UEFI PCs through two kinds of sound card:
+
+        Intel High Definition Audio   almost every PC since about 2005,
+                                      whatever the codec chip on it
+                                      (Realtek, Conexant, IDT, ...)
+        AC'97                         older PCs and some virtual
+                                      machines
+
+    The card is set up the first time something wants to play. For HD
+    Audio, MOOS looks at the codec's parts and follows the wires from
+    an output jack (line out, speaker or headphones) back to a
+    converter, and turns everything on that path up and on.
+
+    Sound is played at 44.1 or 48 kHz, 16-bit stereo; other rates are
+    converted. The browser's video and audio player uses it.
+
+    sound            what MOOS found: the card, the codec, the output
+                     it plays to, the rates and the volume
+    sound test       plays a 440 Hz tone for one second, then 880 Hz,
+                     and says how much the card played
+    sound volume N   sets the volume, 0 to 100 (the card's amplifier)
+
+NOTES
+    Sound needs a UEFI PC: the drivers are part of the full MOOS. On a
+    BIOS PC the command says so.
+
+    MOOS uses no interrupts for sound; it keeps the card fed from the
+    desktop's main loop and clears what has been played, so a pause
+    never repeats old sound.
+
+    In QEMU, add -device intel-hda -device hda-output (or -device AC97)
+    to hear it; tools/screentest.py --audio FILE records it to a .wav.
+
+SEE ALSO
+    browser, youtube, gui
