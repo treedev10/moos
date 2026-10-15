@@ -172,6 +172,8 @@ python3 tests/native/mp4_data.py && python3 tests/native/run.py mp4      # 32 fi
 python3 tests/native/run.py mp4 fuzz 2000                                  # mutated moov boxes
 python3 tests/native/json_data.py && python3 tests/native/run.py json    # ~32k documents vs Python
 python3 tests/native/run.py json fuzz 20000 ; python3 tests/native/run.py json bench
+python3 tests/native/img_data.py && python3 tests/native/run.py jpeg   # also png, gif: vs Pillow
+python3 tests/native/inflate_data.py && python3 tests/native/run.py inflate   # vs Python's zlib
 ```
 
 `tests/net/run.py` is the network test suite: it starts `tests/net/server.py` (HTTP and
@@ -206,7 +208,7 @@ move it. `src/kernel.asm` has the memory map and the module include list.
 | Editor | `src/editor.asm` |
 | Graphics + GUI | `src/gfx.asm` (back buffer, clip rectangle, sized/styled glyphs, icons), `src/gui.asm` (desktop, taskbar, cursor, main loop), `src/gui_win.asm` (window manager), `src/gui_apps.asm` (terminal, editor, IDE, settings), `src/gui_tasks.asm` (Task Manager, CPU accounting) |
 | Browser | `src/html.asm` (parser, layout, painter, forms), `src/browser.asm` (the app: toolbar, navigation, history, URLs) |
-| Media / data modules (UEFI kernel only) | `src/mp4.asm` (MP4 demuxer: find the moov box, tracks, sample tables), `src/json.asm` (JSON tokenizer); self-contained (`src/module.inc`), tested natively in `tests/native/` |
+| Media / data modules (UEFI kernel only) | `src/mp4.asm` (MP4 demuxer: find the moov box, tracks, sample tables), `src/json.asm` (JSON tokenizer), `src/jpeg.asm` / `src/png.asm` / `src/gif.asm` (picture decoders for the browser's `src/imgcache.asm`), `src/inflate.asm` (DEFLATE / zlib / gzip); self-contained (`src/module.inc`), tested natively in `tests/native/` |
 | Manuals | `man/*.txt` (embedded into the kernel at build time) |
 | Font | `src/font8x16.bin` (public-domain VGA font, extracted by `tools/makefont.py`) |
 

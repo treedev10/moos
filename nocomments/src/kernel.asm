@@ -178,6 +178,10 @@ zero_bss:
 %include "src/aac.asm"
 %include "src/sound.asm"
 %include "src/h264.asm"
+%include "src/jpeg.asm"
+%include "src/inflate.asm"
+%include "src/png.asm"
+%include "src/gif.asm"
 section .text
 %else
 %include "src/lite.asm"
